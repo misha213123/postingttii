@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/
+videos/inbox/*
+!videos/inbox/.gitkeep
+videos/posted/*
+!videos/posted/.gitkeep
+videos/failed/*
+!videos/failed/.gitkeep
+.idea/
+.vscode/
