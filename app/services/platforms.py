@@ -521,23 +521,38 @@ async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
         if not container_id:
             raise RuntimeError(f"Instagram: не создан контейнер: {create.text}")
 
+        # Meta may need several minutes to download and process a Reel,
+        # especially when the source video is served through a tunnel.
+        # Keep the public video URL alive and wait up to 15 minutes.
         status = "IN_PROGRESS"
-        for _ in range(30):
+        last_status_payload: dict = {}
+        deadline = time.monotonic() + 15 * 60
+
+        while time.monotonic() < deadline:
             check = await client.get(
                 f"{base}/{container_id}",
                 params={"fields": "status_code", "access_token": token},
             )
             if check.is_error:
                 raise _api_error(check, "Instagram", "check Reel container")
-            status = check.json().get("status_code", "")
+
+            last_status_payload = check.json()
+            status = last_status_payload.get("status_code", "")
             if status == "FINISHED":
                 break
             if status in {"ERROR", "EXPIRED"}:
-                raise RuntimeError(f"Instagram container status: {status}")
-            await asyncio.sleep(5)
+                raise RuntimeError(
+                    f"Instagram container status: {status} | "
+                    f"{last_status_payload}"
+                )
+
+            await asyncio.sleep(8)
 
         if status != "FINISHED":
-            raise RuntimeError("Instagram слишком долго обрабатывает Reel")
+            raise RuntimeError(
+                "Instagram не успел обработать Reel за 15 минут "
+                f"(последний статус: {status or 'IN_PROGRESS'})."
+            )
 
         publish = await client.post(
             f"{base}/{user_id}/media_publish",
