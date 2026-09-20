@@ -204,7 +204,7 @@ async def youtube_callback(code: str, state: str):
 async def tiktok_callback(code: str, state: str):
     slot = _consume_state(state, "tiktok")
     try:
-        account = await tiktok_exchange(code)
+        account = await tiktok_exchange(code, state)
         store.save("tiktok", slot, account)
     except Exception as exc:
         raise HTTPException(500, f"TikTok OAuth: {exc}") from exc
