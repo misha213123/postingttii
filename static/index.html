@@ -307,7 +307,7 @@ async function resumeJob(jobId){
   await tick();pollTimer=setInterval(tick,2000);
 }
 
-function targetPercent(status){return {queued:0,waiting:12,publishing:62,done:100,already:100,cooldown:12,error:100}[status]??0;}
+function targetPercent(status){return {queued:0,waiting:12,publishing:62,done:100,already:100,cooldown:12,blocked:100,error:100}[status]??0;}
 function targetText(t){
   if(t.status==='queued')return 'В очереди';
   if(t.status==='waiting')return 'Пауза '+fmtTime(t.retry_after_seconds||0);
@@ -315,6 +315,7 @@ function targetText(t){
   if(t.status==='done')return 'Опубликовано';
   if(t.status==='already')return 'Уже было — пропуск';
   if(t.status==='cooldown')return 'Пауза '+fmtTime(t.retry_after_seconds||0);
+  if(t.status==='blocked')return t.message||'Пропущено';
   if(t.status==='error')return t.message||'Ошибка';
   return t.message||t.status;
 }
