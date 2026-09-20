@@ -43,6 +43,12 @@ class PublishRequest(BaseModel):
     targets: list[str] | None = None
 
 
+class PublishTargetRequest(BaseModel):
+    filename: str
+    caption: str
+    target: str
+
+
 def _safe_video(filename: str) -> Path:
     name = Path(filename).name
     path = (settings.upload_dir / name).resolve()
@@ -80,10 +86,20 @@ async def status():
         "accounts": store.list_accounts(),
         "videos": _videos(),
         "upload_dir": str(settings.upload_dir),
+        "post_cooldown_minutes": settings.post_cooldown_minutes,
+        "cooldowns": {
+            target: publish_state.cooldown_remaining(
+                target, settings.post_cooldown_minutes * 60
+            )
+            for platform in ("youtube", "instagram")
+            for account in store.list_accounts().get(platform, [])
+            for target in [f"{platform}:{account['slot']}"]
+        },
         "configured": {
             "openai": bool(settings.openai_api_key),
             "youtube": bool(settings.youtube_client_id and settings.youtube_client_secret),
             "tiktok": bool(settings.tiktok_client_key and settings.tiktok_client_secret),
+            "tiktok_enabled": settings.tiktok_enabled,
             "instagram": bool(settings.instagram_client_id and settings.instagram_client_secret),
             "instagram_public_url": bool(settings.public_base_url),
         },
@@ -100,6 +116,84 @@ async def caption(body: CaptionRequest):
     return {"caption": text}
 
 
+async def _publish_single_target(video: Path, caption: str, target: str) -> dict:
+    try:
+        platform, slot_text = target.split(":", 1)
+        slot = int(slot_text)
+    except Exception as exc:
+        raise HTTPException(400, "Некорректный target") from exc
+
+    if slot not in (1, 2):
+        raise HTTPException(400, "Разрешены только слоты 1 и 2")
+    if platform not in {"youtube", "instagram", "tiktok"}:
+        raise HTTPException(400, f"Неизвестная платформа: {platform}")
+    if platform == "tiktok" and not settings.tiktok_enabled:
+        raise HTTPException(503, "TikTok временно отключен")
+
+    video_key = publish_state.video_key(video)
+    if publish_state.is_completed(video_key, target):
+        return {
+            "target": target,
+            "ok": True,
+            "skipped": True,
+            "message": "Уже опубликовано на этом аккаунте.",
+        }
+
+    remaining = publish_state.cooldown_remaining(
+        target, settings.post_cooldown_minutes * 60
+    )
+    if remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": "Для этого аккаунта действует пауза между публикациями.",
+                "retry_after_seconds": remaining,
+                "target": target,
+            },
+        )
+
+    media_token = secrets.token_urlsafe(24)
+    MEDIA_TOKENS[media_token] = video
+    video_url = (
+        f"{settings.public_base_url}/media/{media_token}"
+        if settings.public_base_url
+        else ""
+    )
+
+    try:
+        if platform == "youtube":
+            result = await youtube_upload(slot, video, caption)
+        elif platform == "instagram":
+            result = await instagram_upload(slot, video_url, caption)
+        else:
+            result = await tiktok_upload(slot, video, caption)
+
+        publish_state.mark_completed(
+            video_key=video_key,
+            filename=video.name,
+            target=target,
+            result=result,
+        )
+        return {"target": target, "ok": True, "result": result}
+    finally:
+        MEDIA_TOKENS.pop(media_token, None)
+
+
+@app.post("/api/publish-target")
+async def publish_target(body: PublishTargetRequest):
+    video = _safe_video(body.filename)
+    try:
+        return await _publish_single_target(video, body.caption, body.target)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {
+            "target": body.target,
+            "ok": False,
+            "error": str(exc),
+        }
+
+
 @app.post("/api/publish")
 async def publish(body: PublishRequest):
     video = _safe_video(body.filename)
@@ -109,7 +203,10 @@ async def publish(body: PublishRequest):
         targets = body.targets
     else:
         targets = []
-        for platform in ("youtube", "tiktok", "instagram"):
+        default_platforms = ["youtube", "instagram"]
+        if settings.tiktok_enabled:
+            default_platforms.append("tiktok")
+        for platform in default_platforms:
             for account in accounts.get(platform, []):
                 targets.append(f"{platform}:{account['slot']}")
 
@@ -145,6 +242,8 @@ async def publish(body: PublishRequest):
             if platform == "youtube":
                 result = await youtube_upload(slot, video, body.caption)
             elif platform == "tiktok":
+                if not settings.tiktok_enabled:
+                    raise RuntimeError("TikTok временно отключен")
                 result = await tiktok_upload(slot, video, body.caption)
             elif platform == "instagram":
                 result = await instagram_upload(slot, video_url, body.caption)
@@ -200,6 +299,8 @@ async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int
     if slot not in (1, 2):
         raise HTTPException(400, "Слот должен быть 1 или 2")
     _require_platform(platform)
+    if platform == "tiktok" and not settings.tiktok_enabled:
+        raise HTTPException(503, "TikTok временно отключен")
 
     state = secrets.token_urlsafe(32)
     OAUTH_STATES[state] = (platform, slot)
