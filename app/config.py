@@ -17,7 +17,7 @@ class Settings:
     port: int = int(os.getenv("PORT", "8765"))
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5-nano")
 
     youtube_client_id: str = os.getenv("YOUTUBE_CLIENT_ID", "")
     youtube_client_secret: str = os.getenv("YOUTUBE_CLIENT_SECRET", "")
