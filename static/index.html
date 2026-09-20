@@ -38,6 +38,8 @@
     .already{font-size:12px;color:#6ee7a8;margin-top:4px}
     .video-ai{display:none;grid-column:2/4;border-top:1px solid #252d38;padding-top:10px;margin-top:2px}
     .video-row.selected .video-ai{display:block}
+    .video-preview-wrap{grid-column:2/4;margin-top:8px}
+    .video-preview{width:220px;max-width:100%;aspect-ratio:16/9;display:block;background:#05070a;border:1px solid #2a323d;border-radius:10px;object-fit:cover}
     .video-ai textarea{width:100%;min-height:86px;resize:vertical;background:#0a0e13;color:#f5f7fa;border:1px solid #2c3440;border-radius:11px;padding:11px 12px;font:inherit}
     .video-ai-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px}
     .ai-state{font-size:12px;color:#939cab}
@@ -259,6 +261,7 @@ function renderVideos(){
       '<input type="checkbox" class="video-check" data-name="'+esc(v.name)+'" '+(checked?'checked':'')+' onchange="toggleVideo(this)">'+
       '<div><div class="video-name">'+esc(v.name)+'</div><div class="video-meta">'+v.size_mb+' MB</div>'+doneText+'</div>'+
       '<div class="video-status">'+(done.length?'<span class="good">История сохранена</span>':'<span class="muted">Готов</span>')+'</div>'+
+      '<div class="video-preview-wrap"><video class="video-preview" controls preload="metadata" playsinline src="/api/video-preview/'+encoded+'"></video></div>'+
       '<div class="video-ai">'+
         '<div class="video-ai-top">'+
           '<span id="ai-state-'+encoded+'" class="ai-state '+aiClass+'">'+esc(aiState||'AI описание появится автоматически')+'</span>'+
