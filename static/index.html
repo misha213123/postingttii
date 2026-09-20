@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PostingTTII</title>
+  <style>
+    :root{color-scheme:dark;font-family:Inter,system-ui,sans-serif}
+    *{box-sizing:border-box} body{margin:0;background:#0b0d10;color:#f5f7fa}
+    main{max-width:1180px;margin:0 auto;padding:32px 20px 60px}
+    h1{margin:0 0 8px;font-size:34px}.muted{color:#9aa4b2}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0}
+    .card{background:#14181f;border:1px solid #252b36;border-radius:16px;padding:16px}
+    .accounts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .account{background:#0e1116;border:1px solid #242a33;border-radius:12px;padding:12px}
+    button,.btn{border:0;border-radius:10px;padding:10px 13px;cursor:pointer;font-weight:700;text-decoration:none;display:inline-block}
+    .primary{background:#fff;color:#0b0d10}.secondary{background:#242a33;color:#fff}
+    .danger{background:#431d22;color:#ffb7be}.good{color:#67e8a5}.bad{color:#ff8794}
+    .video{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border-top:1px solid #242a33;padding:12px 0}
+    textarea,input{width:100%;background:#0e1116;color:#fff;border:1px solid #2a313d;border-radius:10px;padding:12px}
+    textarea{min-height:130px;resize:vertical}.editor{margin-top:18px;display:none}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .status{margin-top:14px;white-space:pre-wrap;background:#0e1116;border-radius:10px;padding:12px;min-height:44px}
+    @media(max-width:800px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>PostingTTII</h1>
+  <div class="muted">Одна папка → описание через OpenAI → публикация во все подключенные аккаунты.</div>
+
+  <section class="grid" id="platforms"></section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <h2 style="margin:0 0 5px">Видео для публикации</h2>
+        <div class="muted" id="folder"></div>
+      </div>
+      <button class="secondary" onclick="load()">Обновить</button>
+    </div>
+    <div id="videos"></div>
+  </section>
+
+  <section class="card editor" id="editor">
+    <h2 id="selectedName"></h2>
+    <label class="muted">Контекст для OpenAI</label>
+    <input id="hint" placeholder="Например: смешной момент со стрима, PUBG, реакция...">
+    <div style="height:10px"></div>
+    <label class="muted">Описание + хештеги</label>
+    <textarea id="caption"></textarea>
+    <div class="row" style="margin-top:12px">
+      <button class="secondary" onclick="generateCaption()">Сгенерировать OpenAI</button>
+      <button class="primary" onclick="publishAll()">Опубликовать во все подключенные</button>
+    </div>
+    <div class="status" id="publishStatus">Готово к работе.</div>
+  </section>
+</main>
+
+<script>
+let state=null, selected=null;
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function load(){
+  const r=await fetch('/api/status');
+  state=await r.json();
+  document.getElementById('folder').textContent=state.upload_dir;
+  renderPlatforms();
+  renderVideos();
+}
+
+function connected(platform,slot){
+  return (state.accounts[platform]||[]).find(a=>Number(a.slot)===slot);
+}
+
+function renderPlatforms(){
+  const names={youtube:'YouTube',tiktok:'TikTok',instagram:'Instagram'};
+  const root=document.getElementById('platforms');
+  root.innerHTML='';
+  for(const platform of ['youtube','tiktok','instagram']){
+    const card=document.createElement('div');
+    card.className='card';
+    const configured=state.configured[platform];
+    let html='<h2 style="margin-top:0">'+names[platform]+'</h2>';
+    html+='<div class="'+(configured?'good':'bad')+'">'+(configured?'API настроен':'Нужны ключи в .env')+'</div>';
+    html+='<div class="accounts">';
+    for(const slot of [1,2]){
+      const a=connected(platform,slot);
+      html+='<div class="account"><b>Аккаунт #'+slot+'</b><br>';
+      if(a){
+        html+='<span class="good">'+esc(a.label||'Подключен')+'</span><br><br>';
+        html+='<button class="danger" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
+      }else{
+        html+='<span class="muted">Не подключен</span><br><br>';
+        html+='<a class="btn secondary" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
+      }
+      html+='</div>';
+    }
+    html+='</div>';
+    if(platform==='instagram'&&!state.configured.instagram_public_url){
+      html+='<div class="muted" style="margin-top:10px">Для Reels нужен PUBLIC_BASE_URL через HTTPS-туннель.</div>';
+    }
+    card.innerHTML=html;
+    root.appendChild(card);
+  }
+}
+
+function renderVideos(){
+  const root=document.getElementById('videos');
+  if(!state.videos.length){
+    root.innerHTML='<div class="muted" style="padding:18px 0">Положи .mp4/.mov/.webm в папку выше.</div>';
+    return;
+  }
+  root.innerHTML=state.videos.map(v=>
+    '<div class="video"><div><b>'+esc(v.name)+'</b><div class="muted">'+v.size_mb+' MB</div></div>'+
+    '<button class="secondary" onclick="selectVideo(\''+encodeURIComponent(v.name)+'\')">Выбрать</button></div>'
+  ).join('');
+}
+
+function selectVideo(encoded){
+  selected=decodeURIComponent(encoded);
+  document.getElementById('selectedName').textContent=selected;
+  document.getElementById('editor').style.display='block';
+  document.getElementById('caption').value='';
+  document.getElementById('publishStatus').textContent='Готово к работе.';
+  document.getElementById('editor').scrollIntoView({behavior:'smooth'});
+}
+
+async function generateCaption(){
+  if(!selected)return;
+  const out=document.getElementById('publishStatus');
+  out.textContent='OpenAI генерирует описание...';
+  const r=await fetch('/api/caption',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({filename:selected,hint:document.getElementById('hint').value})
+  });
+  const data=await r.json();
+  if(!r.ok){out.textContent=data.detail||'Ошибка OpenAI';return}
+  document.getElementById('caption').value=data.caption;
+  out.textContent='Описание готово.';
+}
+
+async function publishAll(){
+  if(!selected)return;
+  const caption=document.getElementById('caption').value.trim();
+  if(!caption){
+    document.getElementById('publishStatus').textContent='Сначала добавь описание или сгенерируй его.';
+    return;
+  }
+  const out=document.getElementById('publishStatus');
+  out.textContent='Загружаю видео на платформы. Не закрывай окно...';
+  const r=await fetch('/api/publish',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({filename:selected,caption})
+  });
+  const data=await r.json();
+  if(!r.ok){out.textContent=data.detail||'Ошибка публикации';return}
+  out.textContent=data.results.map(x=>(x.ok?'✅ ':'❌ ')+x.target+(x.ok?'':': '+x.error)).join('\n');
+  if(data.ok){
+    selected=null;
+    document.getElementById('editor').style.display='none';
+    await load();
+  }
+}
+
+async function disconnect(platform,slot){
+  await fetch('/api/account/'+platform+'/'+slot,{method:'DELETE'});
+  await load();
+}
+load();
+</script>
+</body>
+</html>
