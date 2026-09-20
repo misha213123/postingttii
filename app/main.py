@@ -35,6 +35,15 @@ MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
 
 
+async def _expire_media_token(token: str, delay_seconds: int = 300) -> None:
+    """Keep an Instagram source URL alive briefly after publish/error.
+
+    Meta can continue reading the source video while finalizing a Reel.
+    """
+    await asyncio.sleep(delay_seconds)
+    MEDIA_TOKENS.pop(token, None)
+
+
 class CaptionRequest(BaseModel):
     filename: str
     hint: str = ""
@@ -204,7 +213,12 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
         )
         return {"target": target, "ok": True, "result": result}
     finally:
-        MEDIA_TOKENS.pop(media_token, None)
+        if platform == "instagram":
+            # Do not cut Meta off immediately: keep the source URL alive for
+            # another five minutes after success/error.
+            asyncio.create_task(_expire_media_token(media_token, 300))
+        else:
+            MEDIA_TOKENS.pop(media_token, None)
 
 
 async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
