@@ -68,6 +68,22 @@ class PublishStateStore:
         }
         self._write(data)
 
+    def last_completed_at(self, target: str) -> int:
+        latest = 0
+        for item in self._read().values():
+            target_info = item.get("targets", {}).get(target)
+            if target_info:
+                latest = max(latest, int(target_info.get("completed_at", 0)))
+        return latest
+
+    def cooldown_remaining(self, target: str, cooldown_seconds: int) -> int:
+        if cooldown_seconds <= 0:
+            return 0
+        last = self.last_completed_at(target)
+        if not last:
+            return 0
+        return max(0, cooldown_seconds - (int(time.time()) - last))
+
     def summary(self, video_key: str) -> list[str]:
         return sorted(self.completed_targets(video_key).keys())
 
