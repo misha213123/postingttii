@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
 import shutil
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -30,6 +32,7 @@ app = FastAPI(title="PostingTTII", version="0.1.0")
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
+BATCH_JOBS: dict[str, dict] = {}
 
 
 class CaptionRequest(BaseModel):
@@ -47,6 +50,13 @@ class PublishTargetRequest(BaseModel):
     filename: str
     caption: str
     target: str
+
+
+class BatchPublishRequest(BaseModel):
+    filenames: list[str]
+    targets: list[str]
+    interval_minutes: int = 20
+    hint: str = ""
 
 
 def _safe_video(filename: str) -> Path:
@@ -177,6 +187,193 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
         return {"target": target, "ok": True, "result": result}
     finally:
         MEDIA_TOKENS.pop(media_token, None)
+
+
+async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
+    job = BATCH_JOBS[job_id]
+    job["status"] = "running"
+    job["started_at"] = int(time.time())
+
+    try:
+        for index, filename in enumerate(body.filenames):
+            if job.get("cancel_requested"):
+                job["status"] = "cancelled"
+                return
+
+            video = _safe_video(filename)
+            item = job["items"][index]
+            item["status"] = "caption"
+            item["started_at"] = int(time.time())
+
+            try:
+                caption = await asyncio.to_thread(
+                    generate_caption, video.name, body.hint
+                )
+                item["caption"] = caption
+            except Exception as exc:
+                item["status"] = "error"
+                item["error"] = f"OpenAI: {exc}"
+                continue
+
+            item["status"] = "publishing"
+            for target in body.targets:
+                if job.get("cancel_requested"):
+                    job["status"] = "cancelled"
+                    return
+
+                target_state = item["targets"][target]
+                target_state["status"] = "publishing"
+                try:
+                    result = await _publish_single_target(video, caption, target)
+                    if result.get("skipped"):
+                        target_state["status"] = "already"
+                        target_state["message"] = "Уже на аккаунте"
+                    elif result.get("ok"):
+                        target_state["status"] = "done"
+                        target_state["message"] = "Опубликовано"
+                    else:
+                        target_state["status"] = "error"
+                        target_state["message"] = result.get("error", "Ошибка")
+                except HTTPException as exc:
+                    detail = exc.detail
+                    if exc.status_code == 429 and isinstance(detail, dict):
+                        target_state["status"] = "cooldown"
+                        target_state["message"] = detail.get("message", "Пауза")
+                        target_state["retry_after_seconds"] = int(
+                            detail.get("retry_after_seconds", 0)
+                        )
+                    else:
+                        target_state["status"] = "error"
+                        target_state["message"] = (
+                            detail if isinstance(detail, str) else str(detail)
+                        )
+                except Exception as exc:
+                    target_state["status"] = "error"
+                    target_state["message"] = str(exc)
+
+            statuses = [x["status"] for x in item["targets"].values()]
+            if all(x in {"done", "already"} for x in statuses):
+                item["status"] = "done"
+            elif any(x == "error" for x in statuses):
+                item["status"] = "partial"
+            else:
+                item["status"] = "partial"
+            item["finished_at"] = int(time.time())
+            job["completed_videos"] = index + 1
+
+            if index < len(body.filenames) - 1 and not job.get("cancel_requested"):
+                job["status"] = "waiting"
+                job["next_video_at"] = int(
+                    time.time() + body.interval_minutes * 60
+                )
+                while time.time() < job["next_video_at"]:
+                    if job.get("cancel_requested"):
+                        job["status"] = "cancelled"
+                        return
+                    await asyncio.sleep(min(5, max(0.2, job["next_video_at"] - time.time())))
+                job["next_video_at"] = None
+                job["status"] = "running"
+
+        job["status"] = "done"
+        job["finished_at"] = int(time.time())
+    except Exception as exc:
+        job["status"] = "error"
+        job["error"] = str(exc)
+        job["finished_at"] = int(time.time())
+
+
+@app.post("/api/batch/start")
+async def batch_start(body: BatchPublishRequest):
+    filenames = list(dict.fromkeys(Path(x).name for x in body.filenames))
+    targets = list(dict.fromkeys(body.targets))
+
+    if not filenames:
+        raise HTTPException(400, "Выбери хотя бы одно видео")
+    if not targets:
+        raise HTTPException(400, "Выбери хотя бы один аккаунт")
+    if len(filenames) > 50:
+        raise HTTPException(400, "За один запуск можно выбрать максимум 50 видео")
+
+    minimum = max(1, settings.post_cooldown_minutes)
+    if body.interval_minutes < minimum:
+        raise HTTPException(
+            400,
+            f"Интервал должен быть не меньше {minimum} минут",
+        )
+    if body.interval_minutes > 24 * 60:
+        raise HTTPException(400, "Слишком большой интервал")
+
+    for filename in filenames:
+        _safe_video(filename)
+
+    allowed_targets = {
+        f"{platform}:{account['slot']}"
+        for platform in ("youtube", "instagram")
+        for account in store.list_accounts().get(platform, [])
+    }
+    invalid = [target for target in targets if target not in allowed_targets]
+    if invalid:
+        raise HTTPException(
+            400,
+            "Недоступные аккаунты: " + ", ".join(invalid),
+        )
+
+    job_id = secrets.token_urlsafe(12)
+    normalized = BatchPublishRequest(
+        filenames=filenames,
+        targets=targets,
+        interval_minutes=body.interval_minutes,
+        hint=body.hint,
+    )
+    BATCH_JOBS[job_id] = {
+        "id": job_id,
+        "status": "queued",
+        "created_at": int(time.time()),
+        "started_at": None,
+        "finished_at": None,
+        "next_video_at": None,
+        "completed_videos": 0,
+        "total_videos": len(filenames),
+        "interval_minutes": body.interval_minutes,
+        "targets": targets,
+        "cancel_requested": False,
+        "error": "",
+        "items": [
+            {
+                "filename": filename,
+                "status": "queued",
+                "caption": "",
+                "error": "",
+                "targets": {
+                    target: {"status": "queued", "message": ""}
+                    for target in targets
+                },
+            }
+            for filename in filenames
+        ],
+    }
+
+    asyncio.create_task(_run_batch_job(job_id, normalized))
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/batch/{job_id}")
+async def batch_status(job_id: str):
+    job = BATCH_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "Очередь не найдена")
+    return job
+
+
+@app.post("/api/batch/{job_id}/cancel")
+async def batch_cancel(job_id: str):
+    job = BATCH_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "Очередь не найдена")
+    if job["status"] in {"done", "cancelled", "error"}:
+        return job
+    job["cancel_requested"] = True
+    return {"ok": True}
 
 
 @app.post("/api/publish-target")
