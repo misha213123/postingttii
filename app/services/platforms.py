@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
+import re
 import secrets
 import time
 from pathlib import Path
@@ -19,6 +20,20 @@ _TIKTOK_CODE_VERIFIERS: dict[str, str] = {}
 
 def _now() -> int:
     return int(time.time())
+
+
+def clean_video_title(path: Path) -> str:
+    title = path.stem
+
+    # Remove technical suffixes added by the clipper, e.g.
+    # _d7f872b4b53a or -d7f872b4b53a
+    title = re.sub(r"[_-][0-9a-fA-F]{8,}$", "", title)
+
+    # Turn filename separators into normal spaces.
+    title = re.sub(r"[_-]+", " ", title)
+    title = re.sub(r"\s+", " ", title).strip()
+
+    return title[:95] or "Short"
 
 
 def _api_error(response: httpx.Response, platform: str, action: str) -> RuntimeError:
@@ -130,7 +145,7 @@ async def _youtube_access_token(slot: int) -> tuple[str, dict]:
 
 async def youtube_upload(slot: int, video_path: Path, caption: str) -> dict:
     token, _ = await _youtube_access_token(slot)
-    title = video_path.stem.replace("_", " ").strip()[:95] or "Short"
+    title = clean_video_title(video_path)
     body = {
         "snippet": {
             "title": title,
