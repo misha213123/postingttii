@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
+import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -10,6 +12,9 @@ import httpx
 
 from app.config import settings
 from app.store import store
+
+
+_TIKTOK_CODE_VERIFIERS: dict[str, str] = {}
 
 
 def _now() -> int:
@@ -139,17 +144,27 @@ async def youtube_upload(slot: int, video_path: Path, caption: str) -> dict:
 
 
 def tiktok_auth_url(state: str) -> str:
+    code_verifier = secrets.token_urlsafe(64)
+    code_challenge = hashlib.sha256(code_verifier.encode("utf-8")).hexdigest()
+    _TIKTOK_CODE_VERIFIERS[state] = code_verifier
+
     params = {
         "client_key": settings.tiktok_client_key,
         "scope": "user.info.basic,video.publish",
         "response_type": "code",
         "redirect_uri": settings.tiktok_redirect_uri,
         "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     }
     return "https://www.tiktok.com/v2/auth/authorize/?" + urlencode(params)
 
 
-async def tiktok_exchange(code: str) -> dict:
+async def tiktok_exchange(code: str, state: str) -> dict:
+    code_verifier = _TIKTOK_CODE_VERIFIERS.pop(state, None)
+    if not code_verifier:
+        raise RuntimeError("TikTok PKCE session expired. Подключи аккаунт еще раз.")
+
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             "https://open.tiktokapis.com/v2/oauth/token/",
@@ -159,6 +174,7 @@ async def tiktok_exchange(code: str) -> dict:
                 "code": code,
                 "grant_type": "authorization_code",
                 "redirect_uri": settings.tiktok_redirect_uri,
+                "code_verifier": code_verifier,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -175,8 +191,7 @@ async def tiktok_exchange(code: str) -> dict:
 
     return {
         "id": token.get("open_id", user.get("open_id", "")),
-        "label": user.get("display_name") or user.get("username") or "TikTok",
-        "username": user.get("username", ""),
+        "label": user.get("display_name") or "TikTok",
         "access_token": token["access_token"],
         "refresh_token": token.get("refresh_token", ""),
         "expires_at": _now() + int(token.get("expires_in", 86400)),
