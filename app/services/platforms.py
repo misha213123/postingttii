@@ -531,19 +531,25 @@ async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
         while time.monotonic() < deadline:
             check = await client.get(
                 f"{base}/{container_id}",
-                params={"fields": "status_code", "access_token": token},
+                params={
+                    "fields": "status_code,status",
+                    "access_token": token,
+                },
             )
             if check.is_error:
                 raise _api_error(check, "Instagram", "check Reel container")
 
             last_status_payload = check.json()
             status = last_status_payload.get("status_code", "")
+            status_text = str(last_status_payload.get("status") or "").strip()
+
             if status == "FINISHED":
                 break
             if status in {"ERROR", "EXPIRED"}:
+                detail = status_text or "Meta не вернула текст ошибки"
                 raise RuntimeError(
-                    f"Instagram container status: {status} | "
-                    f"{last_status_payload}"
+                    f"Instagram #{slot}: {status} — {detail} "
+                    f"(container {container_id})"
                 )
 
             await asyncio.sleep(8)
