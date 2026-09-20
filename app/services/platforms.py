@@ -423,7 +423,8 @@ async def instagram_exchange(code: str) -> dict:
                 "code": code,
             },
         )
-        short.raise_for_status()
+        if short.is_error:
+            raise _api_error(short, "Instagram", "OAuth token request")
         short_token = short.json()
 
         long_response = await client.get(
@@ -441,15 +442,16 @@ async def instagram_exchange(code: str) -> dict:
         profile = await client.get(
             "https://graph.instagram.com/me",
             params={
-                "fields": "id,username,account_type",
+                "fields": "user_id,username,account_type",
                 "access_token": long_token["access_token"],
             },
         )
-        profile.raise_for_status()
+        if profile.is_error:
+            raise _api_error(profile, "Instagram", "profile")
         user = profile.json()
 
     return {
-        "id": user.get("id") or str(short_token.get("user_id", "")),
+        "id": str(user.get("user_id") or short_token.get("user_id", "")),
         "label": user.get("username") or "Instagram",
         "username": user.get("username", ""),
         "access_token": long_token["access_token"],
@@ -457,16 +459,48 @@ async def instagram_exchange(code: str) -> dict:
     }
 
 
-async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
+async def _instagram_access_token(slot: int) -> tuple[str, dict]:
     account = store.get("instagram", slot)
     if not account:
         raise RuntimeError(f"Instagram #{slot} не подключен")
+
+    expires_at = int(account.get("expires_at", 0))
+    # Long-lived Instagram tokens are refreshed only when they are close
+    # to expiration. This keeps both connected accounts working without
+    # asking the user to log in again every few weeks.
+    if expires_at > _now() + 3 * 24 * 60 * 60:
+        return account["access_token"], account
+
+    if expires_at and expires_at <= _now():
+        raise RuntimeError(
+            f"Instagram #{slot}: токен истек. Переподключи аккаунт в панели."
+        )
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            "https://graph.instagram.com/refresh_access_token",
+            params={
+                "grant_type": "ig_refresh_token",
+                "access_token": account["access_token"],
+            },
+        )
+        if response.is_error:
+            raise _api_error(response, "Instagram", "refresh access token")
+        refreshed = response.json()
+
+    account["access_token"] = refreshed.get("access_token", account["access_token"])
+    account["expires_at"] = _now() + int(refreshed.get("expires_in", 5184000))
+    store.save("instagram", slot, {k: v for k, v in account.items() if k != "slot"})
+    return account["access_token"], account
+
+
+async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
     if not video_url:
         raise RuntimeError(
             "Для Instagram нужен PUBLIC_BASE_URL: локальный файл должен быть доступен Meta по HTTPS."
         )
 
-    token = account["access_token"]
+    token, account = await _instagram_access_token(slot)
     user_id = account["id"]
     base = f"https://graph.instagram.com/{settings.instagram_graph_version}"
 
@@ -481,7 +515,8 @@ async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
                 "access_token": token,
             },
         )
-        create.raise_for_status()
+        if create.is_error:
+            raise _api_error(create, "Instagram", "create Reel container")
         container_id = create.json().get("id")
         if not container_id:
             raise RuntimeError(f"Instagram: не создан контейнер: {create.text}")
@@ -492,7 +527,8 @@ async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
                 f"{base}/{container_id}",
                 params={"fields": "status_code", "access_token": token},
             )
-            check.raise_for_status()
+            if check.is_error:
+                raise _api_error(check, "Instagram", "check Reel container")
             status = check.json().get("status_code", "")
             if status == "FINISHED":
                 break
@@ -507,7 +543,8 @@ async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
             f"{base}/{user_id}/media_publish",
             data={"creation_id": container_id, "access_token": token},
         )
-        publish.raise_for_status()
+        if publish.is_error:
+            raise _api_error(publish, "Instagram", "publish Reel")
         media_id = publish.json().get("id")
 
     return {"id": media_id, "platform": "instagram", "slot": slot}
