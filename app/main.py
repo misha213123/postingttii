@@ -10,7 +10,7 @@ from typing import Literal
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.services.openai_text import generate_caption
@@ -57,6 +57,7 @@ class BatchPublishRequest(BaseModel):
     targets: list[str]
     interval_minutes: int = 20
     hint: str = ""
+    captions: dict[str, str] = Field(default_factory=dict)
 
 
 def _safe_video(filename: str) -> Path:
@@ -202,18 +203,23 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
 
             video = _safe_video(filename)
             item = job["items"][index]
-            item["status"] = "caption"
             item["started_at"] = int(time.time())
+            caption = (body.captions.get(filename) or "").strip()
 
-            try:
-                caption = await asyncio.to_thread(
-                    generate_caption, video.name, body.hint
-                )
+            if caption:
+                item["status"] = "publishing"
                 item["caption"] = caption
-            except Exception as exc:
-                item["status"] = "error"
-                item["error"] = f"OpenAI: {exc}"
-                continue
+            else:
+                item["status"] = "caption"
+                try:
+                    caption = await asyncio.to_thread(
+                        generate_caption, video.name, body.hint
+                    )
+                    item["caption"] = caption
+                except Exception as exc:
+                    item["status"] = "error"
+                    item["error"] = f"OpenAI: {exc}"
+                    continue
 
             item["status"] = "publishing"
             for target in body.targets:
@@ -348,6 +354,11 @@ async def batch_start(body: BatchPublishRequest):
         targets=targets,
         interval_minutes=body.interval_minutes,
         hint=body.hint,
+        captions={
+            filename: (body.captions.get(filename) or "").strip()
+            for filename in filenames
+            if (body.captions.get(filename) or "").strip()
+        },
     )
     BATCH_JOBS[job_id] = {
         "id": job_id,
@@ -366,7 +377,7 @@ async def batch_start(body: BatchPublishRequest):
             {
                 "filename": filename,
                 "status": "queued",
-                "caption": "",
+                "caption": normalized.captions.get(filename, ""),
                 "error": "",
                 "targets": {
                     target: {"status": "queued", "message": ""}
