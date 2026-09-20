@@ -34,6 +34,11 @@ class Settings:
         "http://127.0.0.1:8765/auth/tiktok/callback",
     )
     tiktok_privacy_level: str = os.getenv("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY")
+    tiktok_enabled: bool = os.getenv("TIKTOK_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+    # Anti-spam spacing between successful posts to the same account.
+    # This is a safety/cadence control, not a guarantee against platform restrictions.
+    post_cooldown_minutes: int = max(0, int(os.getenv("POST_COOLDOWN_MINUTES", "15")))
 
     instagram_client_id: str = os.getenv("INSTAGRAM_CLIENT_ID", "")
     instagram_client_secret: str = os.getenv("INSTAGRAM_CLIENT_SECRET", "")
