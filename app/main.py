@@ -236,8 +236,37 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             video = _safe_video(filename)
             item = job["items"][index]
             item["started_at"] = int(time.time())
-            caption = (body.captions.get(filename) or "").strip()
 
+            # Fast pre-check: if this exact file is already on a selected
+            # account, mark it immediately. If nothing remains to publish,
+            # skip AI generation and move straight to the next clip without
+            # waiting the batch interval.
+            video_key = publish_state.video_key(video)
+            pending_targets: list[str] = []
+
+            for target in body.targets:
+                target_state = item["targets"][target]
+                if target in blocked_targets:
+                    target_state["status"] = "blocked"
+                    target_state["message"] = blocked_targets[target]
+                elif publish_state.is_completed(video_key, target):
+                    target_state["status"] = "already"
+                    target_state["message"] = "Уже на аккаунте — сразу следующий"
+                else:
+                    pending_targets.append(target)
+
+            if not pending_targets:
+                statuses = [x["status"] for x in item["targets"].values()]
+                item["status"] = (
+                    "done"
+                    if all(x in {"done", "already"} for x in statuses)
+                    else "partial"
+                )
+                item["finished_at"] = int(time.time())
+                job["completed_videos"] = index + 1
+                continue
+
+            caption = (body.captions.get(filename) or "").strip()
             if caption:
                 item["status"] = "publishing"
                 item["caption"] = caption
@@ -251,10 +280,13 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 except Exception as exc:
                     item["status"] = "error"
                     item["error"] = f"OpenAI: {exc}"
+                    item["finished_at"] = int(time.time())
+                    job["completed_videos"] = index + 1
                     continue
 
+            published_now = False
             item["status"] = "publishing"
-            for target in body.targets:
+            for target in pending_targets:
                 if job.get("cancel_requested"):
                     job["status"] = "cancelled"
                     return
@@ -298,6 +330,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     elif result.get("ok"):
                         target_state["status"] = "done"
                         target_state["message"] = "Опубликовано"
+                        published_now = True
                     else:
                         target_state["status"] = "error"
                         target_state["message"] = result.get("error", "Ошибка")
@@ -341,7 +374,14 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             item["finished_at"] = int(time.time())
             job["completed_videos"] = index + 1
 
-            if index < len(body.filenames) - 1 and not job.get("cancel_requested"):
+            # Wait between clips only when this clip actually produced at
+            # least one new publication. Already-uploaded/blocked/failed clips
+            # move to the next item immediately.
+            if (
+                published_now
+                and index < len(body.filenames) - 1
+                and not job.get("cancel_requested")
+            ):
                 job["status"] = "waiting"
                 job["next_video_at"] = int(
                     time.time() + body.interval_minutes * 60
@@ -350,7 +390,9 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     if job.get("cancel_requested"):
                         job["status"] = "cancelled"
                         return
-                    await asyncio.sleep(min(5, max(0.2, job["next_video_at"] - time.time())))
+                    await asyncio.sleep(
+                        min(5, max(0.2, job["next_video_at"] - time.time()))
+                    )
                 job["next_video_at"] = None
                 job["status"] = "running"
 
