@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.services.openai_text import generate_caption
+from app.publish_state import publish_state
 from app.services.platforms import (
     instagram_auth_url,
     instagram_exchange,
@@ -58,7 +59,12 @@ def _videos() -> list[dict]:
     result = []
     for path in sorted(settings.upload_dir.iterdir(), key=lambda p: p.stat().st_mtime if p.is_file() else 0):
         if path.is_file() and path.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}:
-            result.append({"name": path.name, "size_mb": round(path.stat().st_size / 1024 / 1024, 1)})
+            video_key = publish_state.video_key(path)
+            result.append({
+                "name": path.name,
+                "size_mb": round(path.stat().st_size / 1024 / 1024, 1),
+                "completed_targets": publish_state.summary(video_key),
+            })
     return result
 
 
@@ -110,6 +116,8 @@ async def publish(body: PublishRequest):
     if not targets:
         raise HTTPException(400, "Нет подключенных аккаунтов")
 
+    video_key = publish_state.video_key(video)
+
     media_token = secrets.token_urlsafe(24)
     MEDIA_TOKENS[media_token] = video
     video_url = f"{settings.public_base_url}/media/{media_token}" if settings.public_base_url else ""
@@ -118,6 +126,16 @@ async def publish(body: PublishRequest):
     failures = 0
 
     for target in targets:
+        # Never publish the same exact file twice to the same connected account.
+        if publish_state.is_completed(video_key, target):
+            results.append({
+                "target": target,
+                "ok": True,
+                "skipped": True,
+                "message": "Уже опубликовано ранее — пропущено, чтобы не было дубля.",
+            })
+            continue
+
         try:
             platform, slot_text = target.split(":", 1)
             slot = int(slot_text)
@@ -133,19 +151,31 @@ async def publish(body: PublishRequest):
             else:
                 raise RuntimeError(f"Неизвестная платформа: {platform}")
 
+            publish_state.mark_completed(
+                video_key=video_key,
+                filename=video.name,
+                target=target,
+                result=result,
+            )
             results.append({"target": target, "ok": True, "result": result})
         except Exception as exc:
             failures += 1
             results.append({"target": target, "ok": False, "error": str(exc)})
 
-    if failures == 0:
+    # Move to posted only when every target requested in this run is now completed.
+    all_done = all(publish_state.is_completed(video_key, target) for target in targets)
+    if all_done:
         destination = settings.posted_dir / video.name
         if destination.exists():
             destination = settings.posted_dir / f"{video.stem}_{secrets.token_hex(3)}{video.suffix}"
         shutil.move(str(video), str(destination))
 
     MEDIA_TOKENS.pop(media_token, None)
-    return {"ok": failures == 0, "results": results}
+    return {
+        "ok": failures == 0,
+        "all_done": all_done,
+        "results": results,
+    }
 
 
 @app.get("/media/{token}")
