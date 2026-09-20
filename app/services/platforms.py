@@ -21,6 +21,34 @@ def _now() -> int:
     return int(time.time())
 
 
+def _api_error(response: httpx.Response, platform: str, action: str) -> RuntimeError:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+
+    details = ""
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            code = error.get("code") or ""
+            message = error.get("message") or ""
+            log_id = error.get("log_id") or error.get("logid") or ""
+            details = " | ".join(x for x in (str(code), str(message), f"log_id={log_id}" if log_id else "") if x)
+        elif error:
+            details = str(error)
+        elif payload.get("error_description"):
+            details = str(payload.get("error_description"))
+        elif payload.get("message"):
+            details = str(payload.get("message"))
+
+    if not details:
+        details = response.text[:1200].strip()
+
+    suffix = f": {details}" if details else ""
+    return RuntimeError(f"{platform} {action}: HTTP {response.status_code}{suffix}")
+
+
 def youtube_auth_url(state: str) -> str:
     params = {
         "client_id": settings.youtube_client_id,
@@ -46,7 +74,8 @@ async def youtube_exchange(code: str) -> dict:
                 "redirect_uri": settings.youtube_redirect_uri,
             },
         )
-        token_response.raise_for_status()
+        token_if response.is_error:
+            raise _api_error(response, "OAuth", "token request")
         token = token_response.json()
 
         profile_response = await client.get(
@@ -54,7 +83,8 @@ async def youtube_exchange(code: str) -> dict:
             params={"part": "snippet", "mine": "true"},
             headers={"Authorization": f"Bearer {token['access_token']}"},
         )
-        profile_response.raise_for_status()
+        profile_if response.is_error:
+            raise _api_error(response, "OAuth", "token request")
         items = profile_response.json().get("items", [])
         channel = items[0] if items else {}
 
@@ -88,7 +118,8 @@ async def _youtube_access_token(slot: int) -> tuple[str, dict]:
                 "grant_type": "refresh_token",
             },
         )
-        response.raise_for_status()
+        if response.is_error:
+            raise _api_error(response, "OAuth", "token request")
         refreshed = response.json()
 
     account["access_token"] = refreshed["access_token"]
@@ -126,7 +157,8 @@ async def youtube_upload(slot: int, video_path: Path, caption: str) -> dict:
             headers=headers,
             json=body,
         )
-        init.raise_for_status()
+        if init.is_error:
+            raise _api_error(init, "YouTube", "init upload")
         upload_url = init.headers.get("Location")
         if not upload_url:
             raise RuntimeError("YouTube не вернул URL загрузки")
@@ -137,7 +169,8 @@ async def youtube_upload(slot: int, video_path: Path, caption: str) -> dict:
                 headers={"Content-Type": "video/mp4"},
                 content=f.read(),
             )
-        upload.raise_for_status()
+        if upload.is_error:
+            raise _api_error(upload, "YouTube", "upload video")
         data = upload.json()
 
     return {"id": data.get("id"), "platform": "youtube", "slot": slot}
@@ -178,7 +211,8 @@ async def tiktok_exchange(code: str, state: str) -> dict:
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        response.raise_for_status()
+        if response.is_error:
+            raise _api_error(response, "OAuth", "token request")
         token = response.json()
 
         info = await client.get(
@@ -186,7 +220,8 @@ async def tiktok_exchange(code: str, state: str) -> dict:
             params={"fields": "open_id,union_id,avatar_url,display_name"},
             headers={"Authorization": f"Bearer {token['access_token']}"},
         )
-        info.raise_for_status()
+        if info.is_error:
+            raise _api_error(info, "TikTok", "user info")
         user = info.json().get("data", {}).get("user", {})
 
     return {
@@ -218,7 +253,8 @@ async def _tiktok_access_token(slot: int) -> tuple[str, dict]:
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        response.raise_for_status()
+        if response.is_error:
+            raise _api_error(response, "OAuth", "token request")
         refreshed = response.json()
 
     account["access_token"] = refreshed["access_token"]
@@ -240,19 +276,34 @@ async def tiktok_upload(slot: int, video_path: Path, caption: str) -> dict:
                 "Content-Type": "application/json; charset=UTF-8",
             },
         )
-        creator.raise_for_status()
-        creator_data = creator.json().get("data", {})
+        if creator.is_error:
+            raise _api_error(creator, "TikTok", "creator info")
+        creator_json = creator.json()
+        creator_error = creator_json.get("error", {})
+        if creator_error.get("code") not in (None, "", "ok"):
+            raise RuntimeError(
+                f"TikTok creator info: {creator_error.get('code')}: "
+                f"{creator_error.get('message', '')}"
+            )
+
+        creator_data = creator_json.get("data", {})
         allowed_privacy = creator_data.get("privacy_level_options", [])
         privacy = settings.tiktok_privacy_level
-        if allowed_privacy and privacy not in allowed_privacy:
+
+        # Unaudited TikTok clients are limited to private posts.
+        if "SELF_ONLY" in allowed_privacy:
+            privacy = "SELF_ONLY"
+        elif allowed_privacy and privacy not in allowed_privacy:
             privacy = allowed_privacy[0]
 
         if size <= 64 * 1024 * 1024:
             chunk_size = size
             count = 1
         else:
+            # TikTok requires total_chunk_count = floor(video_size/chunk_size);
+            # the final chunk may contain the remainder.
             chunk_size = 32 * 1024 * 1024
-            count = math.ceil(size / chunk_size)
+            count = max(1, size // chunk_size)
 
         init = await client.post(
             "https://open.tiktokapis.com/v2/post/publish/video/init/",
@@ -264,9 +315,12 @@ async def tiktok_upload(slot: int, video_path: Path, caption: str) -> dict:
                 "post_info": {
                     "title": caption[:2200],
                     "privacy_level": privacy,
-                    "disable_duet": False,
-                    "disable_comment": False,
-                    "disable_stitch": False,
+                    "disable_duet": bool(creator_data.get("duet_disabled", False)),
+                    "disable_comment": bool(creator_data.get("comment_disabled", False)),
+                    "disable_stitch": bool(creator_data.get("stitch_disabled", False)),
+                    "brand_content_toggle": False,
+                    "brand_organic_toggle": False,
+                    "is_aigc": False,
                 },
                 "source_info": {
                     "source": "FILE_UPLOAD",
@@ -276,7 +330,8 @@ async def tiktok_upload(slot: int, video_path: Path, caption: str) -> dict:
                 },
             },
         )
-        init.raise_for_status()
+        if init.is_error:
+            raise _api_error(init, "TikTok", "init Direct Post")
         init_json = init.json()
         error = init_json.get("error", {})
         if error.get("code") not in (None, "", "ok"):
@@ -288,24 +343,41 @@ async def tiktok_upload(slot: int, video_path: Path, caption: str) -> dict:
         if not upload_url:
             raise RuntimeError("TikTok не вернул upload_url")
 
+        mime = {
+            ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
+            ".webm": "video/webm",
+        }.get(video_path.suffix.lower(), "video/mp4")
+
         with video_path.open("rb") as f:
             start = 0
-            while start < size:
-                chunk = f.read(chunk_size)
+            for index in range(count):
+                if index == count - 1:
+                    chunk = f.read()
+                else:
+                    chunk = f.read(chunk_size)
+
                 if not chunk:
-                    break
+                    raise RuntimeError("TikTok upload: empty chunk")
+
                 end = start + len(chunk) - 1
                 uploaded = await client.put(
                     upload_url,
                     content=chunk,
                     headers={
-                        "Content-Type": "video/mp4",
+                        "Content-Type": mime,
                         "Content-Length": str(len(chunk)),
                         "Content-Range": f"bytes {start}-{end}/{size}",
                     },
                 )
-                uploaded.raise_for_status()
+                if uploaded.is_error:
+                    raise _api_error(uploaded, "TikTok", f"upload chunk {index + 1}/{count}")
                 start = end + 1
+
+        if start != size:
+            raise RuntimeError(
+                f"TikTok upload incomplete: sent {start} of {size} bytes"
+            )
 
     return {"id": publish_id, "platform": "tiktok", "slot": slot}
 
@@ -347,7 +419,8 @@ async def instagram_exchange(code: str) -> dict:
                 "access_token": short_token["access_token"],
             },
         )
-        long_response.raise_for_status()
+        long_if response.is_error:
+            raise _api_error(response, "OAuth", "token request")
         long_token = long_response.json()
 
         profile = await client.get(
