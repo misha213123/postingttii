@@ -1,652 +1,357 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>PostingTTII</title>
-  <style>
-    :root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    *{box-sizing:border-box}
-    body{margin:0;background:#090b0f;color:#f5f7fa}
-    main{max-width:1240px;margin:0 auto;padding:28px 18px 70px}
-    h1,h2,h3,p{margin-top:0}
-    h1{font-size:34px;margin-bottom:6px}
-    h2{font-size:20px}
-    .muted{color:#939cab}.good{color:#6ee7a8}.bad{color:#ff8d99}.warn{color:#facc15}
-    .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:22px}
-    .badge{display:inline-flex;align-items:center;gap:7px;border:1px solid #2b3441;background:#12161d;border-radius:999px;padding:7px 10px;font-size:12px}
-    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px}
-    .card{background:#12161d;border:1px solid #242b36;border-radius:18px;padding:16px;box-shadow:0 14px 40px rgba(0,0,0,.12)}
-    .platform-card{min-height:175px}
-    .accounts{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
-    .account{background:#0c1016;border:1px solid #232a35;border-radius:13px;padding:12px}
-    button,.btn{border:0;border-radius:11px;padding:10px 13px;cursor:pointer;font-weight:800;text-decoration:none;display:inline-block}
-    button:disabled{opacity:.5;cursor:not-allowed}
-    .primary{background:#f5f7fa;color:#090b0f}
-    .secondary{background:#242b36;color:#f5f7fa}
-    .danger{background:#401d24;color:#ffbbc2}
-    .soft{background:#171c24;color:#d8dee7;border:1px solid #2a323f}
-    .section-title{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
-    .row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-    .split{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;margin-top:16px}
-    .videos{display:grid;gap:9px}
-    .video-row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:12px;border:1px solid #262e39;border-radius:13px;background:#0d1117;cursor:pointer;transition:border-color .15s ease,background .15s ease}
-    .video-row:hover{border-color:#3b4655}
-    .video-row.selected{border-color:#596476;background:#111720}
-    .video-row input{width:18px;height:18px}
-    .video-name{font-weight:800;word-break:break-word}
-    .video-meta{font-size:12px;color:#939cab;margin-top:4px}
-    .already{font-size:12px;color:#6ee7a8;margin-top:4px}
-    .video-ai{display:none;grid-column:2/4;border-top:1px solid #252d38;padding-top:10px;margin-top:2px}
-    .video-row.selected .video-ai{display:block}
-    .preview-btn{white-space:nowrap}
-    .preview-modal{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.78);backdrop-filter:blur(6px)}
-    .preview-modal.open{display:flex}
-    .preview-box{width:min(900px,96vw);background:#10141b;border:1px solid #2b3441;border-radius:18px;padding:14px;box-shadow:0 30px 80px rgba(0,0,0,.55)}
-    .preview-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
-    .preview-title{font-weight:800;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .preview-player{width:100%;aspect-ratio:16/9;display:block;background:#05070a;border-radius:12px}
-    .video-ai textarea{width:100%;min-height:86px;resize:vertical;background:#0a0e13;color:#f5f7fa;border:1px solid #2c3440;border-radius:11px;padding:11px 12px;font:inherit}
-    .video-ai-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px}
-    .ai-state{font-size:12px;color:#939cab}
-    .ai-state.good{color:#6ee7a8}.ai-state.bad{color:#ff8d99}
-    .controls{display:grid;gap:12px}
-    label.small{display:block;font-size:12px;color:#939cab;margin-bottom:6px}
-    input[type="text"],input[type="number"],select{width:100%;background:#0d1117;color:#f5f7fa;border:1px solid #2c3440;border-radius:11px;padding:11px 12px}
-    .target-list{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .target-choice{display:flex;gap:9px;align-items:center;background:#0d1117;border:1px solid #2a323d;border-radius:12px;padding:11px}
-    .target-choice input{width:17px;height:17px}
-    .interval-box{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
-    .notice{background:#10151c;border:1px solid #29313d;border-radius:12px;padding:11px 12px;font-size:12px;color:#aeb7c4}
-    .queue{margin-top:16px}
-    .queue-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}
-    .queue-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
-    .stat{background:#0d1117;border:1px solid #272f3a;border-radius:12px;padding:10px}
-    .stat b{display:block;font-size:18px}
-    .job-list{display:grid;gap:10px}
-    .job-video{background:#0d1117;border:1px solid #262e39;border-radius:14px;padding:12px}
-    .job-video.active{border-color:#5f6b7e}
-    .job-title{display:flex;justify-content:space-between;gap:12px;align-items:center}
-    .target-progress{margin-top:9px}
-    .target-progress-head{display:flex;justify-content:space-between;gap:10px;font-size:12px}
-    .bar{height:8px;background:#252c36;border-radius:999px;overflow:hidden;margin-top:6px}
-    .bar>div{height:100%;width:0;background:#e9edf3;border-radius:999px;transition:width .4s ease}
-    .bar>div.loading{animation:pulse 1s ease-in-out infinite}
-    .caption-preview{font-size:12px;color:#9aa4b2;margin-top:8px;white-space:pre-wrap}
-    .tiktok-off{border-style:dashed;opacity:.68}
-    .hidden{display:none!important}
-    @keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
-    @media(max-width:900px){.grid,.split{grid-template-columns:1fr}.queue-summary{grid-template-columns:1fr 1fr}}
-    @media(max-width:620px){.target-list{grid-template-columns:1fr}.video-row{grid-template-columns:auto 1fr}.video-row .video-status{grid-column:2}.topbar{flex-direction:column}}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PostingTTII</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#070b10;--panel:#0d131b;--panel2:#101923;--line:#263343;
+  --text:#f4f7fb;--muted:#94a3b8;--good:#4ade80;--bad:#fb7185;
+  --warn:#fbbf24;--accent:#60a5fa;--accent2:#2563eb;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}
+button,input,select{font:inherit}
+button,.btn{border:0;border-radius:10px;padding:9px 13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.primary{background:var(--accent2);color:white;font-weight:750}
+.secondary{background:#182230;color:#dce7f5;border:1px solid #2c3a4b}
+.danger{background:#34151d;color:#fecdd3;border:1px solid #65202f}
+.soft{background:#111b27;color:#dbeafe;border:1px solid #2b3a4d}
+.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.muted{color:var(--muted)}
+.hidden{display:none!important}
+.shell{max-width:1580px;margin:auto;padding:14px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}
+.brand h1{margin:0;font-size:24px}.brand .muted{font-size:13px;margin-top:3px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px}
+.accounts-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+.platform{padding:12px}
+.platform-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+.platform h3{margin:0;font-size:15px}
+.account-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.account{background:var(--panel2);border:1px solid #1e2a38;border-radius:11px;padding:9px;min-height:72px}
+.account b{font-size:12px}.account .label{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:4px 0 7px}
+.workspace{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(300px,.8fr);gap:12px;align-items:start}
+.video-panel{min-width:0;overflow:hidden}
+.panel-head{padding:12px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.panel-head h2{font-size:17px;margin:0}
+.toolbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.search{background:#080d13;border:1px solid #2a3747;color:var(--text);border-radius:10px;padding:9px 11px;min-width:240px;outline:none}
+.search:focus{border-color:var(--accent)}
+.video-scroll{height:58vh;min-height:430px;overflow:auto;padding:10px}
+.video-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.video-card{position:relative;background:#0b1118;border:1px solid #223041;border-radius:12px;padding:10px;min-height:112px;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;transition:.12s}
+.video-card:hover{border-color:#425777;background:#0e1721}
+.video-card.selected{border-color:var(--accent);background:#102139;box-shadow:inset 0 0 0 1px #3b82f6}
+.video-card .check{position:absolute;right:9px;top:9px;width:18px;height:18px}
+.video-name{font-size:13px;font-weight:750;line-height:1.25;padding-right:26px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.video-meta{font-size:11px;color:var(--muted);margin-top:5px}
+.video-bottom{display:flex;justify-content:space-between;align-items:end;gap:7px;margin-top:9px}
+.history{font-size:10px;line-height:1.25;color:#86efac;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
+.preview{padding:6px 8px;font-size:11px;border-radius:8px}
+.empty{padding:30px;text-align:center;color:var(--muted)}
+.sidebar{position:sticky;top:12px;padding:13px}
+.sidebar h2{font-size:17px;margin:0 0 12px}
+.metric-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.metric{background:var(--panel2);border:1px solid #1e2a38;border-radius:10px;padding:9px}
+.metric span{display:block;color:var(--muted);font-size:11px}.metric b{font-size:20px}
+.target-list{display:grid;gap:7px;margin:8px 0 12px}
+.target{display:flex;gap:8px;align-items:flex-start;background:#0b1118;border:1px solid #223041;border-radius:10px;padding:9px}
+.target input{margin-top:2px}
+.target b{font-size:13px}.target small{color:var(--muted)}
+.field{margin:10px 0}.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);border-radius:10px;padding:10px}
+.note{font-size:11px;color:var(--muted);line-height:1.4;margin:10px 0}
+.ai-note{background:#0c1a13;border:1px solid #1d4b32;color:#a7f3d0;border-radius:10px;padding:9px;font-size:11px;margin:10px 0}
+.start{width:100%;padding:12px}
+.queue{margin-top:12px;padding:12px}
+.queue-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.queue-head h2{font-size:17px;margin:0}
+.queue-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.stat{background:var(--panel2);border:1px solid #1e2a38;border-radius:10px;padding:9px}
+.stat span{display:block;color:var(--muted);font-size:10px}.stat b{font-size:16px}
+.job-list{max-height:58vh;overflow:auto;display:grid;gap:7px}
+.job{border:1px solid #223041;border-radius:11px;padding:9px;background:#0b1118}
+.job.active{border-color:#3b82f6}
+.job-title{display:flex;justify-content:space-between;gap:10px;align-items:start}
+.job-title b{font-size:12px;word-break:break-word}.job-title span{font-size:11px;white-space:nowrap}
+.targets{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:7px}
+.target-progress{background:#0e1620;border-radius:8px;padding:7px}
+.target-progress-head{display:flex;justify-content:space-between;gap:8px;font-size:10px}
+.bar{height:4px;background:#263343;border-radius:99px;margin-top:5px;overflow:hidden}.bar>div{height:100%;background:#dce6f4}
+.caption-preview{font-size:10px;color:#9aa9bc;margin-top:7px;line-height:1.35;max-height:42px;overflow:hidden}
+.preview-modal{display:none;position:fixed;inset:0;background:#000b;z-index:99;align-items:center;justify-content:center;padding:20px}
+.preview-modal.open{display:flex}
+.preview-box{width:min(980px,96vw);background:#090e14;border:1px solid #304156;border-radius:16px;overflow:hidden}
+.preview-head{padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.preview-title{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preview-player{display:block;width:100%;max-height:78vh;background:#000}
+@media(max-width:1200px){.video-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:900px){.accounts-strip{grid-template-columns:1fr}.workspace{grid-template-columns:1fr}.sidebar{position:static}.video-scroll{height:55vh}.video-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.video-grid{grid-template-columns:1fr}.search{min-width:0;width:100%}.queue-stats{grid-template-columns:1fr 1fr}.targets{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
-<main>
+<div class="shell">
   <div class="topbar">
-    <div>
+    <div class="brand">
       <h1>PostingTTII</h1>
-      <div class="muted">Выбираешь несколько роликов → выбираешь аккаунты → очередь публикует их с интервалом.</div>
+      <div class="muted">Массовая очередь публикаций</div>
     </div>
-    <div class="badge">TikTok <span class="bad">временно отключён</span></div>
+    <div class="muted" id="folder"></div>
   </div>
 
-  <section class="grid" id="platforms"></section>
+  <section class="accounts-strip" id="platforms"></section>
 
-  <section class="split">
-    <div class="card">
-      <div class="section-title">
+  <div class="workspace">
+    <section class="card video-panel">
+      <div class="panel-head">
         <div>
-          <h2 style="margin-bottom:4px">1. Выбери видео</h2>
-          <div class="muted" id="folder"></div>
+          <h2>Видео <span class="muted" id="videoCount"></span></h2>
+          <div class="muted" style="font-size:11px;margin-top:3px">Клик по карточке — выбрать. AI здесь больше не запускается.</div>
         </div>
-        <div class="row">
-          <button class="soft" onclick="selectAllVideos()">Выбрать все</button>
-          <button class="soft" onclick="clearVideos()">Снять</button>
-          <button class="secondary" onclick="load()">Обновить</button>
+        <div class="toolbar">
+          <input class="search" id="videoSearch" placeholder="Поиск по названию..." oninput="renderVideos()">
+          <button class="secondary" onclick="selectAllVideos()">Выбрать все</button>
+          <button class="secondary" onclick="clearVideos()">Снять выбор</button>
         </div>
       </div>
-      <div class="videos" id="videos"></div>
-    </div>
-
-    <div class="card">
-      <h2>2. Настрой очередь</h2>
-      <div class="controls">
-        <div>
-          <label class="small">Куда публиковать</label>
-          <div class="target-list" id="batchTargets"></div>
-        </div>
-
-        <div class="interval-box">
-          <div>
-            <label class="small">Интервал между роликами</label>
-            <select id="intervalMinutes">
-              <option value="15">15 минут</option>
-              <option value="20" selected>20 минут</option>
-              <option value="30">30 минут</option>
-              <option value="45">45 минут</option>
-              <option value="60">1 час</option>
-              <option value="90">1 ч 30 мин</option>
-              <option value="120">2 часа</option>
-            </select>
-          </div>
-          <div class="badge"><span id="selectedCount">0</span> видео</div>
-        </div>
-
-        <div class="notice" id="cadenceNote">
-          AI-описание создаётся автоматически для каждого выбранного ролика. Перед публикацией его можно изменить вручную. Интервал ограничивает частоту публикаций, но не гарантирует отсутствие ограничений платформы.
-        </div>
-
-        <button class="primary" id="startBatch" onclick="startBatch()">Запустить очередь</button>
+      <div class="video-scroll">
+        <div class="video-grid" id="videos"></div>
       </div>
-    </div>
-  </section>
+    </section>
+
+    <aside class="card sidebar">
+      <h2>Настройка очереди</h2>
+      <div class="metric-row">
+        <div class="metric"><span>Выбрано</span><b id="selectedCount">0</b></div>
+        <div class="metric"><span>Всего файлов</span><b id="totalCount">0</b></div>
+      </div>
+
+      <div class="muted" style="font-size:12px">Куда публиковать</div>
+      <div class="target-list" id="batchTargets"></div>
+
+      <div class="field">
+        <label for="intervalMinutes">Интервал между роликами</label>
+        <select id="intervalMinutes">
+          <option value="15">15 минут</option>
+          <option value="20" selected>20 минут</option>
+          <option value="30">30 минут</option>
+          <option value="45">45 минут</option>
+          <option value="60">1 час</option>
+          <option value="90">1.5 часа</option>
+          <option value="120">2 часа</option>
+        </select>
+      </div>
+
+      <div class="ai-note">✨ Описание и хештеги OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
+      <div class="note" id="cadenceNote"></div>
+      <button class="primary start" id="startBatch" onclick="startBatch()">Запустить очередь</button>
+    </aside>
+  </div>
 
   <section class="card queue hidden" id="queuePanel">
     <div class="queue-head">
       <div>
-        <h2 style="margin-bottom:4px">Очередь публикации</h2>
-        <div class="muted" id="queueSubtitle">Подготавливаю...</div>
+        <h2>Очередь публикации</h2>
+        <div class="muted" style="font-size:11px" id="queueSubtitle">Подготавливаю...</div>
       </div>
       <button class="danger" id="cancelBatch" onclick="cancelBatch()">Остановить очередь</button>
     </div>
 
-    <div class="queue-summary">
-      <div class="stat"><span class="muted">Всего</span><b id="statTotal">0</b></div>
-      <div class="stat"><span class="muted">Готово</span><b id="statDone">0</b></div>
-      <div class="stat"><span class="muted">Следующее</span><b id="statNext">—</b></div>
-      <div class="stat"><span class="muted">Интервал</span><b id="statInterval">—</b></div>
+    <div class="queue-stats">
+      <div class="stat"><span>Всего</span><b id="statTotal">0</b></div>
+      <div class="stat"><span>Готово</span><b id="statDone">0</b></div>
+      <div class="stat"><span>Следующее</span><b id="statNext">—</b></div>
+      <div class="stat"><span>Интервал</span><b id="statInterval">—</b></div>
     </div>
-
     <div class="job-list" id="jobList"></div>
   </section>
-  <div class="preview-modal" id="previewModal" onclick="previewBackdrop(event)">
-    <div class="preview-box">
-      <div class="preview-head">
-        <div class="preview-title" id="previewTitle">Просмотр видео</div>
-        <button class="secondary" type="button" onclick="closePreview()">Закрыть</button>
-      </div>
-      <video id="previewPlayer" class="preview-player" controls playsinline preload="none"></video>
+</div>
+
+<div class="preview-modal" id="previewModal" onclick="previewBackdrop(event)">
+  <div class="preview-box">
+    <div class="preview-head">
+      <div class="preview-title" id="previewTitle">Просмотр</div>
+      <button class="secondary" onclick="closePreview()">Закрыть</button>
     </div>
+    <video id="previewPlayer" class="preview-player" controls playsinline preload="none"></video>
   </div>
-</main>
+</div>
 
 <script>
 let state=null;
 let selectedVideos=new Set();
-let captions={};
-let aiStates={};
-let aiPromises={};
 let currentJobId=localStorage.getItem('postingttii_batch_job')||'';
 let pollTimer=null;
 
-function esc(s){
-  return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-function connected(platform,slot){
-  return (state.accounts[platform]||[]).find(a=>Number(a.slot)===slot);
-}
-
-function prettyTarget(target){
-  const p=target.split(':');
-  const name={youtube:'YouTube',instagram:'Instagram',tiktok:'TikTok'}[p[0]]||p[0];
-  return name+' #'+p[1];
-}
-
-function fmtTime(seconds){
-  seconds=Math.max(0,Math.floor(Number(seconds)||0));
-  const h=Math.floor(seconds/3600);
-  const m=Math.floor((seconds%3600)/60);
-  const s=seconds%60;
-  if(h>0)return h+'ч '+m+'м';
-  return m+':'+String(s).padStart(2,'0');
-}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function connected(platform,slot){return (state.accounts[platform]||[]).find(a=>Number(a.slot)===slot);}
+function prettyTarget(target){const [p,n]=target.split(':');return ({youtube:'YouTube',instagram:'Instagram',tiktok:'TikTok'}[p]||p)+' #'+n;}
+function fmtTime(seconds){seconds=Math.max(0,Math.floor(Number(seconds)||0));const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;return h? h+'ч '+m+'м':m+':'+String(s).padStart(2,'0');}
 
 async function load(){
   const r=await fetch('/api/status');
   state=await r.json();
   document.getElementById('folder').textContent=state.upload_dir;
+  document.getElementById('totalCount').textContent=(state.videos||[]).length;
+  document.getElementById('videoCount').textContent='('+((state.videos||[]).length)+')';
   const names=new Set((state.videos||[]).map(v=>v.name));
   selectedVideos=new Set([...selectedVideos].filter(x=>names.has(x)));
-  renderPlatforms();
-  renderVideos();
-  renderBatchTargets();
-  syncIntervalMin();
-  updateSelectedCount();
+  renderPlatforms();renderVideos();renderBatchTargets();syncIntervalMin();updateSelectedCount();
   if(currentJobId)resumeJob(currentJobId);
 }
 
 function renderPlatforms(){
-  const root=document.getElementById('platforms');
-  root.innerHTML='';
-  const labels={youtube:'YouTube',instagram:'Instagram'};
-
+  const root=document.getElementById('platforms');root.innerHTML='';
   for(const platform of ['youtube','instagram']){
-    const card=document.createElement('div');
-    card.className='card platform-card';
-    const configured=state.configured[platform];
-    let html='<h2 style="margin-bottom:6px">'+labels[platform]+'</h2>';
-    html+='<div class="'+(configured?'good':'bad')+'">'+(configured?'API настроен':'Нужны ключи в .env')+'</div>';
-    html+='<div class="accounts">';
-
+    const title=platform==='youtube'?'YouTube':'Instagram';
+    const card=document.createElement('div');card.className='card platform';
+    let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div><div class="account-row">';
     for(const slot of [1,2]){
       const a=connected(platform,slot);
-      html+='<div class="account"><b>Аккаунт #'+slot+'</b><br>';
-      if(a){
-        html+='<span class="good">'+esc(a.label||'Подключён')+'</span><br><br>';
-        html+='<button class="danger" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
-      }else{
-        html+='<span class="muted">Не подключён</span><br><br>';
-        html+='<a class="btn secondary" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
-      }
+      html+='<div class="account"><b>Аккаунт #'+slot+'</b>';
+      if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div><button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
+      else html+='<div class="label muted">Не подключён</div><a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
       html+='</div>';
     }
     html+='</div>';
-    if(platform==='instagram'&&!state.configured.instagram_public_url){
-      html+='<div class="warn" style="font-size:12px;margin-top:10px">Для Reels нужен PUBLIC_BASE_URL через HTTPS-туннель.</div>';
-    }
-    card.innerHTML=html;
-    root.appendChild(card);
+    if(platform==='instagram'&&!state.configured.instagram_public_url)html+='<div class="warn" style="font-size:10px;margin-top:6px">Нет PUBLIC_BASE_URL</div>';
+    card.innerHTML=html;root.appendChild(card);
   }
-
-  const tiktok=document.createElement('div');
-  tiktok.className='card platform-card tiktok-off';
-  tiktok.innerHTML='<h2 style="margin-bottom:6px">TikTok</h2><div class="bad">Временно отключён</div><div class="muted" style="margin-top:10px">Не участвует в очереди, пока приложение TikTok проходит проверку.</div>';
-  root.appendChild(tiktok);
+  const t=document.createElement('div');t.className='card platform';
+  t.innerHTML='<div class="platform-head"><h3>TikTok</h3><span class="bad" style="font-size:11px">Отключён</span></div><div class="muted" style="font-size:12px">Не участвует в очереди, пока приложение проходит проверку.</div>';
+  root.appendChild(t);
 }
 
 function renderVideos(){
   const root=document.getElementById('videos');
-  if(!state.videos.length){
-    root.innerHTML='<div class="muted" style="padding:16px 0">Положи .mp4/.mov/.webm в папку выше.</div>';
-    return;
-  }
-
-  root.innerHTML=state.videos.map(v=>{
-    const checked=selectedVideos.has(v.name);
-    const done=v.completed_targets||[];
-    const doneText=done.length
-      ? '<div class="already">Уже на: '+done.map(prettyTarget).join(', ')+'</div>'
-      : '<div class="video-meta">Ещё не публиковалось</div>';
-    const encoded=encodeURIComponent(v.name);
-    const caption=captions[v.name]||'';
-    const aiState=aiStates[v.name]||'';
-    const aiClass=aiState.startsWith('✓')?'good':(aiState.startsWith('Ошибка')?'bad':'');
-    return '<div class="video-row '+(checked?'selected':'')+'" onclick="toggleVideoRow(event,\''+encoded+'\')">'+
-      '<input type="checkbox" class="video-check" data-name="'+esc(v.name)+'" '+(checked?'checked':'')+' onchange="toggleVideo(this)" onclick="event.stopPropagation()">'+
-      '<div><div class="video-name">'+esc(v.name)+'</div><div class="video-meta">'+v.size_mb+' MB</div>'+doneText+'</div>'+
-      '<div class="video-status row">'+
-        (done.length?'<span class="good">История сохранена</span>':'<span class="muted">Готов</span>')+
-        '<button class="soft preview-btn" type="button" onclick="event.stopPropagation();openPreview(\''+encoded+'\')">▶ Просмотреть</button>'+
-      '</div>'+
-      '<div class="video-ai">'+
-        '<div class="video-ai-top">'+
-          '<span id="ai-state-'+encoded+'" class="ai-state '+aiClass+'">'+esc(aiState||'AI описание появится автоматически')+'</span>'+
-          '<button class="secondary" type="button" onclick="event.stopPropagation();regenerateAI(\''+encoded+'\')">↻ Перегенерировать AI</button>'+
-        '</div>'+
-        '<textarea id="caption-'+encoded+'" placeholder="Описание + хештеги" onclick="event.stopPropagation()" oninput="saveCaption(\''+encoded+'\')">'+esc(caption)+'</textarea>'+
-      '</div>'+
-      '</div>';
+  if(!state)return;
+  const q=(document.getElementById('videoSearch').value||'').trim().toLowerCase();
+  const videos=(state.videos||[]).filter(v=>!q||v.name.toLowerCase().includes(q));
+  if(!videos.length){root.innerHTML='<div class="empty">Ничего не найдено.</div>';return;}
+  root.innerHTML=videos.map(v=>{
+    const checked=selectedVideos.has(v.name),done=v.completed_targets||[],encoded=encodeURIComponent(v.name);
+    const history=done.length?'Уже: '+done.map(prettyTarget).join(', '):'Не публиковалось';
+    return '<div class="video-card '+(checked?'selected':'')+'" onclick="toggleVideo(\''+encoded+'\')">'+
+      '<input class="check" type="checkbox" '+(checked?'checked':'')+' onclick="event.stopPropagation();toggleVideo(\''+encoded+'\')">'+
+      '<div><div class="video-name">'+esc(v.name)+'</div><div class="video-meta">'+v.size_mb+' MB</div></div>'+
+      '<div class="video-bottom"><div class="history" title="'+esc(history)+'">'+esc(history)+'</div>'+
+      '<button class="soft preview" onclick="event.stopPropagation();openPreview(\''+encoded+'\')">▶ Просмотр</button></div></div>';
   }).join('');
 }
 
+function toggleVideo(encoded){
+  const name=decodeURIComponent(encoded);
+  if(selectedVideos.has(name))selectedVideos.delete(name);else selectedVideos.add(name);
+  updateSelectedCount();renderVideos();
+}
+function selectAllVideos(){for(const v of state.videos||[])selectedVideos.add(v.name);updateSelectedCount();renderVideos();}
+function clearVideos(){selectedVideos.clear();updateSelectedCount();renderVideos();}
+function updateSelectedCount(){document.getElementById('selectedCount').textContent=selectedVideos.size;}
+
 function renderBatchTargets(){
-  const root=document.getElementById('batchTargets');
-  let html='';
+  const root=document.getElementById('batchTargets');let html='';
   for(const platform of ['youtube','instagram']){
     for(const a of (state.accounts[platform]||[])){
-      const target=platform+':'+a.slot;
-      const cooldown=Number((state.cooldowns||{})[target]||0);
-      html+='<label class="target-choice">'+
-        '<input type="checkbox" class="batch-target" value="'+esc(target)+'" checked>'+
-        '<span><b>'+prettyTarget(target)+'</b><br><span class="muted">'+esc(a.label||'')+'</span>'+
-        (cooldown>0?'<br><span class="warn">текущая пауза '+fmtTime(cooldown)+'</span>':'')+
-        '</span></label>';
+      const target=platform+':'+a.slot,cooldown=Number((state.cooldowns||{})[target]||0);
+      html+='<label class="target"><input type="checkbox" class="batch-target" value="'+esc(target)+'" checked><span><b>'+prettyTarget(target)+'</b><br><small>'+esc(a.label||'')+'</small>'+(cooldown>0?'<br><span class="warn" style="font-size:10px">пауза '+fmtTime(cooldown)+'</span>':'')+'</span></label>';
     }
   }
   root.innerHTML=html||'<div class="muted">Нет подключённых аккаунтов.</div>';
 }
 
-async function toggleVideoRow(event,encoded){
-  const tag=(event.target.tagName||'').toLowerCase();
-  if(['button','textarea','input','select','a'].includes(tag)) return;
-  const name=decodeURIComponent(encoded);
-  const willSelect=!selectedVideos.has(name);
-
-  if(willSelect){
-    selectedVideos.add(name);
-    renderVideos();
-    updateSelectedCount();
-    await ensureAICaption(name);
-  }else{
-    selectedVideos.delete(name);
-    renderVideos();
-    updateSelectedCount();
-  }
-}
-
-async function toggleVideo(el){
-  const name=el.dataset.name;
-  if(el.checked){
-    selectedVideos.add(name);
-    renderVideos();
-    updateSelectedCount();
-    await ensureAICaption(name);
-  }else{
-    selectedVideos.delete(name);
-    renderVideos();
-    updateSelectedCount();
-  }
-}
-
-async function selectAllVideos(){
-  const names=[];
-  for(const v of state.videos||[]){
-    selectedVideos.add(v.name);
-    names.push(v.name);
-  }
-  renderVideos();
-  updateSelectedCount();
-  // Generate one by one so OpenAI requests do not all fire at once.
-  for(const name of names){
-    if(!captions[name]) await ensureAICaption(name);
-  }
-}
-
-function clearVideos(){
-  selectedVideos.clear();
-  renderVideos();
-  updateSelectedCount();
-}
-
-function updateSelectedCount(){
-  document.getElementById('selectedCount').textContent=selectedVideos.size;
-}
-
-function saveCaption(encoded){
-  const name=decodeURIComponent(encoded);
-  const el=document.getElementById('caption-'+encoded);
-  captions[name]=el?el.value:'';
-  aiStates[name]='✓ Описание можно редактировать';
-  const status=document.getElementById('ai-state-'+encoded);
-  if(status){
-    status.textContent=aiStates[name];
-    status.className='ai-state good';
-  }
-}
-
-async function ensureAICaption(name, force=false){
-  if(!force && captions[name]) return captions[name];
-  if(aiPromises[name]) return aiPromises[name];
-
-  const encoded=encodeURIComponent(name);
-  aiStates[name]='OpenAI генерирует описание...';
-  const status=document.getElementById('ai-state-'+encoded);
-  if(status){
-    status.textContent=aiStates[name];
-    status.className='ai-state';
-  }
-
-  aiPromises[name]=(async()=>{
-    try{
-      const r=await fetch('/api/caption',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({filename:name,hint:''})
-      });
-      const data=await r.json();
-      if(!r.ok) throw new Error(data.detail||'Ошибка OpenAI');
-      captions[name]=data.caption||'';
-      aiStates[name]='✓ AI описание готово — можешь изменить как хочешь';
-      const textarea=document.getElementById('caption-'+encoded);
-      if(textarea) textarea.value=captions[name];
-      const liveStatus=document.getElementById('ai-state-'+encoded);
-      if(liveStatus){
-        liveStatus.textContent=aiStates[name];
-        liveStatus.className='ai-state good';
-      }
-      return captions[name];
-    }catch(err){
-      aiStates[name]='Ошибка AI: '+err.message;
-      const liveStatus=document.getElementById('ai-state-'+encoded);
-      if(liveStatus){
-        liveStatus.textContent=aiStates[name];
-        liveStatus.className='ai-state bad';
-      }
-      return '';
-    }finally{
-      delete aiPromises[name];
-    }
-  })();
-
-  return aiPromises[name];
-}
-
-async function regenerateAI(encoded){
-  const name=decodeURIComponent(encoded);
-  captions[name]='';
-  await ensureAICaption(name,true);
-}
-
-async function ensureAllSelectedCaptions(){
-  for(const name of selectedVideos){
-    const encoded=encodeURIComponent(name);
-    const textarea=document.getElementById('caption-'+encoded);
-    if(textarea && textarea.value.trim()) captions[name]=textarea.value.trim();
-    if(!captions[name]) await ensureAICaption(name);
-  }
-}
-
-
 function syncIntervalMin(){
-  const select=document.getElementById('intervalMinutes');
-  const min=Math.max(1,Number(state.post_cooldown_minutes||15));
-  const options=[...select.options];
-  for(const o of options)o.disabled=Number(o.value)<min;
-  if(Number(select.value)<min){
-    const first=options.find(o=>!o.disabled);
-    if(first)select.value=first.value;
-  }
-  document.getElementById('cadenceNote').textContent=
-    'Минимальная пауза проекта: '+min+' мин. Интервал помогает не публиковать ролики подряд, но не гарантирует отсутствие ограничений платформы.';
+  const select=document.getElementById('intervalMinutes'),min=Math.max(1,Number(state.post_cooldown_minutes||15));
+  for(const o of [...select.options])o.disabled=Number(o.value)<min;
+  if(Number(select.value)<min){const first=[...select.options].find(o=>!o.disabled);if(first)select.value=first.value;}
+  document.getElementById('cadenceNote').textContent='Минимальная пауза проекта: '+min+' мин. Очередь сама ждёт паузу аккаунта.';
 }
 
 async function startBatch(){
-  if(!selectedVideos.size){
-    alert('Выбери хотя бы одно видео.');
-    return;
-  }
+  if(!selectedVideos.size){alert('Выбери хотя бы одно видео.');return;}
   const targets=[...document.querySelectorAll('.batch-target:checked')].map(x=>x.value);
-  if(!targets.length){
-    alert('Выбери хотя бы один аккаунт.');
-    return;
-  }
-
-  const interval=Number(document.getElementById('intervalMinutes').value);
-  const btn=document.getElementById('startBatch');
-  btn.disabled=true;
-  btn.textContent='Готовлю AI описания...';
-
+  if(!targets.length){alert('Выбери хотя бы один аккаунт.');return;}
+  const btn=document.getElementById('startBatch');btn.disabled=true;btn.textContent='Создаю очередь...';
   try{
-    await ensureAllSelectedCaptions();
-
-    const selectedCaptions={};
-    for(const name of selectedVideos){
-      const text=(captions[name]||'').trim();
-      if(text) selectedCaptions[name]=text;
-    }
-
-    btn.textContent='Создаю очередь...';
-    const r=await fetch('/api/batch/start',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        filenames:[...selectedVideos],
-        targets:targets,
-        interval_minutes:interval,
-        hint:'',
-        captions:selectedCaptions
-      })
-    });
+    const r=await fetch('/api/batch/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      filenames:[...selectedVideos],
+      targets,
+      interval_minutes:Number(document.getElementById('intervalMinutes').value),
+      hint:'',
+      captions:{}
+    })});
     const data=await r.json();
     if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
-
-    currentJobId=data.job_id;
-    localStorage.setItem('postingttii_batch_job',currentJobId);
+    currentJobId=data.job_id;localStorage.setItem('postingttii_batch_job',currentJobId);
     document.getElementById('queuePanel').classList.remove('hidden');
     await resumeJob(currentJobId);
-  }catch(err){
-    alert('Не удалось запустить очередь: '+err.message);
-  }finally{
-    btn.disabled=false;
-    btn.textContent='Запустить очередь';
-  }
+    document.getElementById('queuePanel').scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(err){alert('Не удалось запустить очередь: '+err.message);}
+  finally{btn.disabled=false;btn.textContent='Запустить очередь';}
 }
 
 async function resumeJob(jobId){
   if(pollTimer)clearInterval(pollTimer);
   document.getElementById('queuePanel').classList.remove('hidden');
-
   const tick=async()=>{
     try{
       const r=await fetch('/api/batch/'+jobId);
-      if(r.status===404){
-        localStorage.removeItem('postingttii_batch_job');
-        currentJobId='';
-        clearInterval(pollTimer);
-        return;
-      }
-      const job=await r.json();
-      renderJob(job);
-
-      if(['done','cancelled','error'].includes(job.status)){
-        clearInterval(pollTimer);
-        pollTimer=null;
-        await refreshAfterJob();
-      }
+      if(r.status===404){localStorage.removeItem('postingttii_batch_job');currentJobId='';if(pollTimer)clearInterval(pollTimer);return;}
+      const job=await r.json();renderJob(job);
+      if(['done','cancelled','error'].includes(job.status)){if(pollTimer)clearInterval(pollTimer);pollTimer=null;await refreshAfterJob();}
     }catch(e){}
   };
-
-  await tick();
-  pollTimer=setInterval(tick,2000);
+  await tick();pollTimer=setInterval(tick,2000);
 }
 
-function targetPercent(status){
-  return {queued:0,waiting:12,publishing:62,done:100,already:100,cooldown:12,error:100}[status]??0;
-}
-
+function targetPercent(status){return {queued:0,waiting:12,publishing:62,done:100,already:100,cooldown:12,error:100}[status]??0;}
 function targetText(t){
   if(t.status==='queued')return 'В очереди';
-  if(t.status==='waiting')return 'Жду паузу аккаунта '+fmtTime(t.retry_after_seconds||0);
-  if(t.status==='publishing')return 'Публикую / обрабатываю';
+  if(t.status==='waiting')return 'Пауза '+fmtTime(t.retry_after_seconds||0);
+  if(t.status==='publishing')return 'Публикую';
   if(t.status==='done')return 'Опубликовано';
-  if(t.status==='already')return 'Уже было на аккаунте — повтор пропущен';
+  if(t.status==='already')return 'Уже было — пропуск';
   if(t.status==='cooldown')return 'Пауза '+fmtTime(t.retry_after_seconds||0);
   if(t.status==='error')return t.message||'Ошибка';
   return t.message||t.status;
 }
-
 function renderJob(job){
   document.getElementById('statTotal').textContent=job.total_videos||0;
   document.getElementById('statDone').textContent=job.completed_videos||0;
   document.getElementById('statInterval').textContent=(job.interval_minutes||0)+' мин';
-
   let next='—';
-  if(job.next_video_at){
-    next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
-  }else if(job.status==='waiting_account'){
-    next='пауза аккаунта';
-  }else if(job.status==='running'){
-    next='сейчас';
-  }
+  if(job.next_video_at)next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
+  else if(job.status==='waiting_account')next='пауза аккаунта';
+  else if(job.status==='running')next='сейчас';
   document.getElementById('statNext').textContent=next;
-
-  const statusLabels={
-    queued:'Очередь создана',
-    running:'Публикую',
-    waiting:'Жду интервал до следующего видео',
-    waiting_account:'Жду паузу аккаунта',
-    done:'Очередь завершена',
-    cancelled:'Очередь остановлена',
-    error:'Ошибка очереди'
-  };
-  document.getElementById('queueSubtitle').textContent=statusLabels[job.status]||job.status;
+  const labels={queued:'Очередь создана',running:'Публикую',waiting:'Жду следующий ролик',waiting_account:'Жду паузу аккаунта',done:'Очередь завершена',cancelled:'Очередь остановлена',error:'Ошибка очереди'};
+  document.getElementById('queueSubtitle').textContent=labels[job.status]||job.status;
   document.getElementById('cancelBatch').disabled=['done','cancelled','error'].includes(job.status);
-
   const root=document.getElementById('jobList');
   root.innerHTML=(job.items||[]).map((item,index)=>{
     const active=['caption','publishing'].includes(item.status);
     let targets='';
-    for(const entry of Object.entries(item.targets||{})){
-      const target=entry[0],t=entry[1];
-      const pct=targetPercent(t.status);
-      targets+='<div class="target-progress">'+
-        '<div class="target-progress-head"><b>'+prettyTarget(target)+'</b><span>'+esc(targetText(t))+'</span></div>'+
-        '<div class="bar"><div class="'+(['publishing','waiting'].includes(t.status)?'loading':'')+'" style="width:'+pct+'%"></div></div>'+
-        '</div>';
+    for(const [target,t] of Object.entries(item.targets||{})){
+      targets+='<div class="target-progress"><div class="target-progress-head"><b>'+prettyTarget(target)+'</b><span>'+esc(targetText(t))+'</span></div><div class="bar"><div style="width:'+targetPercent(t.status)+'%"></div></div></div>';
     }
-    const itemLabel={
-      queued:'В очереди',
-      caption:'OpenAI делает описание',
-      publishing:'Публикация',
-      done:'Готово',
-      partial:'Частично',
-      error:'Ошибка'
-    }[item.status]||item.status;
-
-    return '<div class="job-video '+(active?'active':'')+'">'+
-      '<div class="job-title"><div><b>'+(index+1)+'. '+esc(item.filename)+'</b></div><span class="'+(item.status==='done'?'good':item.status==='error'?'bad':'muted')+'">'+esc(itemLabel)+'</span></div>'+
-      targets+
-      (item.caption?'<div class="caption-preview">'+esc(item.caption)+'</div>':'')+
-      (item.error?'<div class="bad" style="margin-top:8px">'+esc(item.error)+'</div>':'')+
-      '</div>';
+    const itemLabel={queued:'В очереди',caption:'AI описание',publishing:'Публикация',done:'Готово',partial:'Частично',error:'Ошибка'}[item.status]||item.status;
+    return '<div class="job '+(active?'active':'')+'"><div class="job-title"><b>'+(index+1)+'. '+esc(item.filename)+'</b><span class="'+(item.status==='done'?'good':item.status==='error'?'bad':'muted')+'">'+esc(itemLabel)+'</span></div><div class="targets">'+targets+'</div>'+(item.caption?'<div class="caption-preview">'+esc(item.caption)+'</div>':'')+(item.error?'<div class="bad" style="font-size:10px;margin-top:5px">'+esc(item.error)+'</div>':'')+'</div>';
   }).join('');
 }
-
-async function cancelBatch(){
-  if(!currentJobId)return;
-  await fetch('/api/batch/'+currentJobId+'/cancel',{method:'POST'});
-}
-
-async function refreshAfterJob(){
-  const r=await fetch('/api/status');
-  state=await r.json();
-  renderVideos();
-  renderBatchTargets();
-}
-
-async function disconnect(platform,slot){
-  await fetch('/api/account/'+platform+'/'+slot,{method:'DELETE'});
-  await load();
-}
+async function cancelBatch(){if(currentJobId)await fetch('/api/batch/'+currentJobId+'/cancel',{method:'POST'});}
+async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
+async function disconnect(platform,slot){await fetch('/api/account/'+platform+'/'+slot,{method:'DELETE'});await load();}
 
 function openPreview(encoded){
-  const name=decodeURIComponent(encoded);
-  const modal=document.getElementById('previewModal');
-  const player=document.getElementById('previewPlayer');
-  document.getElementById('previewTitle').textContent=name;
-  player.src='/api/video-preview/'+encoded;
-  modal.classList.add('open');
-  player.load();
+  const name=decodeURIComponent(encoded),modal=document.getElementById('previewModal'),player=document.getElementById('previewPlayer');
+  document.getElementById('previewTitle').textContent=name;player.src='/api/video-preview/'+encoded;modal.classList.add('open');player.load();
 }
-
-function closePreview(){
-  const modal=document.getElementById('previewModal');
-  const player=document.getElementById('previewPlayer');
-  player.pause();
-  player.removeAttribute('src');
-  player.load();
-  modal.classList.remove('open');
-}
-
-function previewBackdrop(event){
-  if(event.target.id==='previewModal') closePreview();
-}
-
-document.addEventListener('keydown',event=>{
-  if(event.key==='Escape') closePreview();
-});
-
+function closePreview(){const modal=document.getElementById('previewModal'),player=document.getElementById('previewPlayer');player.pause();player.removeAttribute('src');player.load();modal.classList.remove('open');}
+function previewBackdrop(e){if(e.target.id==='previewModal')closePreview();}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePreview();});
 load();
 </script>
 </body>
