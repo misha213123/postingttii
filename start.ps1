@@ -11,7 +11,7 @@ pip install -r requirements.txt
 if (!(Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
     Write-Host ""
-    Write-Host "Создан .env. Заполни API ключи и запусти start.ps1 еще раз." -ForegroundColor Yellow
+    Write-Host "Created .env. Fill in your API credentials, then run start.ps1 again." -ForegroundColor Yellow
     exit 0
 }
 
