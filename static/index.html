@@ -21,7 +21,10 @@
     textarea{min-height:130px;resize:vertical}.editor{margin-top:18px;display:none}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .status{margin-top:14px;white-space:pre-wrap;background:#0e1116;border-radius:10px;padding:12px;min-height:44px}
-    @media(max-width:800px){.grid{grid-template-columns:1fr}}
+    .targets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}
+    .target{display:flex;align-items:center;gap:9px;background:#0e1116;border:1px solid #2a313d;border-radius:10px;padding:10px}
+    .target input{width:auto;margin:0}.done-tag{color:#67e8a5;font-size:12px;margin-left:auto}
+    @media(max-width:800px){.grid{grid-template-columns:1fr}.targets{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -49,9 +52,12 @@
     <div style="height:10px"></div>
     <label class="muted">Описание + хештеги</label>
     <textarea id="caption"></textarea>
+    <div style="height:12px"></div>
+    <label class="muted">Куда публиковать</label>
+    <div class="targets" id="targets"></div>
     <div class="row" style="margin-top:12px">
       <button class="secondary" onclick="generateCaption()">Сгенерировать OpenAI</button>
-      <button class="primary" onclick="publishAll()">Опубликовать во все подключенные</button>
+      <button class="primary" onclick="publishAll()">Опубликовать выбранные</button>
     </div>
     <div class="status" id="publishStatus">Готово к работе.</div>
   </section>
@@ -120,12 +126,37 @@ function renderVideos(){
   ).join('');
 }
 
+function currentVideo(){
+  return (state.videos||[]).find(v=>v.name===selected);
+}
+
+function renderTargets(){
+  const root=document.getElementById('targets');
+  const completed=new Set((currentVideo()?.completed_targets)||[]);
+  const labels={youtube:'YouTube',tiktok:'TikTok',instagram:'Instagram'};
+  let html='';
+
+  for(const platform of ['youtube','tiktok','instagram']){
+    for(const a of (state.accounts[platform]||[])){
+      const target=platform+':'+a.slot;
+      const done=completed.has(target);
+      html+='<label class="target">'+
+        '<input type="checkbox" class="publish-target" value="'+esc(target)+'" '+(done?'disabled':'checked')+'>'+
+        '<span><b>'+labels[platform]+' #'+a.slot+'</b><br><span class="muted">'+esc(a.label||'')+'</span></span>'+
+        (done?'<span class="done-tag">УЖЕ ЗАЛИТО</span>':'')+
+        '</label>';
+    }
+  }
+  root.innerHTML=html||'<span class="muted">Нет подключенных аккаунтов.</span>';
+}
+
 function selectVideo(encoded){
   selected=decodeURIComponent(encoded);
   document.getElementById('selectedName').textContent=selected;
   document.getElementById('editor').style.display='block';
   document.getElementById('caption').value='';
   document.getElementById('publishStatus').textContent='Готово к работе.';
+  renderTargets();
   document.getElementById('editor').scrollIntoView({behavior:'smooth'});
 }
 
@@ -151,16 +182,24 @@ async function publishAll(){
     document.getElementById('publishStatus').textContent='Сначала добавь описание или сгенерируй его.';
     return;
   }
+  const targets=[...document.querySelectorAll('.publish-target:checked')].map(x=>x.value);
+  if(!targets.length){
+    document.getElementById('publishStatus').textContent='Выбери хотя бы один аккаунт для публикации.';
+    return;
+  }
   const out=document.getElementById('publishStatus');
-  out.textContent='Загружаю видео на платформы. Не закрывай окно...';
+  out.textContent='Загружаю видео на выбранные аккаунты. Не закрывай окно...';
   const r=await fetch('/api/publish',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({filename:selected,caption})
+    body:JSON.stringify({filename:selected,caption,targets})
   });
   const data=await r.json();
   if(!r.ok){out.textContent=data.detail||'Ошибка публикации';return}
-  out.textContent=data.results.map(x=>(x.ok?'✅ ':'❌ ')+x.target+(x.ok?'':': '+x.error)).join('\n');
+  out.textContent=data.results.map(x=>
+    (x.skipped?'⏭️ ':(x.ok?'✅ ':'❌ '))+x.target+
+    (x.skipped?': уже было опубликовано, пропущено':(x.ok?'':': '+x.error))
+  ).join('\n');
   if(data.ok){
     selected=null;
     document.getElementById('editor').style.display='none';
