@@ -38,8 +38,13 @@
     .already{font-size:12px;color:#6ee7a8;margin-top:4px}
     .video-ai{display:none;grid-column:2/4;border-top:1px solid #252d38;padding-top:10px;margin-top:2px}
     .video-row.selected .video-ai{display:block}
-    .video-preview-wrap{grid-column:2/4;margin-top:8px}
-    .video-preview{width:220px;max-width:100%;aspect-ratio:16/9;display:block;background:#05070a;border:1px solid #2a323d;border-radius:10px;object-fit:cover}
+    .preview-btn{white-space:nowrap}
+    .preview-modal{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.78);backdrop-filter:blur(6px)}
+    .preview-modal.open{display:flex}
+    .preview-box{width:min(900px,96vw);background:#10141b;border:1px solid #2b3441;border-radius:18px;padding:14px;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+    .preview-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+    .preview-title{font-weight:800;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .preview-player{width:100%;aspect-ratio:16/9;display:block;background:#05070a;border-radius:12px}
     .video-ai textarea{width:100%;min-height:86px;resize:vertical;background:#0a0e13;color:#f5f7fa;border:1px solid #2c3440;border-radius:11px;padding:11px 12px;font:inherit}
     .video-ai-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px}
     .ai-state{font-size:12px;color:#939cab}
@@ -153,6 +158,15 @@
 
     <div class="job-list" id="jobList"></div>
   </section>
+  <div class="preview-modal" id="previewModal" onclick="previewBackdrop(event)">
+    <div class="preview-box">
+      <div class="preview-head">
+        <div class="preview-title" id="previewTitle">Просмотр видео</div>
+        <button class="secondary" type="button" onclick="closePreview()">Закрыть</button>
+      </div>
+      <video id="previewPlayer" class="preview-player" controls playsinline preload="none"></video>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -260,8 +274,10 @@ function renderVideos(){
     return '<div class="video-row '+(checked?'selected':'')+'">'+
       '<input type="checkbox" class="video-check" data-name="'+esc(v.name)+'" '+(checked?'checked':'')+' onchange="toggleVideo(this)">'+
       '<div><div class="video-name">'+esc(v.name)+'</div><div class="video-meta">'+v.size_mb+' MB</div>'+doneText+'</div>'+
-      '<div class="video-status">'+(done.length?'<span class="good">История сохранена</span>':'<span class="muted">Готов</span>')+'</div>'+
-      '<div class="video-preview-wrap"><video class="video-preview" controls preload="metadata" playsinline src="/api/video-preview/'+encoded+'"></video></div>'+
+      '<div class="video-status row">'+
+        (done.length?'<span class="good">История сохранена</span>':'<span class="muted">Готов</span>')+
+        '<button class="soft preview-btn" type="button" onclick="openPreview(\''+encoded+'\')">▶ Просмотреть</button>'+
+      '</div>'+
       '<div class="video-ai">'+
         '<div class="video-ai-top">'+
           '<span id="ai-state-'+encoded+'" class="ai-state '+aiClass+'">'+esc(aiState||'AI описание появится автоматически')+'</span>'+
@@ -584,6 +600,33 @@ async function disconnect(platform,slot){
   await fetch('/api/account/'+platform+'/'+slot,{method:'DELETE'});
   await load();
 }
+
+function openPreview(encoded){
+  const name=decodeURIComponent(encoded);
+  const modal=document.getElementById('previewModal');
+  const player=document.getElementById('previewPlayer');
+  document.getElementById('previewTitle').textContent=name;
+  player.src='/api/video-preview/'+encoded;
+  modal.classList.add('open');
+  player.load();
+}
+
+function closePreview(){
+  const modal=document.getElementById('previewModal');
+  const player=document.getElementById('previewPlayer');
+  player.pause();
+  player.removeAttribute('src');
+  player.load();
+  modal.classList.remove('open');
+}
+
+function previewBackdrop(event){
+  if(event.target.id==='previewModal') closePreview();
+}
+
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape') closePreview();
+});
 
 load();
 </script>
