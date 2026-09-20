@@ -23,14 +23,27 @@
     .status{margin-top:14px;white-space:pre-wrap;background:#0e1116;border-radius:10px;padding:12px;min-height:44px}
     .targets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}
     .target{display:flex;align-items:center;gap:9px;background:#0e1116;border:1px solid #2a313d;border-radius:10px;padding:10px}
-    .target input{width:auto;margin:0}.done-tag{color:#67e8a5;font-size:12px;margin-left:auto}
+    .target{display:block}
+    .target-head{display:flex;align-items:center;gap:9px}
+    .target-head input{width:auto;margin:0}
+    .target-copy{min-width:0;flex:1}
+    .done-tag{color:#67e8a5;font-size:12px;margin-left:auto;font-weight:800}
+    .cooldown-tag{color:#facc15;font-size:12px;margin-left:auto;font-weight:800}
+    .progress{height:8px;background:#242a33;border-radius:999px;overflow:hidden;margin-top:10px}
+    .progress-fill{height:100%;width:0%;background:#f5f7fa;border-radius:999px;transition:width .35s ease}
+    .progress-fill.loading{animation:pulsebar 1.1s ease-in-out infinite}
+    .progress-text{font-size:12px;color:#9aa4b2;margin-top:6px}
+    .target.done .progress-fill{width:100%}
+    .target.disabled{opacity:.65}
+    .tiktok-off{border-style:dashed;opacity:.72}
+    @keyframes pulsebar{0%,100%{opacity:.45}50%{opacity:1}}
     @media(max-width:800px){.grid{grid-template-columns:1fr}.targets{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
 <main>
   <h1>PostingTTII</h1>
-  <div class="muted">Одна папка → описание через OpenAI → публикация во все подключенные аккаунты.</div>
+  <div class="muted">Одна папка → OpenAI → выбор аккаунтов → YouTube / Instagram. TikTok временно отключён.</div>
 
   <section class="grid" id="platforms"></section>
 
@@ -53,7 +66,13 @@
     <label class="muted">Описание + хештеги</label>
     <textarea id="caption"></textarea>
     <div style="height:12px"></div>
-    <label class="muted">Куда публиковать</label>
+    <div class="row" style="justify-content:space-between">
+      <label class="muted">Куда публиковать</label>
+      <div class="row">
+        <button class="secondary" type="button" onclick="selectAvailableTargets()">Выбрать доступные</button>
+        <button class="secondary" type="button" onclick="clearTargets()">Снять все</button>
+      </div>
+    </div>
     <div class="targets" id="targets"></div>
     <div class="row" style="margin-top:12px">
       <button class="secondary" onclick="generateCaption()">Сгенерировать OpenAI</button>
@@ -83,10 +102,10 @@ function connected(platform,slot){
 }
 
 function renderPlatforms(){
-  const names={youtube:'YouTube',tiktok:'TikTok',instagram:'Instagram'};
+  const names={youtube:'YouTube',instagram:'Instagram'};
   const root=document.getElementById('platforms');
   root.innerHTML='';
-  for(const platform of ['youtube','tiktok','instagram']){
+  for(const platform of ['youtube','instagram']){
     const card=document.createElement('div');
     card.className='card';
     const configured=state.configured[platform];
@@ -112,6 +131,19 @@ function renderPlatforms(){
     card.innerHTML=html;
     root.appendChild(card);
   }
+
+  const tiktok=document.createElement('div');
+  tiktok.className='card tiktok-off';
+  tiktok.innerHTML='<h2 style="margin-top:0">TikTok</h2>'+
+    '<div class="bad">Временно отключен</div>'+
+    '<div class="muted" style="margin-top:10px">Не участвует в публикациях, пока идёт проверка приложения TikTok.</div>';
+  root.appendChild(tiktok);
+}
+
+function prettyTarget(target){
+  const [platform,slot]=target.split(':');
+  const label={youtube:'YouTube',instagram:'Instagram',tiktok:'TikTok'}[platform]||platform;
+  return label+' #'+slot;
 }
 
 function renderVideos(){
@@ -120,34 +152,76 @@ function renderVideos(){
     root.innerHTML='<div class="muted" style="padding:18px 0">Положи .mp4/.mov/.webm в папку выше.</div>';
     return;
   }
-  root.innerHTML=state.videos.map(v=>
-    '<div class="video"><div><b>'+esc(v.name)+'</b><div class="muted">'+v.size_mb+' MB</div></div>'+
-    '<button class="secondary" onclick="selectVideo(\''+encodeURIComponent(v.name)+'\')">Выбрать</button></div>'
-  ).join('');
+  root.innerHTML=state.videos.map(v=>{
+    const completed=(v.completed_targets||[]);
+    const doneText=completed.length
+      ? '<div class="good" style="margin-top:4px">Уже залито: '+completed.map(prettyTarget).join(', ')+'</div>'
+      : '<div class="muted" style="margin-top:4px">Ещё не публиковалось</div>';
+    return '<div class="video"><div><b>'+esc(v.name)+'</b><div class="muted">'+v.size_mb+' MB</div>'+doneText+'</div>'+
+      '<button class="secondary" onclick="selectVideo(\''+encodeURIComponent(v.name)+'\')">Выбрать</button></div>';
+  }).join('');
 }
 
 function currentVideo(){
   return (state.videos||[]).find(v=>v.name===selected);
 }
 
+function fmtCooldown(seconds){
+  seconds=Math.max(0,Number(seconds)||0);
+  const m=Math.floor(seconds/60);
+  const s=seconds%60;
+  return m+':'+String(s).padStart(2,'0');
+}
+
+function progressId(target){
+  return 'progress-'+target.replace(':','-');
+}
+
+function setTargetProgress(target,percent,text,loading=false){
+  const fill=document.getElementById(progressId(target)+'-fill');
+  const label=document.getElementById(progressId(target)+'-text');
+  if(fill){
+    fill.style.width=Math.max(0,Math.min(100,percent))+'%';
+    fill.classList.toggle('loading',loading);
+  }
+  if(label)label.textContent=text;
+}
+
 function renderTargets(){
   const root=document.getElementById('targets');
   const completed=new Set((currentVideo()?.completed_targets)||[]);
-  const labels={youtube:'YouTube',tiktok:'TikTok',instagram:'Instagram'};
+  const labels={youtube:'YouTube',instagram:'Instagram'};
   let html='';
 
-  for(const platform of ['youtube','tiktok','instagram']){
+  for(const platform of ['youtube','instagram']){
     for(const a of (state.accounts[platform]||[])){
       const target=platform+':'+a.slot;
       const done=completed.has(target);
-      html+='<label class="target">'+
-        '<input type="checkbox" class="publish-target" value="'+esc(target)+'" '+(done?'disabled':'checked')+'>'+
-        '<span><b>'+labels[platform]+' #'+a.slot+'</b><br><span class="muted">'+esc(a.label||'')+'</span></span>'+
-        (done?'<span class="done-tag">УЖЕ ЗАЛИТО</span>':'')+
+      const cooldown=Number((state.cooldowns||{})[target]||0);
+      const blocked=!done&&cooldown>0;
+      const disabled=done||blocked;
+      html+='<label class="target '+(done?'done ':'')+(blocked?'disabled ':'')+'">'+
+        '<div class="target-head">'+
+        '<input type="checkbox" class="publish-target" value="'+esc(target)+'" '+(disabled?'disabled':'checked')+'>'+
+        '<span class="target-copy"><b>'+labels[platform]+' #'+a.slot+'</b><br><span class="muted">'+esc(a.label||'')+'</span></span>'+
+        (done?'<span class="done-tag">УЖЕ НА АККАУНТЕ</span>':(blocked?'<span class="cooldown-tag">ПАУЗА '+fmtCooldown(cooldown)+'</span>':''))+
+        '</div>'+
+        '<div class="progress"><div id="'+progressId(target)+'-fill" class="progress-fill" style="width:'+(done?'100':'0')+'%"></div></div>'+
+        '<div id="'+progressId(target)+'-text" class="progress-text">'+
+          (done?'Опубликовано ранее. Повторная загрузка заблокирована.':(blocked?'Следующая публикация доступна через '+fmtCooldown(cooldown):'Готов к публикации'))+
+        '</div>'+
         '</label>';
     }
   }
-  root.innerHTML=html||'<span class="muted">Нет подключенных аккаунтов.</span>';
+  root.innerHTML=html||'<span class="muted">Нет подключенных YouTube/Instagram аккаунтов.</span>';
+}
+
+function selectAvailableTargets(){
+  document.querySelectorAll('.publish-target:not(:disabled)').forEach(x=>x.checked=true);
+}
+
+function clearTargets(){
+  document.querySelectorAll('.publish-target').forEach(x=>x.checked=false);
 }
 
 function selectVideo(encoded){
@@ -182,29 +256,75 @@ async function publishAll(){
     document.getElementById('publishStatus').textContent='Сначала добавь описание или сгенерируй его.';
     return;
   }
+
   const targets=[...document.querySelectorAll('.publish-target:checked')].map(x=>x.value);
   if(!targets.length){
-    document.getElementById('publishStatus').textContent='Выбери хотя бы один аккаунт для публикации.';
+    document.getElementById('publishStatus').textContent='Выбери хотя бы один доступный аккаунт для публикации.';
     return;
   }
+
   const out=document.getElementById('publishStatus');
-  out.textContent='Загружаю видео на выбранные аккаунты. Не закрывай окно...';
-  const r=await fetch('/api/publish',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({filename:selected,caption,targets})
-  });
-  const data=await r.json();
-  if(!r.ok){out.textContent=data.detail||'Ошибка публикации';return}
-  out.textContent=data.results.map(x=>
-    (x.skipped?'⏭️ ':(x.ok?'✅ ':'❌ '))+x.target+
-    (x.skipped?': уже было опубликовано, пропущено':(x.ok?'':': '+x.error))
-  ).join('\n');
-  if(data.ok){
-    selected=null;
-    document.getElementById('editor').style.display='none';
-    await load();
+  const publishButton=document.querySelector('button.primary');
+  publishButton.disabled=true;
+  const lines=[];
+  out.textContent='Начинаю публикацию по выбранным аккаунтам...';
+
+  for(const target of targets){
+    let fake=8;
+    setTargetProgress(target,fake,'Подготовка...',true);
+    const timer=setInterval(()=>{
+      fake=Math.min(88,fake+Math.max(1,Math.round((88-fake)/7)));
+      setTargetProgress(target,fake,'Загрузка / обработка...',true);
+    },900);
+
+    try{
+      const r=await fetch('/api/publish-target',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({filename:selected,caption,target})
+      });
+      const data=await r.json();
+      clearInterval(timer);
+
+      if(r.status===429){
+        const detail=data.detail||{};
+        const wait=Number(detail.retry_after_seconds||0);
+        setTargetProgress(target,0,'Пауза между публикациями: '+fmtCooldown(wait),false);
+        lines.push('⏳ '+target+': пауза '+fmtCooldown(wait));
+      }else if(!r.ok){
+        const msg=typeof data.detail==='string'?data.detail:'Ошибка публикации';
+        setTargetProgress(target,0,msg,false);
+        lines.push('❌ '+target+': '+msg);
+      }else if(data.skipped){
+        setTargetProgress(target,100,'Уже на аккаунте — повтор не отправляю.',false);
+        lines.push('⏭️ '+target+': уже на аккаунте');
+      }else if(data.ok){
+        setTargetProgress(target,100,'Готово — опубликовано.',false);
+        lines.push('✅ '+target);
+      }else{
+        setTargetProgress(target,0,data.error||'Ошибка публикации',false);
+        lines.push('❌ '+target+': '+(data.error||'Ошибка'));
+      }
+    }catch(err){
+      clearInterval(timer);
+      setTargetProgress(target,0,'Ошибка соединения: '+err.message,false);
+      lines.push('❌ '+target+': '+err.message);
+    }
+    out.textContent=lines.join('\n');
   }
+
+  publishButton.disabled=false;
+
+  // Refresh saved per-account state so successful targets immediately become
+  // "УЖЕ НА АККАУНТЕ" and cannot be posted twice.
+  const r=await fetch('/api/status');
+  state=await r.json();
+  renderPlatforms();
+  renderVideos();
+  renderTargets();
+
+  out.textContent=lines.join('\n')+
+    '\n\nАнтиспам-пауза: '+state.post_cooldown_minutes+' мин. на один и тот же аккаунт.';
 }
 
 async function disconnect(platform,slot){
