@@ -352,9 +352,6 @@ async def batch_start(body: BatchPublishRequest):
         raise HTTPException(400, "Выбери хотя бы одно видео")
     if not targets:
         raise HTTPException(400, "Выбери хотя бы один аккаунт")
-    if len(filenames) > 50:
-        raise HTTPException(400, "За один запуск можно выбрать максимум 50 видео")
-
     minimum = max(1, settings.post_cooldown_minutes)
     if body.interval_minutes < minimum:
         raise HTTPException(
