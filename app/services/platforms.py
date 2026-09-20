@@ -89,8 +89,8 @@ async def youtube_exchange(code: str) -> dict:
                 "redirect_uri": settings.youtube_redirect_uri,
             },
         )
-        token_if response.is_error:
-            raise _api_error(response, "OAuth", "token request")
+        if token_response.is_error:
+            raise _api_error(token_response, "YouTube", "OAuth token request")
         token = token_response.json()
 
         profile_response = await client.get(
@@ -98,8 +98,8 @@ async def youtube_exchange(code: str) -> dict:
             params={"part": "snippet", "mine": "true"},
             headers={"Authorization": f"Bearer {token['access_token']}"},
         )
-        profile_if response.is_error:
-            raise _api_error(response, "OAuth", "token request")
+        if profile_response.is_error:
+            raise _api_error(profile_response, "YouTube", "channel profile")
         items = profile_response.json().get("items", [])
         channel = items[0] if items else {}
 
@@ -434,8 +434,8 @@ async def instagram_exchange(code: str) -> dict:
                 "access_token": short_token["access_token"],
             },
         )
-        long_if response.is_error:
-            raise _api_error(response, "OAuth", "token request")
+        if long_response.is_error:
+            raise _api_error(long_response, "Instagram", "long-lived token exchange")
         long_token = long_response.json()
 
         profile = await client.get(
