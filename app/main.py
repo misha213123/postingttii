@@ -225,6 +225,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
     job = BATCH_JOBS[job_id]
     job["status"] = "running"
     job["started_at"] = int(time.time())
+    blocked_targets: dict[str, str] = {}
 
     try:
         for index, filename in enumerate(body.filenames):
@@ -259,6 +260,11 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     return
 
                 target_state = item["targets"][target]
+
+                if target in blocked_targets:
+                    target_state["status"] = "blocked"
+                    target_state["message"] = blocked_targets[target]
+                    continue
 
                 remaining = publish_state.cooldown_remaining(
                     target, settings.post_cooldown_minutes * 60
@@ -309,8 +315,21 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                             detail if isinstance(detail, str) else str(detail)
                         )
                 except Exception as exc:
+                    message = str(exc)
                     target_state["status"] = "error"
-                    target_state["message"] = str(exc)
+                    target_state["message"] = message
+
+                    # YouTube may temporarily block further uploads for a channel.
+                    # Once detected, do not waste time retrying the same account
+                    # for every remaining clip in this batch.
+                    if target.startswith("youtube:") and (
+                        "exceeded the number of videos they may upload" in message.lower()
+                        or "uploadlimitexceeded" in message.lower()
+                    ):
+                        blocked_targets[target] = (
+                            "Лимит загрузок YouTube — пропуск до конца этой очереди"
+                        )
+                        job["blocked_targets"][target] = blocked_targets[target]
 
             statuses = [x["status"] for x in item["targets"].values()]
             if all(x in {"done", "already"} for x in statuses):
@@ -401,6 +420,7 @@ async def batch_start(body: BatchPublishRequest):
         "targets": targets,
         "cancel_requested": False,
         "error": "",
+        "blocked_targets": {},
         "items": [
             {
                 "filename": filename,
