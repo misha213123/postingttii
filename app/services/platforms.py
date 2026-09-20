@@ -167,7 +167,7 @@ async def tiktok_exchange(code: str) -> dict:
 
         info = await client.get(
             "https://open.tiktokapis.com/v2/user/info/",
-            params={"fields": "open_id,union_id,avatar_url,display_name,username"},
+            params={"fields": "open_id,union_id,avatar_url,display_name"},
             headers={"Authorization": f"Bearer {token['access_token']}"},
         )
         info.raise_for_status()
