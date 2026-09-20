@@ -504,68 +504,88 @@ async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
     user_id = account["id"]
     base = f"https://graph.instagram.com/{settings.instagram_graph_version}"
 
+    # A container can occasionally fall into a generic ERROR while Meta is
+    # fetching/processing an otherwise valid Reel. Retry only that pre-publish
+    # stage. We never auto-retry after media_publish, because that could create
+    # a duplicate if Meta accepted the publish but the response was lost.
+    max_attempts = 3
+    last_error = ""
+
     async with httpx.AsyncClient(timeout=60) as client:
-        create = await client.post(
-            f"{base}/{user_id}/media",
-            data={
-                "media_type": "REELS",
-                "video_url": video_url,
-                "caption": caption[:2200],
-                "share_to_feed": "true",
-                "access_token": token,
-            },
-        )
-        if create.is_error:
-            raise _api_error(create, "Instagram", "create Reel container")
-        container_id = create.json().get("id")
-        if not container_id:
-            raise RuntimeError(f"Instagram: не создан контейнер: {create.text}")
-
-        # Meta may need several minutes to download and process a Reel,
-        # especially when the source video is served through a tunnel.
-        # Keep the public video URL alive and wait up to 15 minutes.
-        status = "IN_PROGRESS"
-        last_status_payload: dict = {}
-        deadline = time.monotonic() + 15 * 60
-
-        while time.monotonic() < deadline:
-            check = await client.get(
-                f"{base}/{container_id}",
-                params={
-                    "fields": "status_code,status",
+        for attempt in range(1, max_attempts + 1):
+            create = await client.post(
+                f"{base}/{user_id}/media",
+                data={
+                    "media_type": "REELS",
+                    "video_url": video_url,
+                    "caption": caption[:2200],
+                    "share_to_feed": "true",
                     "access_token": token,
                 },
             )
-            if check.is_error:
-                raise _api_error(check, "Instagram", "check Reel container")
+            if create.is_error:
+                raise _api_error(create, "Instagram", "create Reel container")
 
-            last_status_payload = check.json()
-            status = last_status_payload.get("status_code", "")
-            status_text = str(last_status_payload.get("status") or "").strip()
+            container_id = create.json().get("id")
+            if not container_id:
+                raise RuntimeError(f"Instagram: не создан контейнер: {create.text}")
+
+            status = "IN_PROGRESS"
+            status_text = ""
+            deadline = time.monotonic() + 15 * 60
+
+            while time.monotonic() < deadline:
+                check = await client.get(
+                    f"{base}/{container_id}",
+                    params={
+                        "fields": "status_code,status",
+                        "access_token": token,
+                    },
+                )
+                if check.is_error:
+                    raise _api_error(check, "Instagram", "check Reel container")
+
+                payload = check.json()
+                status = payload.get("status_code", "")
+                status_text = str(payload.get("status") or "").strip()
+
+                if status == "FINISHED":
+                    break
+
+                if status in {"ERROR", "EXPIRED"}:
+                    detail = status_text or "Meta не вернула текст ошибки"
+                    last_error = (
+                        f"Instagram #{slot}: {status} — {detail} "
+                        f"(container {container_id}, попытка {attempt}/{max_attempts})"
+                    )
+                    break
+
+                await asyncio.sleep(8)
 
             if status == "FINISHED":
-                break
-            if status in {"ERROR", "EXPIRED"}:
-                detail = status_text or "Meta не вернула текст ошибки"
-                raise RuntimeError(
-                    f"Instagram #{slot}: {status} — {detail} "
-                    f"(container {container_id})"
+                publish = await client.post(
+                    f"{base}/{user_id}/media_publish",
+                    data={"creation_id": container_id, "access_token": token},
+                )
+                if publish.is_error:
+                    raise _api_error(publish, "Instagram", "publish Reel")
+
+                media_id = publish.json().get("id")
+                return {
+                    "id": media_id,
+                    "platform": "instagram",
+                    "slot": slot,
+                    "attempt": attempt,
+                }
+
+            if status not in {"ERROR", "EXPIRED"}:
+                last_error = (
+                    f"Instagram #{slot}: Reel не обработан за 15 минут "
+                    f"(последний статус: {status or 'IN_PROGRESS'}, "
+                    f"container {container_id})"
                 )
 
-            await asyncio.sleep(8)
+            if attempt < max_attempts:
+                await asyncio.sleep(20)
 
-        if status != "FINISHED":
-            raise RuntimeError(
-                "Instagram не успел обработать Reel за 15 минут "
-                f"(последний статус: {status or 'IN_PROGRESS'})."
-            )
-
-        publish = await client.post(
-            f"{base}/{user_id}/media_publish",
-            data={"creation_id": container_id, "access_token": token},
-        )
-        if publish.is_error:
-            raise _api_error(publish, "Instagram", "publish Reel")
-        media_id = publish.json().get("id")
-
-    return {"id": media_id, "platform": "instagram", "slot": slot}
+    raise RuntimeError(last_error or f"Instagram #{slot}: не удалось обработать Reel")
