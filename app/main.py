@@ -222,7 +222,31 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     return
 
                 target_state = item["targets"][target]
+
+                remaining = publish_state.cooldown_remaining(
+                    target, settings.post_cooldown_minutes * 60
+                )
+                if remaining > 0:
+                    target_state["status"] = "waiting"
+                    target_state["message"] = "Жду паузу аккаунта"
+                    target_state["retry_after_seconds"] = remaining
+                    job["status"] = "waiting_account"
+                    wait_until = time.time() + remaining
+                    while time.time() < wait_until:
+                        if job.get("cancel_requested"):
+                            job["status"] = "cancelled"
+                            return
+                        target_state["retry_after_seconds"] = max(
+                            0, int(wait_until - time.time())
+                        )
+                        await asyncio.sleep(
+                            min(5, max(0.2, wait_until - time.time()))
+                        )
+                    target_state["retry_after_seconds"] = 0
+                    job["status"] = "running"
+
                 target_state["status"] = "publishing"
+                target_state["message"] = "Публикую"
                 try:
                     result = await _publish_single_target(video, caption, target)
                     if result.get("skipped"):
