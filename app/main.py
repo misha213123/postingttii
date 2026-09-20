@@ -91,6 +91,23 @@ async def home():
     return HTMLResponse(index.read_text(encoding="utf-8"))
 
 
+@app.get("/api/video-preview/{filename}")
+async def video_preview(filename: str):
+    path = _safe_video(filename)
+    media_type = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".m4v": "video/x-m4v",
+        ".webm": "video/webm",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type="inline",
+    )
+
+
 @app.get("/api/status")
 async def status():
     return {
