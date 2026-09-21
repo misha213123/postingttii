@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -185,7 +186,7 @@ async def _ensure_session(account_id: int, profile_path: str) -> TikTokSession:
 
     close_profile(account_id)
 
-    browser = find_browser()
+    browser = find_browser(os.getenv("TIKTOK_BROWSER", "edge"))
     profile = Path(profile_path).resolve()
     profile.mkdir(parents=True, exist_ok=True)
 
