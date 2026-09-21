@@ -259,7 +259,16 @@
       }
 
       if (action === "browser") {
-        return toast("OPEN BROWSER подключим в Phase 6 вместе с Playwright persistent profile.");
+        try {
+          const result = await api("/api/account-manager/accounts/" + Number(account.id) + "/browser/open", {
+            method: "POST",
+            body: JSON.stringify({ target: "home" })
+          });
+          toast(result.message || "Browser открыт");
+        } catch (error) {
+          toast("Browser: " + error.message);
+        }
+        return;
       }
     } catch (error) {
       toast("Ошибка: " + error.message);
@@ -413,6 +422,13 @@
         modal,
         navigate,
         preferredAccountId: preferredAliasAccountId
+      });
+    } else if (route === "browser-profiles") {
+      await window.PostingTTIIBrowserProfiles.render(contentNode, {
+        api,
+        toast,
+        modal,
+        navigate
       });
     } else {
       placeholder(route);
