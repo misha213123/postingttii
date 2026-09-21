@@ -11,11 +11,24 @@
     return account?.social_accounts?.[platform]?.status || "NOT_CREATED";
   }
 
+  function tiktokAction(account) {
+    const status = socialState(account, "tiktok");
+    if (status === "CONNECTED") {
+      return { label: "TikTok connected", action: "", disabled: true };
+    }
+    if (status === "ACTION_REQUIRED" || status === "CREATING") {
+      return { label: "Continue TikTok", action: "continue", disabled: false };
+    }
+    return { label: "Start TikTok registration", action: "start", disabled: false };
+  }
+
   function render(root, options = {}) {
     const existing = options.account || null;
     const number = existing ? String(existing.account_number || 0).padStart(2, "0") : "";
     const emailReady = Boolean(existing?.email);
     const profileReady = Boolean(existing?.profile_ready || (existing?.display_name && existing?.username && existing?.avatar_path));
+    const tikTokAction = tiktokAction(existing);
+    const tikTokJob = existing?.creation_jobs?.tiktok || {};
 
     root.innerHTML =
       '<div class="am-page-stack">' +
@@ -85,8 +98,12 @@
                     '<span>YouTube <b>' + esc(socialState(existing, "youtube")) + '</b></span>' +
                   '</div>' +
                   (profileReady
-                    ? '<div class="am-wizard-actions">' +
-                        '<button type="button" class="am-btn" data-open-platform="tiktok">Open TikTok</button>' +
+                    ? '<div class="am-platform-guidance">' +
+                        '<strong>TikTok registration assistant</strong>' +
+                        '<span>' + esc(tikTokJob.step || "Ready to start") + '</span>' +
+                      '</div>' +
+                      '<div class="am-wizard-actions">' +
+                        '<button type="button" class="am-btn primary" data-tiktok-action="' + esc(tikTokAction.action) + '" ' + (tikTokAction.disabled ? "disabled" : "") + '>' + esc(tikTokAction.label) + '</button>' +
                         '<button type="button" class="am-btn" data-open-platform="instagram">Open Instagram</button>' +
                         '<button type="button" class="am-btn" data-open-platform="youtube">Open YouTube</button>' +
                       '</div>'
@@ -108,6 +125,10 @@
     root.querySelector("[data-alias]")?.addEventListener("click", () => options.onChooseAlias?.(existing));
     root.querySelector("[data-profile-generate]")?.addEventListener("click", () => options.onGenerateProfile?.(existing));
     root.querySelector("[data-profile-edit]")?.addEventListener("click", () => options.onEditProfile?.(existing));
+    root.querySelector("[data-tiktok-action]")?.addEventListener("click", event => {
+      const action = event.currentTarget.dataset.tiktokAction;
+      if (action) options.onTikTokAction?.(existing, action);
+    });
     root.querySelectorAll("[data-open-platform]").forEach(button => {
       button.addEventListener("click", () => options.onOpenPlatform?.(existing, button.dataset.openPlatform));
     });
