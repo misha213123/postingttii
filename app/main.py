@@ -10,6 +10,7 @@ from typing import Literal
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -29,6 +30,8 @@ from app.services.platforms import (
 from app.store import store
 
 app = FastAPI(title="PostingTTII", version="0.1.0")
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
