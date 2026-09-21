@@ -32,6 +32,7 @@ from app.account_creator.api.accounts import router as account_manager_router
 from app.account_creator.api.aliases import router as account_aliases_router
 from app.account_creator.api.profile import router as account_profile_router
 from app.account_creator.api.browser_profiles import router as account_browser_router
+from app.account_creator.api.tiktok import router as account_tiktok_router
 
 app = FastAPI(title="PostingTTII", version="0.1.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -40,6 +41,7 @@ app.include_router(account_manager_router)
 app.include_router(account_aliases_router)
 app.include_router(account_profile_router)
 app.include_router(account_browser_router)
+app.include_router(account_tiktok_router)
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
