@@ -317,6 +317,30 @@
 .am-network-mini{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .am-platform-guidance{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;padding:9px 10px;border:1px solid #274260;border-radius:11px;background:#09141f}
 .am-platform-guidance strong{font-size:10px;color:#c7d8eb}.am-platform-guidance span{font-size:9px;color:#7fa0c6;text-transform:uppercase;font-weight:800;letter-spacing:.05em}
+.am-tiktok-manual{
+  margin-top:10px;padding:13px;border:1px solid #31587f;border-radius:14px;
+  background:linear-gradient(135deg,rgba(24,65,108,.26),rgba(7,17,27,.92))
+}
+.am-tiktok-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.am-tiktok-head strong{display:block;font-size:12px;color:#e2edf9}
+.am-tiktok-head span{display:block;margin-top:3px;color:#7189a5;font-size:9px;text-transform:uppercase;font-weight:800;letter-spacing:.05em}
+.am-credential-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}
+.am-credential-box{
+  position:relative;min-width:0;border:1px solid #263c55;border-radius:11px;background:#08131e;
+  padding:9px 58px 9px 10px
+}
+.am-credential-box>span{display:block;color:#60758e;font-size:8px;font-weight:900;letter-spacing:.1em}
+.am-credential-box>b{display:block;margin-top:4px;color:#d7e4f2;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.am-copy-btn{
+  position:absolute;right:7px;top:50%;transform:translateY(-50%);
+  border:1px solid #355273;border-radius:8px;background:#12253a;color:#9fc6f4;
+  padding:5px 7px;cursor:pointer;font:inherit;font-size:8px;font-weight:850
+}
+.am-copy-btn:hover{background:#18324f;color:#fff}
+.am-tiktok-note{
+  margin-top:9px;padding:9px 10px;border-radius:10px;background:#0a1723;border:1px solid #20364d;
+  color:#7990aa;font-size:9px;line-height:1.55
+}
 .am-network-mini span{border:1px solid #26384e;border-radius:9px;padding:7px 8px;color:#8799ae;font-size:9px}
 .am-network-mini b{color:#c9d5e3;margin-left:5px}
 .am-account-tech{
@@ -381,4 +405,9 @@
   .am-browser-path{grid-column:1/-1}
   .am-browser-actions{grid-column:1/-1;justify-content:flex-start}
   .am-browser-state{justify-content:flex-end}
+}
+
+@media(max-width:620px){
+  .am-credential-grid{grid-template-columns:1fr}
+  .am-tiktok-head{align-items:flex-start;flex-direction:column}
 }
