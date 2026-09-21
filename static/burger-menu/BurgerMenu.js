@@ -12,11 +12,21 @@
     { id: "settings", title: "Settings", icon: "⚙", note: "Настройки модуля" }
   ];
 
+  const ACCOUNT_MANAGER_ROUTES = new Set([
+    "accounts",
+    "create-account",
+    "aliases",
+    "browser-profiles",
+    "autoposting-accounts",
+    "logs",
+    "settings"
+  ]);
+
   let overlay = null;
   let panel = null;
   let burger = null;
-  let toastTimer = null;
   let lastFocused = null;
+  let accountManagerPromise = null;
 
   function currentRoute() {
     const value = String(location.hash || "").replace(/^#/, "");
@@ -37,7 +47,8 @@
     setTimeout(() => panel?.querySelector(".pt-menu-close")?.focus(), 0);
   }
 
-  function closeMenu({ restoreFocus = true } = {}) {
+  function closeMenu(options = {}) {
+    const restoreFocus = options.restoreFocus !== false;
     if (!overlay || !overlay.classList.contains("open")) return;
     overlay.classList.remove("open");
     overlay.setAttribute("aria-hidden", "true");
@@ -53,21 +64,6 @@
     else openMenu();
   }
 
-  function showToast(message) {
-    let toast = document.querySelector(".pt-menu-toast");
-    if (!toast) {
-      toast = document.createElement("div");
-      toast.className = "pt-menu-toast";
-      toast.setAttribute("role", "status");
-      toast.setAttribute("aria-live", "polite");
-      document.body.appendChild(toast);
-    }
-    toast.textContent = message;
-    toast.classList.add("show");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
-  }
-
   function paintActive(route) {
     document.querySelectorAll(".pt-menu-item").forEach(button => {
       const active = button.dataset.route === route;
@@ -76,12 +72,65 @@
     });
   }
 
-  function navigate(route) {
+  function loadStyle(href) {
+    if (document.querySelector('link[href="' + href + '"]')) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[src="' + src + '"]');
+      if (existing) {
+        if (existing.dataset.loaded === "1") return resolve();
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", reject, { once: true });
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = src;
+      script.defer = true;
+      script.addEventListener("load", () => {
+        script.dataset.loaded = "1";
+        resolve();
+      }, { once: true });
+      script.addEventListener("error", reject, { once: true });
+      document.head.appendChild(script);
+    });
+  }
+
+  async function ensureAccountManager() {
+    if (window.PostingTTIIAccountManager) return;
+    if (accountManagerPromise) return accountManagerPromise;
+
+    accountManagerPromise = (async () => {
+      loadStyle("/static/account-manager/account-manager.css");
+      await loadScript("/static/account-manager/AccountList.js");
+      await loadScript("/static/account-manager/CreateAccount.js");
+      await loadScript("/static/account-manager/Aliases.js");
+      await loadScript("/static/account-manager/AccountManager.js");
+    })();
+
+    try {
+      await accountManagerPromise;
+    } catch (error) {
+      accountManagerPromise = null;
+      throw error;
+    }
+  }
+
+  async function navigate(route) {
     paintActive(route);
 
     if (route === "dashboard") {
-      if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+      if (location.hash) {
+        history.replaceState(null, "", location.pathname + location.search);
+      }
       closeMenu();
+      window.PostingTTIIAccountManager?.close();
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -89,11 +138,14 @@
     history.replaceState(null, "", "#" + route);
     closeMenu();
 
-    window.dispatchEvent(new CustomEvent("postingttii:navigate", {
-      detail: { route }
-    }));
-
-    showToast("Раздел «" + (ITEMS.find(item => item.id === route)?.title || route) + "» подключим в следующей фазе.");
+    if (ACCOUNT_MANAGER_ROUTES.has(route)) {
+      try {
+        await ensureAccountManager();
+        await window.PostingTTIIAccountManager.navigate(route);
+      } catch (error) {
+        alert("Не удалось открыть Account Manager: " + error.message);
+      }
+    }
   }
 
   function buildMenu() {
@@ -156,7 +208,7 @@
 
     const footer = document.createElement("div");
     footer.className = "pt-menu-footer";
-    footer.textContent = "Phase 2: навигационная панель готова. Accounts, Create Account и Aliases подключаются отдельными модулями в следующих этапах.";
+    footer.textContent = "Phase 3: Accounts UI и постоянная SQLite-база подключены. addy.io и identity идут следующими фазами.";
 
     content.append(label, nav);
     panel.append(header, content, footer);
@@ -178,8 +230,15 @@
       }
     });
 
-    window.addEventListener("hashchange", () => paintActive(currentRoute()));
-    paintActive(currentRoute());
+    window.addEventListener("hashchange", () => {
+      const route = currentRoute();
+      paintActive(route);
+      if (route !== "dashboard") navigate(route);
+    });
+
+    const route = currentRoute();
+    paintActive(route);
+    if (route !== "dashboard") navigate(route);
   }
 
   if (document.readyState === "loading") {
@@ -191,6 +250,7 @@
   window.PostingTTIIBurgerMenu = {
     open: openMenu,
     close: closeMenu,
-    toggle: toggleMenu
+    toggle: toggleMenu,
+    navigate
   };
 })();
