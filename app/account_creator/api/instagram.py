@@ -38,7 +38,7 @@ async def _ensure_account_alias(account_id: int) -> dict[str, Any]:
         raise HTTPException(502, str(exc)) from exc
 
     used_aliases = database.alias_assignments()
-    for item in aliases:
+    for item in reversed(aliases):
         alias_id = str(item.get("id") or "").strip()
         email = _alias_email(item)
         active = bool(item.get("active", True))
