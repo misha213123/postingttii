@@ -191,14 +191,29 @@ def close_profile(account_id: int) -> dict[str, str | bool]:
 
 def status() -> dict[str, str | bool]:
     try:
+        edge = find_edge()
+        edge_available = True
+        edge_message = ""
+    except BrowserProfileError as exc:
+        edge = None
+        edge_available = False
+        edge_message = str(exc)
+
+    try:
         browser = find_browser()
         return {
             "available": True,
             "browser": str(browser),
+            "edge_available": edge_available,
+            "edge_browser": str(edge) if edge else "",
+            "edge_message": edge_message,
         }
     except BrowserProfileError as exc:
         return {
             "available": False,
             "browser": "",
+            "edge_available": edge_available,
+            "edge_browser": str(edge) if edge else "",
+            "edge_message": edge_message,
             "message": str(exc),
         }
