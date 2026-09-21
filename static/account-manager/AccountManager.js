@@ -37,7 +37,10 @@
     contentNode = root.querySelector("[data-am-content]");
     titleNode = root.querySelector("[data-am-title]");
     subtitleNode = root.querySelector("[data-am-subtitle]");
-    root.querySelector("[data-am-dashboard]").addEventListener("click", close);
+    root.querySelector("[data-am-dashboard]").addEventListener("click", () => {
+      if (window.PostingTTIIBurgerMenu?.navigate) window.PostingTTIIBurgerMenu.navigate("dashboard");
+      else close();
+    });
 
     return root;
   }
