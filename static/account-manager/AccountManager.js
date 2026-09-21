@@ -6,6 +6,7 @@
   let titleNode = null;
   let subtitleNode = null;
   let selectedAccountId = null;
+  let preferredAliasAccountId = null;
 
   const ROUTE_TITLES = {
     accounts: ["Accounts", "Все созданные связки аккаунтов"],
@@ -281,12 +282,16 @@
           });
           selectedAccountId = created.id;
           toast("Account " + String(created.account_number || 0).padStart(2, "0") + " создан");
-          navigate("accounts");
+          await renderCreate();
         } catch (error) {
           toast("Не удалось создать Account: " + error.message);
         }
       },
-      onBack: () => navigate("accounts")
+      onBack: () => navigate("accounts"),
+      onChooseAlias: account => {
+        preferredAliasAccountId = account?.id || selectedAccountId;
+        navigate("aliases");
+      }
     });
   }
 
@@ -307,8 +312,9 @@
     root.classList.remove("hidden");
     setHeader(route);
 
-    if (route !== "create-account") {
+    if (route === "accounts") {
       selectedAccountId = null;
+      preferredAliasAccountId = null;
     }
 
     if (route === "accounts") {
@@ -316,7 +322,13 @@
     } else if (route === "create-account") {
       await renderCreate();
     } else if (route === "aliases") {
-      window.PostingTTIIAliases.render(contentNode);
+      await window.PostingTTIIAliases.render(contentNode, {
+        api,
+        toast,
+        modal,
+        navigate,
+        preferredAccountId: preferredAliasAccountId
+      });
     } else {
       placeholder(route);
     }
@@ -326,6 +338,7 @@
     ensureRoot();
     root.classList.add("hidden");
     selectedAccountId = null;
+    preferredAliasAccountId = null;
     history.replaceState(null, "", location.pathname + location.search);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
