@@ -9,6 +9,7 @@ from app.account_creator.services import AddyError, addy_service
 from app.account_creator.services.instagram_service import (
     InstagramBrowserError,
     is_running,
+    open_instagram_account,
     start_instagram_browser,
     stop_instagram_browser,
 )
@@ -101,6 +102,28 @@ async def start_instagram(account_id: int):
     }
 
 
+@router.post("/accounts/{account_id}/instagram/open")
+def open_instagram(account_id: int):
+    account = database.get_account(account_id)
+    if not account:
+        raise HTTPException(404, "Account not found")
+    if not account.get("email"):
+        raise HTTPException(409, "Сначала запусти регистрацию Instagram")
+
+    try:
+        result = open_instagram_account(
+            account_id,
+            str(account["browser_profile_path"]),
+        )
+    except InstagramBrowserError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+    return {
+        "result": result,
+        "account": account,
+    }
+
+
 @router.post("/accounts/{account_id}/instagram/mark-connected")
 def mark_instagram_connected(account_id: int):
     account = database.get_account(account_id)
@@ -113,7 +136,7 @@ def mark_instagram_connected(account_id: int):
         account_id,
         "instagram",
         social_status="CONNECTED",
-        account_status="INSTAGRAM_CONNECTED",
+        account_status="READY",
         step="DONE",
         job_status="DONE",
     )
