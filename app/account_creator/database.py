@@ -266,3 +266,90 @@ def account_counts() -> dict[str, int]:
 
 
 init_db()
+
+
+def alias_assignments() -> dict[str, dict[str, Any]]:
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, account_number, email, email_alias_id, display_name, username, status
+            FROM accounts
+            WHERE email_alias_id IS NOT NULL AND email_alias_id != ''
+            ORDER BY account_number
+            """
+        ).fetchall()
+
+    return {
+        str(row["email_alias_id"]): {
+            "account_id": int(row["id"]),
+            "account_number": int(row["account_number"]),
+            "email": row["email"] or "",
+            "display_name": row["display_name"] or "",
+            "username": row["username"] or "",
+            "status": row["status"] or "CREATED",
+        }
+        for row in rows
+    }
+
+
+def assign_alias(account_id: int, alias_id: str, email: str) -> dict[str, Any] | None:
+    init_db()
+    alias_id = alias_id.strip()
+    email = email.strip()
+    if not alias_id or not email:
+        raise ValueError("alias_id и email обязательны")
+
+    now = _now()
+    with _connect() as conn:
+        target = conn.execute(
+            "SELECT id FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        if not target:
+            return None
+
+        existing = conn.execute(
+            """
+            SELECT id, account_number
+            FROM accounts
+            WHERE email_alias_id = ? AND id != ?
+            """,
+            (alias_id, account_id),
+        ).fetchone()
+        if existing:
+            raise ValueError(
+                f"Alias уже назначен Account {int(existing['account_number']):02d}"
+            )
+
+        conn.execute(
+            """
+            UPDATE accounts
+            SET email = ?, email_alias_id = ?, status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (email, alias_id, "EMAIL_READY", now, account_id),
+        )
+        return _account_payload(conn, account_id)
+
+
+def unassign_alias(account_id: int) -> dict[str, Any] | None:
+    init_db()
+    now = _now()
+    with _connect() as conn:
+        target = conn.execute(
+            "SELECT id FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        if not target:
+            return None
+
+        conn.execute(
+            """
+            UPDATE accounts
+            SET email = NULL, email_alias_id = '', status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            ("CREATED", now, account_id),
+        )
+        return _account_payload(conn, account_id)
