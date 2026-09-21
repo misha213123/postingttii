@@ -381,7 +381,14 @@
       toast(message);
       await renderCreate();
     } catch (error) {
-      toast("TikTok: " + error.message);
+      await modal({
+        title: "TikTok registration error",
+        body:
+          '<p style="margin:0;color:#cbd5e1;font-size:12px;line-height:1.6;white-space:pre-wrap">' +
+          esc(error.message || "Unknown error") +
+          '</p>',
+        actions: [{ label: "Close", value: true }]
+      });
       await renderCreate();
     }
   }
