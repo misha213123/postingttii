@@ -26,7 +26,7 @@
           '<div class="am-hero-copy">' +
             '<span class="am-eyebrow">LOCAL BROWSER SESSIONS</span>' +
             '<h2>Browser Profiles</h2>' +
-            '<p>Каждый Account открывается в отдельном Chrome/Edge user-data-dir. Логины и подтверждения выполняются вручную в обычном браузере.</p>' +
+            '<p>Каждый Account использует отдельный постоянный Edge user-data-dir. Instagram получает свой alias из addy.io, а ручные проверки выполняются в обычном Edge.</p>' +
           '</div>' +
           '<div class="am-hero-actions">' +
             '<span class="am-connection ' + (browser.available ? "ok" : "off") + '">' +
@@ -63,9 +63,13 @@
         const target = button.dataset.openBrowser || "home";
         button.disabled = true;
         try {
-          const result = await options.api("/api/account-manager/accounts/" + accountId + "/browser/open", {
+          const url = target === "instagram"
+            ? "/api/account-manager/accounts/" + accountId + "/instagram/start"
+            : "/api/account-manager/accounts/" + accountId + "/browser/open";
+          const body = target === "instagram" ? "{}" : JSON.stringify({ target });
+          const result = await options.api(url, {
             method: "POST",
-            body: JSON.stringify({ target })
+            body
           });
           options.toast(result.message || "Browser открыт");
           await render(root, options);
@@ -110,8 +114,7 @@
       '</div>' +
       '<div class="am-browser-actions">' +
         '<button type="button" class="am-btn subtle small" data-open-browser="home" data-account-id="' + Number(profile.account_id) + '" ' + (browserAvailable ? "" : "disabled") + '>Open</button>' +
-        '<button type="button" class="am-btn subtle small" data-open-browser="tiktok" data-account-id="' + Number(profile.account_id) + '" ' + (browserAvailable ? "" : "disabled") + '>TikTok</button>' +
-        '<button type="button" class="am-btn subtle small" data-open-browser="instagram" data-account-id="' + Number(profile.account_id) + '" ' + (browserAvailable ? "" : "disabled") + '>Instagram</button>' +
+        '        '<button type="button" class="am-btn subtle small" data-open-browser="instagram" data-account-id="' + Number(profile.account_id) + '" ' + (browserAvailable ? "" : "disabled") + '>Instagram Edge</button>' +
         '<button type="button" class="am-btn subtle small" data-open-browser="youtube" data-account-id="' + Number(profile.account_id) + '" ' + (browserAvailable ? "" : "disabled") + '>YouTube</button>' +
         '<button type="button" class="am-btn danger small" data-close-browser data-account-id="' + Number(profile.account_id) + '">Close</button>' +
       '</div>' +
