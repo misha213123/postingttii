@@ -20,6 +20,11 @@
 
   const esc = value => window.PostingTTIIAccountList?.esc(value) || String(value ?? "");
 
+  function go(route) {
+    if (window.PostingTTIIBurgerMenu?.navigate) return window.PostingTTIIBurgerMenu.navigate(route);
+    return navigate(route);
+  }
+
   function ensureRoot() {
     if (root) return root;
 
@@ -137,7 +142,7 @@
     try {
       const payload = await api("/api/account-manager/accounts");
       window.PostingTTIIAccountList.render(contentNode, payload, {
-        onCreate: () => navigate("create-account"),
+        onCreate: () => go("create-account"),
         onRefresh: loadAccounts,
         onAction: handleAccountAction
       });
@@ -250,7 +255,7 @@
 
       if (action === "continue") {
         selectedAccountId = id;
-        return navigate("create-account");
+        return go("create-account");
       }
 
       if (action === "browser") {
@@ -287,10 +292,10 @@
           toast("Не удалось создать Account: " + error.message);
         }
       },
-      onBack: () => navigate("accounts"),
+      onBack: () => go("accounts"),
       onChooseAlias: account => {
         preferredAliasAccountId = account?.id || selectedAccountId;
-        navigate("aliases");
+        go("aliases");
       }
     });
   }
