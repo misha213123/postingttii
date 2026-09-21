@@ -117,6 +117,7 @@ def _account_payload(conn: sqlite3.Connection, account_id: int) -> dict[str, Any
 
     account["social_accounts"] = social
     account["creation_jobs"] = jobs
+    account["profile_ready"] = bool(account.get("display_name") and account.get("username") and account.get("avatar_path"))
     return account
 
 
@@ -351,5 +352,74 @@ def unassign_alias(account_id: int) -> dict[str, Any] | None:
             WHERE id = ?
             """,
             ("CREATED", now, account_id),
+        )
+        return _account_payload(conn, account_id)
+
+
+def username_exists(username: str, *, exclude_account_id: int | None = None) -> bool:
+    init_db()
+    username = username.strip().lower()
+    if not username:
+        return False
+
+    with _connect() as conn:
+        if exclude_account_id is None:
+            row = conn.execute(
+                "SELECT 1 FROM accounts WHERE lower(username) = ? LIMIT 1",
+                (username,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT 1 FROM accounts WHERE lower(username) = ? AND id != ? LIMIT 1",
+                (username, exclude_account_id),
+            ).fetchone()
+    return bool(row)
+
+
+def save_creator_profile(
+    account_id: int,
+    *,
+    display_name: str,
+    username: str,
+    bio: str,
+    avatar_path: str,
+) -> dict[str, Any] | None:
+    init_db()
+    now = _now()
+
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, email FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        if not row:
+            return None
+
+        if not row["email"]:
+            raise ValueError("Сначала назначь email alias")
+
+        duplicate = conn.execute(
+            "SELECT id FROM accounts WHERE lower(username) = lower(?) AND id != ? LIMIT 1",
+            (username.strip(), account_id),
+        ).fetchone()
+        if duplicate:
+            raise ValueError("Такой username уже используется в Account Manager")
+
+        conn.execute(
+            """
+            UPDATE accounts
+            SET display_name = ?, username = ?, bio = ?, avatar_path = ?,
+                status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                display_name.strip(),
+                username.strip(),
+                bio.strip(),
+                avatar_path,
+                "PROFILE_READY",
+                now,
+                account_id,
+            ),
         )
         return _account_payload(conn, account_id)
