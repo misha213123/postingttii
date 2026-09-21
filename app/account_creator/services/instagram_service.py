@@ -27,14 +27,13 @@ def is_running(account_id: int) -> bool:
     return False
 
 
-def start_instagram_browser(
+def _launch_instagram(
     account_id: int,
     profile_path: str,
-    email: str,
+    *,
+    mode: str,
+    email: str = "",
 ) -> dict[str, str | bool]:
-    if not email.strip():
-        raise InstagramBrowserError("Для Instagram нужен email alias")
-
     if importlib.util.find_spec("playwright") is None:
         raise InstagramBrowserError(
             "Playwright не установлен. Выполни pip install -r requirements.txt и перезапусти PostingTTII"
@@ -54,8 +53,6 @@ def start_instagram_browser(
 
     profile = Path(profile_path).resolve()
     profile.mkdir(parents=True, exist_ok=True)
-
-    # Не смешиваем один и тот же user-data-dir с обычным browser launcher.
     close_profile(account_id)
 
     command = [
@@ -66,9 +63,11 @@ def start_instagram_browser(
         str(edge),
         "--profile",
         str(profile),
-        "--email",
-        email.strip(),
+        "--mode",
+        mode,
     ]
+    if email.strip():
+        command.extend(["--email", email.strip()])
 
     creationflags = 0
     if os.name == "nt":
@@ -97,8 +96,38 @@ def start_instagram_browser(
     return {
         "ok": True,
         "running": True,
-        "message": "Instagram открыт в Edge. Email alias подставляется автоматически.",
+        "message": (
+            "Instagram открыт в сохранённом Edge-профиле этого Account"
+            if mode == "home"
+            else "Instagram открыт в Edge. Email alias подставляется автоматически."
+        ),
     }
+
+
+def start_instagram_browser(
+    account_id: int,
+    profile_path: str,
+    email: str,
+) -> dict[str, str | bool]:
+    if not email.strip():
+        raise InstagramBrowserError("Для Instagram нужен email alias")
+    return _launch_instagram(
+        account_id,
+        profile_path,
+        mode="signup",
+        email=email,
+    )
+
+
+def open_instagram_account(
+    account_id: int,
+    profile_path: str,
+) -> dict[str, str | bool]:
+    return _launch_instagram(
+        account_id,
+        profile_path,
+        mode="home",
+    )
 
 
 def stop_instagram_browser(account_id: int) -> dict[str, str | bool]:
