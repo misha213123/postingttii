@@ -103,6 +103,8 @@ def open_profile(
     account_id: int,
     profile_path: str,
     target: Literal["home", "tiktok", "instagram", "youtube"] = "home",
+    *,
+    preferred: str = "auto",
 ) -> dict[str, str | bool]:
     if is_running(account_id):
         return {
@@ -111,7 +113,7 @@ def open_profile(
             "message": "Browser profile уже открыт",
         }
 
-    browser = find_browser()
+    browser = find_browser(preferred)
     profile = Path(profile_path).resolve()
     profile.mkdir(parents=True, exist_ok=True)
     url = TARGET_URLS.get(target, TARGET_URLS["home"])
