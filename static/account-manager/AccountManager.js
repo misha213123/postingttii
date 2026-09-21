@@ -171,7 +171,6 @@
           '<dt>Browser</dt><dd>' + esc(account.browser_profile_path || "—") + '</dd>' +
           '<dt>Status</dt><dd>' + esc(account.status || "CREATED") + '</dd>' +
           '<dt>Instagram</dt><dd>' + esc(social.instagram?.status || "NOT_CREATED") + '</dd>' +
-          '<dt>YouTube</dt><dd>' + esc(social.youtube?.status || "NOT_CREATED") + '</dd>' +
         '</dl>',
       actions: [{ label: "CLOSE", value: true }]
     });
@@ -255,17 +254,8 @@
         return go("create-account");
       }
 
-      if (action === "browser") {
-        try {
-          const result = await api("/api/account-manager/accounts/" + Number(account.id) + "/browser/open", {
-            method: "POST",
-            body: JSON.stringify({ target: "home" })
-          });
-          toast(result.message || "Browser открыт");
-        } catch (error) {
-          toast("Browser: " + error.message);
-        }
-        return;
+      if (action === "instagram") {
+        return openSavedInstagram(account);
       }
     } catch (error) {
       toast("Ошибка: " + error.message);
@@ -350,19 +340,6 @@
     }
   }
 
-  async function openPlatformBrowser(account, target) {
-    if (!account?.id) return;
-    try {
-      const result = await api("/api/account-manager/accounts/" + Number(account.id) + "/browser/open", {
-        method: "POST",
-        body: JSON.stringify({ target: target || "home" })
-      });
-      toast(result.message || "Browser открыт");
-    } catch (error) {
-      toast("Browser: " + error.message);
-    }
-  }
-
   async function copyText(value, label) {
     if (!value) {
       toast(label + ": пусто");
@@ -407,6 +384,20 @@
           '</p>',
         actions: [{ label: "Close", value: true }]
       });
+    }
+  }
+
+  async function openSavedInstagram(account) {
+    if (!account?.id) return;
+
+    try {
+      const payload = await api(
+        "/api/account-manager/accounts/" + Number(account.id) + "/instagram/open",
+        { method: "POST", body: "{}" }
+      );
+      toast(payload?.result?.message || "Instagram открыт");
+    } catch (error) {
+      toast("Instagram: " + error.message);
     }
   }
 
@@ -472,8 +463,8 @@
       },
       onGenerateProfile: generateCreatorProfile,
       onEditProfile: editCreatorProfile,
-      onOpenPlatform: openPlatformBrowser,
       onInstagramOpen: openInstagramRegistration,
+      onInstagramAccountOpen: openSavedInstagram,
       onCopyEmail: account => copyText(account?.email || "", "Email"),
       onMarkInstagramConnected: markInstagramConnected
     });

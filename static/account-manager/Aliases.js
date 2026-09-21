@@ -62,7 +62,7 @@
           '<div class="am-hero-copy">' +
             '<span class="am-eyebrow">EMAIL INFRASTRUCTURE</span>' +
             '<h2>Aliases</h2>' +
-            '<p>addy.io aliases для новых связок TikTok / Instagram / YouTube. Токен остаётся только на backend.</p>' +
+            '<p>addy.io aliases для Instagram-аккаунтов. Токен остаётся только на backend.</p>' +
           '</div>' +
           '<div class="am-hero-actions">' +
             '<span class="am-connection ' + (connected ? "ok" : "off") + '">' +
