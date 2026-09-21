@@ -7,7 +7,7 @@
 
   function statusClass(status) {
     const s = String(status || "").toUpperCase();
-    if (s === "READY" || s === "CONNECTED" || s === "EMAIL_READY") return "ready connected";
+    if (s === "READY" || s === "CONNECTED" || s === "EMAIL_READY" || s === "PROFILE_READY") return "ready connected";
     if (s.includes("ACTION") || s.includes("NEED")) return "action";
     if (s === "FAILED" || s === "ERROR") return "failed";
     return "";
@@ -90,7 +90,11 @@
         return '<article class="am-card am-account-card" data-account-id="' + Number(account.id) + '">' +
           '<div class="am-card-head">' +
             '<div class="am-account-head">' +
-              '<div class="am-avatar">' + esc(initials || "AC") + '</div>' +
+              '<div class="am-avatar">' +
+                (account.avatar_path
+                  ? '<img src="/api/account-manager/accounts/' + Number(account.id) + '/avatar?v=' + encodeURIComponent(account.updated_at || '') + '" alt="">'
+                  : esc(initials || "AC")) +
+              '</div>' +
               '<div>' +
                 '<div class="am-card-title">' + esc(accountLabel(account)) + '</div>' +
                 '<div class="am-subtitle">' + esc(account.display_name || account.username || "Identity not generated") + '</div>' +
