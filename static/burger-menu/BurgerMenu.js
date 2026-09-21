@@ -153,6 +153,7 @@
       await loadScript("/static/account-manager/AccountList.js");
       await loadScript("/static/account-manager/CreateAccount.js");
       await loadScript("/static/account-manager/Aliases.js");
+      await loadScript("/static/account-manager/BrowserProfiles.js");
       await loadScript("/static/account-manager/AccountManager.js");
     })();
 
@@ -283,7 +284,7 @@
     footer.className = "pt-menu-footer";
     footer.innerHTML =
       '<div class="pt-local-dot"></div>' +
-      '<div><strong>Local workspace</strong><span>127.0.0.1:8765 · Phase 4</span></div>';
+      '<div><strong>Local workspace</strong><span>127.0.0.1:8765 · Profile + Browser</span></div>';
 
     panel.append(header, content, footer);
     overlay.appendChild(panel);
