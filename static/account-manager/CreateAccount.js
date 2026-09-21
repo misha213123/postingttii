@@ -72,16 +72,25 @@
                 '</div>' +
               '</section>' +
 
-              '<section class="am-wizard-step locked">' +
+              '<section class="am-wizard-step ' + (profileReady ? "active" : "locked") + '">' +
                 '<div class="am-wizard-index">3</div>' +
                 '<div class="am-wizard-body">' +
-                  '<div class="am-wizard-title"><span>Social networks</span><span class="am-badge">NEXT</span></div>' +
-                  '<p>Подключение собственных TikTok / Instagram / YouTube профилей и browser sessions будет отдельным модулем.</p>' +
+                  '<div class="am-wizard-title"><span>Platform sessions</span><span class="am-badge">' + (profileReady ? "READY TO OPEN" : "NEXT") + '</span></div>' +
+                  '<p>' + (profileReady
+                    ? "Открой платформу в отдельном persistent browser profile и войди в свой аккаунт вручную."
+                    : "Сначала закончи creator profile.") + '</p>' +
                   '<div class="am-network-mini">' +
                     '<span>TikTok <b>' + esc(socialState(existing, "tiktok")) + '</b></span>' +
                     '<span>Instagram <b>' + esc(socialState(existing, "instagram")) + '</b></span>' +
                     '<span>YouTube <b>' + esc(socialState(existing, "youtube")) + '</b></span>' +
                   '</div>' +
+                  (profileReady
+                    ? '<div class="am-wizard-actions">' +
+                        '<button type="button" class="am-btn" data-open-platform="tiktok">Open TikTok</button>' +
+                        '<button type="button" class="am-btn" data-open-platform="instagram">Open Instagram</button>' +
+                        '<button type="button" class="am-btn" data-open-platform="youtube">Open YouTube</button>' +
+                      '</div>'
+                    : '') +
                 '</div>' +
               '</section>' +
             '</div>') +
@@ -99,6 +108,9 @@
     root.querySelector("[data-alias]")?.addEventListener("click", () => options.onChooseAlias?.(existing));
     root.querySelector("[data-profile-generate]")?.addEventListener("click", () => options.onGenerateProfile?.(existing));
     root.querySelector("[data-profile-edit]")?.addEventListener("click", () => options.onEditProfile?.(existing));
+    root.querySelectorAll("[data-open-platform]").forEach(button => {
+      button.addEventListener("click", () => options.onOpenPlatform?.(existing, button.dataset.openPlatform));
+    });
     root.querySelector("[data-back]")?.addEventListener("click", () => options.onBack?.());
   }
 
