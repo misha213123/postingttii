@@ -80,6 +80,15 @@ def _candidate_executables(preferred: str = "auto") -> list[Path]:
     return unique
 
 
+def find_edge() -> Path:
+    for path in _browser_paths("edge"):
+        if path.exists() and path.is_file():
+            return path
+    raise BrowserProfileError(
+        "Microsoft Edge не найден. Установи Edge или проверь стандартный путь установки"
+    )
+
+
 def find_browser(preferred: str = "auto") -> Path:
     for path in _candidate_executables(preferred):
         if path.exists() and path.is_file():
