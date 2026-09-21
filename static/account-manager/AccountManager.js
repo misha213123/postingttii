@@ -364,32 +364,92 @@
     }
   }
 
-  async function runTikTokRegistration(account, action) {
-    if (!account?.id) return;
-
-    const endpoint = action === "continue"
-      ? "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/continue"
-      : "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/start";
+  async function copyText(value, label) {
+    if (!value) {
+      toast(label + ": пусто");
+      return;
+    }
 
     try {
-      const payload = await api(endpoint, {
-        method: "POST",
-        body: "{}"
-      });
+      await navigator.clipboard.writeText(value);
+      toast(label + " скопирован");
+      return;
+    } catch (error) {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+      toast(label + " скопирован");
+    }
+  }
+
+  async function openTikTokRegistration(account) {
+    if (!account?.id) return;
+
+    try {
+      const payload = await api(
+        "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/start",
+        { method: "POST", body: "{}" }
+      );
       selectedAccountId = account.id;
-      const message = payload?.result?.message || "TikTok step выполнен";
-      toast(message);
+      toast(payload?.result?.message || "TikTok открыт в Edge");
       await renderCreate();
     } catch (error) {
       await modal({
-        title: "TikTok registration error",
+        title: "TikTok browser error",
         body:
           '<p style="margin:0;color:#cbd5e1;font-size:12px;line-height:1.6;white-space:pre-wrap">' +
           esc(error.message || "Unknown error") +
           '</p>',
         actions: [{ label: "Close", value: true }]
       });
+    }
+  }
+
+  async function copyTikTokPassword(account) {
+    if (!account?.id) return;
+
+    try {
+      const credentials = await api(
+        "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/credentials"
+      );
+      await copyText(credentials.password || "", "Password");
+    } catch (error) {
+      toast("Password: " + error.message);
+    }
+  }
+
+  async function markTikTokConnected(account) {
+    if (!account?.id) return;
+
+    const confirmed = await modal({
+      title: "Mark TikTok as connected?",
+      body:
+        '<p style="margin:0;color:#cbd5e1;font-size:12px;line-height:1.6">' +
+        'Нажимай только после того, как регистрация завершена и в открытом Edge ты уже вошёл в TikTok. ' +
+        'PostingTTII сохранит статус CONNECTED для этого Account.</p>',
+      actions: [
+        { label: "Cancel", value: false },
+        { label: "Mark Connected", value: true, className: "primary" }
+      ]
+    });
+    if (!confirmed) return;
+
+    try {
+      const payload = await api(
+        "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/mark-connected",
+        { method: "POST", body: "{}" }
+      );
+      selectedAccountId = account.id;
+      toast(payload.message || "TikTok подключён");
       await renderCreate();
+    } catch (error) {
+      toast("TikTok: " + error.message);
     }
   }
 
@@ -427,7 +487,10 @@
       onGenerateProfile: generateCreatorProfile,
       onEditProfile: editCreatorProfile,
       onOpenPlatform: openPlatformBrowser,
-      onTikTokAction: runTikTokRegistration
+      onTikTokOpen: openTikTokRegistration,
+      onCopyEmail: account => copyText(account?.email || "", "Email"),
+      onCopyTikTokPassword: copyTikTokPassword,
+      onMarkTikTokConnected: markTikTokConnected
     });
   }
 
