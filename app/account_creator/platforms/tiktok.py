@@ -326,18 +326,27 @@ async def advance_signup(
         ],
     )
 
-    if not email_input and await _looks_like_birthday_step(page):
-        return {
-            "state": "MANUAL_BIRTHDAY",
-            "message": "Выбери свою дату рождения вручную в TikTok и нажми Continue в PostingTTII.",
-            "url": page.url,
-        }
+    birthday_step = await _looks_like_birthday_step(page)
 
     if email_input:
         await email_input.fill(str(account["email"]))
 
     if password_input:
         await password_input.fill(password)
+
+    # TikTok requires the user to choose their own date of birth. Do not click
+    # Send code / Next while the birthday selectors are still on screen:
+    # TikTok can place the form into a blocked/dimmed validation state.
+    if birthday_step:
+        return {
+            "state": "MANUAL_BIRTHDAY",
+            "message": (
+                "Email и пароль заполнены. Выбери свою дату рождения вручную "
+                "и сам нажми «Отправить код» в TikTok. Затем вернись в PostingTTII "
+                "и нажми Continue TikTok."
+            ),
+            "url": page.url,
+        }
 
     if email_input or password_input:
         clicked = await _click_by_text(
