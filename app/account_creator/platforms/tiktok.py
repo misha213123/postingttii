@@ -210,6 +210,9 @@ async def _ensure_session(account_id: int, profile_path: str) -> TikTokSession:
             executable_path=str(browser),
             headless=False,
             no_viewport=True,
+            chromium_sandbox=True,
+            color_scheme="light",
+            locale="ru-RU",
             args=[
                 "--start-maximized",
                 "--no-first-run",
@@ -226,6 +229,10 @@ async def _ensure_session(account_id: int, profile_path: str) -> TikTokSession:
         ) from exc
 
     page = context.pages[0] if context.pages else await context.new_page()
+    try:
+        await page.emulate_media(color_scheme="light")
+    except Exception:
+        pass
     session = TikTokSession(playwright=playwright, context=context, page=page)
     _SESSIONS[account_id] = session
     return session
