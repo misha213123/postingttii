@@ -433,7 +433,12 @@
         toast,
         modal,
         navigate,
-        preferredAccountId: preferredAliasAccountId
+        preferredAccountId: preferredAliasAccountId,
+        onAssigned: async accountId => {
+          selectedAccountId = Number(accountId);
+          preferredAliasAccountId = null;
+          await go("create-account");
+        }
       });
     } else if (route === "browser-profiles") {
       await window.PostingTTIIBrowserProfiles.render(contentNode, {
