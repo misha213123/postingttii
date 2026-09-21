@@ -1,26 +1,36 @@
 (() => {
   "use strict";
 
-  const ITEMS = [
-    { id: "dashboard", title: "Dashboard", icon: "▦", note: "Текущий автопостинг" },
-    { id: "accounts", title: "Accounts", icon: "◎", note: "Связки соцсетей" },
-    { id: "create-account", title: "Create Account", icon: "+", note: "Создание новой связки" },
-    { id: "aliases", title: "Aliases", icon: "@", note: "Email aliases" },
-    { id: "browser-profiles", title: "Browser Profiles", icon: "◫", note: "Persistent browser sessions" },
-    { id: "autoposting-accounts", title: "Autoposting Accounts", icon: "↗", note: "Аккаунты публикации" },
-    { id: "logs", title: "Logs", icon: "≡", note: "Журнал действий" },
-    { id: "settings", title: "Settings", icon: "⚙", note: "Настройки модуля" }
+  const GROUPS = [
+    {
+      label: "Workspace",
+      items: [
+        { id: "dashboard", title: "Dashboard", icon: "▦", note: "Очередь публикаций" }
+      ]
+    },
+    {
+      label: "Account Manager",
+      items: [
+        { id: "accounts", title: "Accounts", icon: "◎", note: "Все связки аккаунтов" },
+        { id: "create-account", title: "Create Account", icon: "+", note: "Новая связка" },
+        { id: "aliases", title: "Aliases", icon: "@", note: "addy.io email aliases" }
+      ]
+    },
+    {
+      label: "Automation",
+      items: [
+        { id: "browser-profiles", title: "Browser Profiles", icon: "◫", note: "Persistent sessions" },
+        { id: "autoposting-accounts", title: "Autoposting Accounts", icon: "↗", note: "Аккаунты публикации" },
+        { id: "logs", title: "Logs", icon: "≡", note: "История действий" },
+        { id: "settings", title: "Settings", icon: "⚙", note: "Настройки модуля" }
+      ]
+    }
   ];
 
-  const ACCOUNT_MANAGER_ROUTES = new Set([
-    "accounts",
-    "create-account",
-    "aliases",
-    "browser-profiles",
-    "autoposting-accounts",
-    "logs",
-    "settings"
-  ]);
+  const ITEMS = GROUPS.flatMap(group => group.items);
+  const ACCOUNT_MANAGER_ROUTES = new Set(
+    ITEMS.map(item => item.id).filter(id => id !== "dashboard")
+  );
 
   let overlay = null;
   let panel = null;
@@ -37,6 +47,37 @@
     burger?.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
+  async function refreshQuickStats() {
+    const accountsEl = panel?.querySelector("[data-pt-accounts]");
+    const addyEl = panel?.querySelector("[data-pt-addy]");
+    if (!accountsEl || !addyEl) return;
+
+    accountsEl.textContent = "—";
+    addyEl.textContent = "checking";
+    addyEl.className = "pt-mini-value";
+
+    try {
+      const [accountsResponse, addyResponse] = await Promise.all([
+        fetch("/api/account-manager/accounts", { cache: "no-store" }),
+        fetch("/api/account-manager/addy/status", { cache: "no-store" })
+      ]);
+
+      if (accountsResponse.ok) {
+        const data = await accountsResponse.json();
+        accountsEl.textContent = String(data.counts?.total ?? 0);
+      }
+
+      if (addyResponse.ok) {
+        const data = await addyResponse.json();
+        addyEl.textContent = data.connected ? "online" : (data.configured ? "error" : "off");
+        addyEl.className = "pt-mini-value " + (data.connected ? "ok" : data.configured ? "warn" : "");
+      }
+    } catch {
+      addyEl.textContent = "offline";
+      addyEl.className = "pt-mini-value warn";
+    }
+  }
+
   function openMenu() {
     if (!overlay || overlay.classList.contains("open")) return;
     lastFocused = document.activeElement;
@@ -44,6 +85,7 @@
     overlay.setAttribute("aria-hidden", "false");
     setExpanded(true);
     document.body.dataset.ptMenuOpen = "1";
+    refreshQuickStats();
     setTimeout(() => panel?.querySelector(".pt-menu-close")?.focus(), 0);
   }
 
@@ -126,9 +168,7 @@
     paintActive(route);
 
     if (route === "dashboard") {
-      if (location.hash) {
-        history.replaceState(null, "", location.pathname + location.search);
-      }
+      if (location.hash) history.replaceState(null, "", location.pathname + location.search);
       closeMenu();
       window.PostingTTIIAccountManager?.close();
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -136,7 +176,7 @@
     }
 
     history.replaceState(null, "", "#" + route);
-    closeMenu();
+    closeMenu({ restoreFocus: false });
 
     if (ACCOUNT_MANAGER_ROUTES.has(route)) {
       try {
@@ -148,16 +188,36 @@
     }
   }
 
+  function createNavButton(item) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pt-menu-item";
+    button.dataset.route = item.id;
+    button.innerHTML =
+      '<span class="pt-menu-item-icon" aria-hidden="true">' + item.icon + '</span>' +
+      '<span class="pt-menu-item-text">' +
+        '<span class="pt-menu-item-title"></span>' +
+        '<span class="pt-menu-item-note"></span>' +
+      '</span>' +
+      '<span class="pt-menu-chevron" aria-hidden="true">›</span>';
+    button.querySelector(".pt-menu-item-title").textContent = item.title;
+    button.querySelector(".pt-menu-item-note").textContent = item.note;
+    button.addEventListener("click", () => navigate(item.id));
+    return button;
+  }
+
   function buildMenu() {
     if (document.querySelector(".pt-burger-button")) return;
 
     burger = document.createElement("button");
     burger.type = "button";
     burger.className = "pt-burger-button";
-    burger.setAttribute("aria-label", "Открыть меню управления аккаунтами");
+    burger.setAttribute("aria-label", "Открыть PostingTTII menu");
     burger.setAttribute("aria-expanded", "false");
     burger.setAttribute("aria-controls", "ptAccountMenu");
-    burger.innerHTML = '<span class="pt-burger-icon" aria-hidden="true"></span>';
+    burger.innerHTML =
+      '<span class="pt-burger-icon" aria-hidden="true"></span>' +
+      '<span class="pt-burger-label">Menu</span>';
     burger.addEventListener("click", toggleMenu);
 
     overlay = document.createElement("div");
@@ -174,43 +234,57 @@
     const header = document.createElement("div");
     header.className = "pt-menu-header";
     header.innerHTML =
-      '<div><div class="pt-menu-title">PostingTTII</div>' +
-      '<div class="pt-menu-subtitle">Account Manager</div></div>' +
+      '<div class="pt-brand">' +
+        '<div class="pt-brand-mark">PT</div>' +
+        '<div><div class="pt-menu-title">PostingTTII</div><div class="pt-menu-subtitle">Creator workspace</div></div>' +
+      '</div>' +
       '<button type="button" class="pt-menu-close" aria-label="Закрыть меню">×</button>';
 
     const content = document.createElement("div");
     content.className = "pt-menu-content";
 
-    const label = document.createElement("div");
-    label.className = "pt-menu-group-label";
-    label.textContent = "Navigation";
+    const statusCard = document.createElement("div");
+    statusCard.className = "pt-workspace-card";
+    statusCard.innerHTML =
+      '<div class="pt-workspace-card-top">' +
+        '<div><span>ACCOUNT MANAGER</span><strong>Workspace</strong></div>' +
+        '<button type="button" class="pt-quick-add" data-quick-add>+ New</button>' +
+      '</div>' +
+      '<div class="pt-mini-stats">' +
+        '<div><span>Accounts</span><b data-pt-accounts>—</b></div>' +
+        '<div><span>addy.io</span><b class="pt-mini-value" data-pt-addy>—</b></div>' +
+      '</div>';
+    statusCard.querySelector("[data-quick-add]").addEventListener("click", () => navigate("create-account"));
+    content.appendChild(statusCard);
 
     const nav = document.createElement("nav");
     nav.className = "pt-menu-nav";
-    nav.setAttribute("aria-label", "Account manager");
+    nav.setAttribute("aria-label", "PostingTTII navigation");
 
-    for (const item of ITEMS) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "pt-menu-item";
-      button.dataset.route = item.id;
-      button.innerHTML =
-        '<span class="pt-menu-item-icon" aria-hidden="true">' + item.icon + '</span>' +
-        '<span class="pt-menu-item-text">' +
-          '<span class="pt-menu-item-title"></span>' +
-          '<span class="pt-menu-item-note"></span>' +
-        '</span>';
-      button.querySelector(".pt-menu-item-title").textContent = item.title;
-      button.querySelector(".pt-menu-item-note").textContent = item.note;
-      button.addEventListener("click", () => navigate(item.id));
-      nav.appendChild(button);
+    for (const group of GROUPS) {
+      const section = document.createElement("section");
+      section.className = "pt-menu-section";
+
+      const label = document.createElement("div");
+      label.className = "pt-menu-group-label";
+      label.textContent = group.label;
+      section.appendChild(label);
+
+      const list = document.createElement("div");
+      list.className = "pt-menu-group-list";
+      for (const item of group.items) list.appendChild(createNavButton(item));
+      section.appendChild(list);
+      nav.appendChild(section);
     }
+
+    content.appendChild(nav);
 
     const footer = document.createElement("div");
     footer.className = "pt-menu-footer";
-    footer.textContent = "Phase 3: Accounts UI и постоянная SQLite-база подключены. addy.io и identity идут следующими фазами.";
+    footer.innerHTML =
+      '<div class="pt-local-dot"></div>' +
+      '<div><strong>Local workspace</strong><span>127.0.0.1:8765 · Phase 4</span></div>';
 
-    content.append(label, nav);
     panel.append(header, content, footer);
     overlay.appendChild(panel);
     document.body.append(burger, overlay);
