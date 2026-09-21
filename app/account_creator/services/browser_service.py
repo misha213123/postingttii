@@ -135,6 +135,13 @@ def close_profile(account_id: int) -> dict[str, str | bool]:
     if process.poll() is None:
         try:
             process.terminate()
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         except OSError:
             pass
 
