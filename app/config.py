@@ -49,6 +49,10 @@ class Settings:
     instagram_graph_version: str = os.getenv("INSTAGRAM_GRAPH_VERSION", "v25.0")
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
+    addy_api_token: str = os.getenv("ADDY_API_TOKEN", "")
+    addy_base_url: str = os.getenv("ADDY_BASE_URL", "https://app.addy.io").rstrip("/")
+    addy_timeout_seconds: float = max(5.0, float(os.getenv("ADDY_TIMEOUT_SECONDS", "20")))
+
     upload_dir: Path = _path("UPLOAD_DIR", "videos/inbox")
     posted_dir: Path = _path("POSTED_DIR", "videos/posted")
     failed_dir: Path = _path("FAILED_DIR", "videos/failed")
