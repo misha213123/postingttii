@@ -423,3 +423,71 @@ def save_creator_profile(
             ),
         )
         return _account_payload(conn, account_id)
+
+
+def set_account_password(account_id: int, encrypted: bytes) -> None:
+    init_db()
+    with _connect() as conn:
+        exists = conn.execute("SELECT 1 FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        if not exists:
+            raise ValueError("Account not found")
+        conn.execute(
+            "UPDATE accounts SET password_encrypted = ?, updated_at = ? WHERE id = ?",
+            (encrypted, _now(), account_id),
+        )
+
+
+def get_account_password_encrypted(account_id: int) -> bytes | None:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT password_encrypted FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+        if not row:
+            return None
+        value = row["password_encrypted"]
+        return bytes(value) if value is not None else None
+
+
+def set_platform_state(
+    account_id: int,
+    platform: str,
+    *,
+    social_status: str,
+    account_status: str,
+    step: str,
+    job_status: str,
+    error: str = "",
+) -> dict[str, Any] | None:
+    init_db()
+    if platform not in PLATFORMS:
+        raise ValueError("Unknown platform")
+
+    now = _now()
+    with _connect() as conn:
+        exists = conn.execute("SELECT 1 FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        if not exists:
+            return None
+
+        conn.execute(
+            """
+            UPDATE social_accounts
+            SET status = ?, updated_at = ?
+            WHERE account_id = ? AND platform = ?
+            """,
+            (social_status, now, account_id, platform),
+        )
+        conn.execute(
+            """
+            UPDATE creation_jobs
+            SET step = ?, status = ?, error = ?, updated_at = ?
+            WHERE account_id = ? AND platform = ?
+            """,
+            (step, job_status, error, now, account_id, platform),
+        )
+        conn.execute(
+            "UPDATE accounts SET status = ?, updated_at = ? WHERE id = ?",
+            (account_status, now, account_id),
+        )
+        return _account_payload(conn, account_id)
