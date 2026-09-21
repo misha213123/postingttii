@@ -161,14 +161,12 @@
     root.querySelector("[data-profile-edit]")?.addEventListener("click", () => options.onEditProfile?.(existing));
 
     root.querySelector("[data-instagram-open]")?.addEventListener("click", () => options.onInstagramOpen?.(existing));
+    root.querySelector("[data-instagram-open-account]")?.addEventListener("click", () => options.onInstagramAccountOpen?.(existing));
     root.querySelectorAll("[data-copy-email]").forEach(button => {
       button.addEventListener("click", () => options.onCopyEmail?.(existing));
     });
     root.querySelector("[data-instagram-connected]")?.addEventListener("click", () => options.onMarkInstagramConnected?.(existing));
 
-    root.querySelectorAll("[data-open-platform]").forEach(button => {
-      button.addEventListener("click", () => options.onOpenPlatform?.(existing, button.dataset.openPlatform));
-    });
     root.querySelector("[data-back]")?.addEventListener("click", () => options.onBack?.());
   }
 
