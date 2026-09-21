@@ -19,9 +19,9 @@
       existing?.profile_ready ||
       (existing?.display_name && existing?.username && existing?.avatar_path)
     );
-    const tikTokStatus = socialState(existing, "tiktok");
-    const tikTokConnected = tikTokStatus === "CONNECTED";
-    const tikTokJob = existing?.creation_jobs?.tiktok || {};
+    const instagramStatus = socialState(existing, "instagram");
+    const instagramConnected = instagramStatus === "CONNECTED";
+    const instagramJob = existing?.creation_jobs?.instagram || {};
 
     root.innerHTML =
       '<div class="am-page-stack">' +
@@ -30,8 +30,8 @@
             '<span class="am-eyebrow">ACCOUNT WORKFLOW</span>' +
             '<h2>' + (existing ? "Account " + number : "Create account") + '</h2>' +
             '<p>' + (existing
-              ? "Email, creator profile и отдельная browser session сохраняются локально."
-              : "Создай постоянную связку. Каждый следующий шаг можно выполнить позже.") + '</p>' +
+              ? "Email alias и отдельная Edge-сессия сохраняются за этим Account."
+              : "Создай постоянную связку. Основной интерфейс PostingTTII при этом не меняется.") + '</p>' +
           '</div>' +
           '<div class="am-hero-actions">' +
             (existing
@@ -46,7 +46,7 @@
         (!existing
           ? '<section class="am-panel am-create-start">' +
               '<div class="am-create-mark">01</div>' +
-              '<div><h2>Создай основу Account</h2><p>Создаётся локальная запись SQLite и отдельный browser profile path.</p></div>' +
+              '<div><h2>Создай основу Account</h2><p>Создаётся локальная запись SQLite и отдельный постоянный Edge profile path.</p></div>' +
               '<button type="button" class="am-btn primary" data-create-draft>Create Account</button>' +
             '</section>'
           : '<div class="am-wizard">' +
@@ -54,25 +54,25 @@
                 '<div class="am-wizard-index">1</div>' +
                 '<div class="am-wizard-body">' +
                   '<div class="am-wizard-title"><span>Email alias</span><span class="am-state ' +
-                    (emailReady ? "free" : "used") + '">' + (emailReady ? "READY" : "REQUIRED") + '</span></div>' +
+                    (emailReady ? "free" : "used") + '">' + (emailReady ? "READY" : "ADDY.IO") + '</span></div>' +
                   '<p>' + (emailReady
                     ? "Назначен alias: " + esc(existing.email)
-                    : "Выбери свободный addy.io alias или создай новый.") + '</p>' +
+                    : "Можно выбрать alias вручную. Если не выбирать, при запуске Instagram PostingTTII автоматически возьмёт первый свободный alias из addy.io.") + '</p>' +
                   '<div class="am-wizard-actions">' +
-                    '<button type="button" class="am-btn primary" data-alias>' +
-                      (emailReady ? "Change alias" : "Choose alias") +
+                    '<button type="button" class="am-btn" data-alias>' +
+                      (emailReady ? "Change alias" : "Choose alias manually") +
                     '</button>' +
                   '</div>' +
                 '</div>' +
               '</section>' +
 
               '<section class="am-wizard-step ' +
-                (profileReady ? "done" : (emailReady ? "active" : "locked")) + '">' +
+                (profileReady ? "done" : (emailReady ? "active" : "")) + '">' +
                 '<div class="am-wizard-index">2</div>' +
                 '<div class="am-wizard-body">' +
                   '<div class="am-wizard-title"><span>Creator profile</span><span class="am-badge ' +
                     (profileReady ? "ready" : "") + '">' +
-                    (profileReady ? "READY" : "STEP 2") + '</span></div>' +
+                    (profileReady ? "READY" : "OPTIONAL NOW") + '</span></div>' +
                   (profileReady
                     ? '<div class="am-profile-preview">' +
                         '<img src="/api/account-manager/accounts/' + Number(existing.id) +
@@ -81,9 +81,9 @@
                           '<span>@' + esc(existing.username) + '</span>' +
                           '<p>' + esc(existing.bio || "") + '</p></div>' +
                       '</div>'
-                    : '<p>Сгенерируй название creator-профиля, username, bio и локальный avatar. Потом всё можно отредактировать.</p>') +
+                    : '<p>Профиль можно сгенерировать после назначения alias. Для запуска регистрации Instagram он не обязателен.</p>') +
                   '<div class="am-wizard-actions">' +
-                    '<button type="button" class="am-btn primary" data-profile-generate ' +
+                    '<button type="button" class="am-btn" data-profile-generate ' +
                       (emailReady ? "" : "disabled") + '>' +
                       (profileReady ? "Regenerate profile" : "Generate profile") +
                     '</button>' +
@@ -94,61 +94,54 @@
                 '</div>' +
               '</section>' +
 
-              '<section class="am-wizard-step ' + (profileReady ? "active" : "locked") + '">' +
+              '<section class="am-wizard-step ' + (instagramConnected ? "done" : "active") + '">' +
                 '<div class="am-wizard-index">3</div>' +
                 '<div class="am-wizard-body">' +
-                  '<div class="am-wizard-title"><span>Platform sessions</span><span class="am-badge">' +
-                    (profileReady ? "READY TO OPEN" : "NEXT") + '</span></div>' +
-                  '<p>' + (profileReady
-                    ? "TikTok теперь открывается обычным Edge без Playwright. Регистрацию и проверки проходишь вручную, а browser profile сохраняет сессию."
-                    : "Сначала закончи creator profile.") + '</p>' +
-                  '<div class="am-network-mini">' +
-                    '<span>TikTok <b>' + esc(tikTokStatus) + '</b></span>' +
-                    '<span>Instagram <b>' + esc(socialState(existing, "instagram")) + '</b></span>' +
-                    '<span>YouTube <b>' + esc(socialState(existing, "youtube")) + '</b></span>' +
+                  '<div class="am-wizard-title"><span>Instagram · Edge session</span><span class="am-badge ' +
+                    (instagramConnected ? "ready" : "") + '">' +
+                    (instagramConnected ? "CONNECTED" : "READY TO OPEN") + '</span></div>' +
+                  '<p>Для этого Account открывается отдельный постоянный профиль Microsoft Edge. Email берётся из addy.io и автоматически подставляется в форму Instagram.</p>' +
+
+                  '<div class="am-instagram-manual">' +
+                    '<div class="am-instagram-head">' +
+                      '<div><strong>Instagram registration</strong>' +
+                        '<span>' + esc(instagramJob.step || (instagramConnected ? "DONE" : "EDGE REGISTRATION")) + '</span></div>' +
+                      '<span class="am-state ' + (instagramConnected ? "free" : "used") + '">' +
+                        (instagramConnected ? "CONNECTED" : "MANUAL CHECKS") +
+                      '</span>' +
+                    '</div>' +
+
+                    '<div class="am-credential-grid">' +
+                      '<div class="am-credential-box">' +
+                        '<span>EMAIL</span><b>' + esc(existing.email || "будет выбран из addy.io") + '</b>' +
+                        (emailReady
+                          ? '<button type="button" class="am-copy-btn" data-copy-email>Copy</button>'
+                          : '') +
+                      '</div>' +
+                      '<div class="am-credential-box">' +
+                        '<span>EDGE PROFILE</span><b>Account ' + number + '</b>' +
+                        '<small>cookies + Instagram session сохраняются отдельно</small>' +
+                      '</div>' +
+                    '</div>' +
+
+                    '<div class="am-instagram-note">' +
+                      '1. Open Instagram in Edge → 2. PostingTTII подставит email → ' +
+                      '3. Остальные поля, код подтверждения и проверки проходишь вручную → ' +
+                      '4. После успешного входа нажми Mark Connected.' +
+                    '</div>' +
+
+                    '<div class="am-wizard-actions">' +
+                      '<button type="button" class="am-btn primary" data-instagram-open>Open Instagram in Edge</button>' +
+                      (emailReady ? '<button type="button" class="am-btn" data-copy-email>Copy Email</button>' : '') +
+                      (instagramConnected
+                        ? '<button type="button" class="am-btn" disabled>✓ Connected</button>'
+                        : '<button type="button" class="am-btn" data-instagram-connected>Mark Connected</button>') +
+                    '</div>' +
                   '</div>' +
 
-                  (profileReady
-                    ? '<div class="am-tiktok-manual">' +
-                        '<div class="am-tiktok-head">' +
-                          '<div><strong>TikTok · Manual Edge setup</strong>' +
-                            '<span>' + esc(tikTokJob.step || (tikTokConnected ? "DONE" : "Ready")) + '</span></div>' +
-                          '<span class="am-state ' + (tikTokConnected ? "free" : "used") + '">' +
-                            (tikTokConnected ? "CONNECTED" : "MANUAL") +
-                          '</span>' +
-                        '</div>' +
-
-                        '<div class="am-credential-grid">' +
-                          '<div class="am-credential-box">' +
-                            '<span>EMAIL</span><b>' + esc(existing.email || "—") + '</b>' +
-                            '<button type="button" class="am-copy-btn" data-copy-email>Copy</button>' +
-                          '</div>' +
-                          '<div class="am-credential-box">' +
-                            '<span>PASSWORD</span><b>••••••••••••</b>' +
-                            '<button type="button" class="am-copy-btn" data-copy-password>Copy</button>' +
-                          '</div>' +
-                        '</div>' +
-
-                        '<div class="am-tiktok-note">' +
-                          '1. Open TikTok in Edge → 2. Sign up manually → 3. Paste Email/Password → ' +
-                          '4. Complete DOB/code/CAPTCHA yourself → 5. When you are logged in, click Mark Connected.' +
-                        '</div>' +
-
-                        '<div class="am-wizard-actions">' +
-                          '<button type="button" class="am-btn primary" data-tiktok-open>Open TikTok in Edge</button>' +
-                          '<button type="button" class="am-btn" data-copy-email>Copy Email</button>' +
-                          '<button type="button" class="am-btn" data-copy-password>Copy Password</button>' +
-                          (tikTokConnected
-                            ? '<button type="button" class="am-btn" disabled>✓ Connected</button>'
-                            : '<button type="button" class="am-btn" data-tiktok-connected>Mark Connected</button>') +
-                        '</div>' +
-                      '</div>' +
-
-                      '<div class="am-wizard-actions">' +
-                        '<button type="button" class="am-btn" data-open-platform="instagram">Open Instagram</button>' +
-                        '<button type="button" class="am-btn" data-open-platform="youtube">Open YouTube</button>' +
-                      '</div>'
-                    : '') +
+                  '<div class="am-wizard-actions">' +
+                    '<button type="button" class="am-btn" data-open-platform="youtube">Open YouTube</button>' +
+                  '</div>' +
                 '</div>' +
               '</section>' +
             '</div>') +
@@ -156,7 +149,7 @@
         (existing
           ? '<section class="am-panel am-account-tech">' +
               '<div><span>Database</span><b>data/account_manager.db</b></div>' +
-              '<div><span>Browser profile</span><b>' + esc(existing.browser_profile_path || "—") + '</b></div>' +
+              '<div><span>Edge profile</span><b>' + esc(existing.browser_profile_path || "—") + '</b></div>' +
               '<div><span>Account ID</span><b>' + Number(existing.id) + '</b></div>' +
             '</section>'
           : '') +
@@ -167,14 +160,11 @@
     root.querySelector("[data-profile-generate]")?.addEventListener("click", () => options.onGenerateProfile?.(existing));
     root.querySelector("[data-profile-edit]")?.addEventListener("click", () => options.onEditProfile?.(existing));
 
-    root.querySelector("[data-tiktok-open]")?.addEventListener("click", () => options.onTikTokOpen?.(existing));
+    root.querySelector("[data-instagram-open]")?.addEventListener("click", () => options.onInstagramOpen?.(existing));
     root.querySelectorAll("[data-copy-email]").forEach(button => {
       button.addEventListener("click", () => options.onCopyEmail?.(existing));
     });
-    root.querySelectorAll("[data-copy-password]").forEach(button => {
-      button.addEventListener("click", () => options.onCopyTikTokPassword?.(existing));
-    });
-    root.querySelector("[data-tiktok-connected]")?.addEventListener("click", () => options.onMarkTikTokConnected?.(existing));
+    root.querySelector("[data-instagram-connected]")?.addEventListener("click", () => options.onMarkInstagramConnected?.(existing));
 
     root.querySelectorAll("[data-open-platform]").forEach(button => {
       button.addEventListener("click", () => options.onOpenPlatform?.(existing, button.dataset.openPlatform));

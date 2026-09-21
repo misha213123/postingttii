@@ -13,6 +13,10 @@ from app.account_creator.services.browser_service import (
     open_profile,
     status as browser_status,
 )
+from app.account_creator.services.instagram_service import (
+    is_running as is_instagram_running,
+    stop_instagram_browser,
+)
 
 router = APIRouter(prefix="/api/account-manager", tags=["account-manager-browser"])
 
@@ -40,7 +44,8 @@ def profiles():
                 "email": account["email"],
                 "status": account["status"],
                 "browser_profile_path": account["browser_profile_path"],
-                "running": is_running(account["id"]),
+                "running": is_running(account["id"]) or is_instagram_running(account["id"]),
+                "instagram_running": is_instagram_running(account["id"]),
             }
             for account in accounts
         ],
@@ -68,4 +73,5 @@ def close_browser(account_id: int):
     account = database.get_account(account_id)
     if not account:
         raise HTTPException(404, "Account not found")
+    stop_instagram_browser(account_id)
     return close_profile(account_id)

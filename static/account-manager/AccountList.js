@@ -22,12 +22,11 @@
     if (account.email) steps += 1;
     if (account.display_name && account.username) steps += 1;
     const social = account.social_accounts || {};
-    if (["tiktok", "instagram", "youtube"].some(p => social[p]?.status === "CONNECTED")) steps += 1;
+    if (["instagram", "youtube"].some(p => social[p]?.status === "CONNECTED")) steps += 1;
     return Math.round((steps / 3) * 100);
   }
 
   function socialIcon(platform) {
-    if (platform === "tiktok") return "TT";
     if (platform === "instagram") return "IG";
     return "YT";
   }
@@ -42,7 +41,7 @@
           '<div class="am-hero-copy">' +
             '<span class="am-eyebrow">ACCOUNT WORKSPACE</span>' +
             '<h2>Accounts</h2>' +
-            '<p>Одна карточка = одна связка Email → Identity → TikTok / Instagram / YouTube.</p>' +
+            '<p>Одна карточка = одна связка Email → Identity → Instagram / YouTube.</p>' +
           '</div>' +
           '<div class="am-hero-actions">' +
             '<button type="button" class="am-btn" data-refresh>↻ Refresh</button>' +
@@ -78,7 +77,7 @@
         const initials = (account.display_name || account.username || accountLabel(account))
           .split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0]).join("").toUpperCase();
 
-        const socials = ["tiktok", "instagram", "youtube"].map(platform => {
+        const socials = ["instagram", "youtube"].map(platform => {
           const item = social[platform] || { status: "NOT_CREATED" };
           return '<div class="am-social-chip">' +
             '<span class="am-social-logo">' + socialIcon(platform) + '</span>' +

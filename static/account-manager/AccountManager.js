@@ -170,7 +170,6 @@
           '<dt>Bio</dt><dd>' + esc(account.bio || "—") + '</dd>' +
           '<dt>Browser</dt><dd>' + esc(account.browser_profile_path || "—") + '</dd>' +
           '<dt>Status</dt><dd>' + esc(account.status || "CREATED") + '</dd>' +
-          '<dt>TikTok</dt><dd>' + esc(social.tiktok?.status || "NOT_CREATED") + '</dd>' +
           '<dt>Instagram</dt><dd>' + esc(social.instagram?.status || "NOT_CREATED") + '</dd>' +
           '<dt>YouTube</dt><dd>' + esc(social.youtube?.status || "NOT_CREATED") + '</dd>' +
         '</dl>',
@@ -388,20 +387,20 @@
     }
   }
 
-  async function openTikTokRegistration(account) {
+  async function openInstagramRegistration(account) {
     if (!account?.id) return;
 
     try {
       const payload = await api(
-        "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/start",
+        "/api/account-manager/accounts/" + Number(account.id) + "/instagram/start",
         { method: "POST", body: "{}" }
       );
       selectedAccountId = account.id;
-      toast(payload?.result?.message || "TikTok открыт в Edge");
+      toast(payload?.result?.message || "Instagram открыт в Edge");
       await renderCreate();
     } catch (error) {
       await modal({
-        title: "TikTok browser error",
+        title: "Instagram Edge error",
         body:
           '<p style="margin:0;color:#cbd5e1;font-size:12px;line-height:1.6;white-space:pre-wrap">' +
           esc(error.message || "Unknown error") +
@@ -411,28 +410,15 @@
     }
   }
 
-  async function copyTikTokPassword(account) {
-    if (!account?.id) return;
-
-    try {
-      const credentials = await api(
-        "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/credentials"
-      );
-      await copyText(credentials.password || "", "Password");
-    } catch (error) {
-      toast("Password: " + error.message);
-    }
-  }
-
-  async function markTikTokConnected(account) {
+  async function markInstagramConnected(account) {
     if (!account?.id) return;
 
     const confirmed = await modal({
-      title: "Mark TikTok as connected?",
+      title: "Mark Instagram as connected?",
       body:
         '<p style="margin:0;color:#cbd5e1;font-size:12px;line-height:1.6">' +
-        'Нажимай только после того, как регистрация завершена и в открытом Edge ты уже вошёл в TikTok. ' +
-        'PostingTTII сохранит статус CONNECTED для этого Account.</p>',
+        'Нажимай после того, как регистрация завершена и в отдельном Edge-профиле этого Account уже открыт Instagram. ' +
+        'Cookies и сессия останутся в постоянном browser profile.</p>',
       actions: [
         { label: "Cancel", value: false },
         { label: "Mark Connected", value: true, className: "primary" }
@@ -442,14 +428,14 @@
 
     try {
       const payload = await api(
-        "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/mark-connected",
+        "/api/account-manager/accounts/" + Number(account.id) + "/instagram/mark-connected",
         { method: "POST", body: "{}" }
       );
       selectedAccountId = account.id;
-      toast(payload.message || "TikTok подключён");
+      toast(payload.message || "Instagram подключён");
       await renderCreate();
     } catch (error) {
-      toast("TikTok: " + error.message);
+      toast("Instagram: " + error.message);
     }
   }
 
@@ -487,10 +473,9 @@
       onGenerateProfile: generateCreatorProfile,
       onEditProfile: editCreatorProfile,
       onOpenPlatform: openPlatformBrowser,
-      onTikTokOpen: openTikTokRegistration,
+      onInstagramOpen: openInstagramRegistration,
       onCopyEmail: account => copyText(account?.email || "", "Email"),
-      onCopyTikTokPassword: copyTikTokPassword,
-      onMarkTikTokConnected: markTikTokConnected
+      onMarkInstagramConnected: markInstagramConnected
     });
   }
 
