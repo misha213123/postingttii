@@ -286,7 +286,18 @@
         })
       });
       options.toast("Alias назначен");
+      const assignedAccountId = Number(select.value);
+      const shouldReturnToWizard =
+        Number(state.preferredAccountId) === assignedAccountId &&
+        typeof options.onAssigned === "function";
+
       state.preferredAccountId = null;
+
+      if (shouldReturnToWizard) {
+        await options.onAssigned(assignedAccountId);
+        return;
+      }
+
       await render(root, options);
     } catch (error) {
       options.toast("Не удалось назначить alias: " + error.message);
