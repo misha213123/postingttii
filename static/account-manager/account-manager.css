@@ -167,10 +167,11 @@
 .am-avatar{
   width:42px;height:42px;flex:0 0 auto;
   border:1px solid #375274;border-radius:12px;
-  display:grid;place-items:center;
+  display:grid;place-items:center;overflow:hidden;
   background:linear-gradient(145deg,#20344e,#111d2b);
   color:#dbeafe;font-size:12px;font-weight:900;letter-spacing:.05em
 }
+.am-avatar img{width:100%;height:100%;display:block;object-fit:cover}
 .am-card-title{font-size:15px;font-weight:850}
 .am-badge{
   display:inline-flex;align-items:center;gap:6px;
@@ -286,6 +287,14 @@
 .am-wizard-title{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;font-weight:850}
 .am-wizard-body p{margin:5px 0 0;color:#8293a8;font-size:11px;line-height:1.5}
 .am-wizard-actions{display:flex;gap:7px;margin-top:10px}
+.am-profile-preview{
+  display:grid;grid-template-columns:64px minmax(0,1fr);gap:12px;align-items:center;margin-top:10px;
+  border:1px solid #25415f;border-radius:13px;background:#09141f;padding:11px
+}
+.am-profile-preview img{width:64px;height:64px;border-radius:15px;display:block;border:1px solid #36597e}
+.am-profile-preview strong{display:block;font-size:13px}
+.am-profile-preview span{display:block;color:#79a8e7;font-size:10px;margin-top:3px}
+.am-profile-preview p{margin:6px 0 0!important;color:#8c9db1!important;font-size:10px!important;line-height:1.45!important}
 .am-network-mini{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .am-network-mini span{border:1px solid #26384e;border-radius:9px;padding:7px 8px;color:#8799ae;font-size:9px}
 .am-network-mini b{color:#c9d5e3;margin-left:5px}
