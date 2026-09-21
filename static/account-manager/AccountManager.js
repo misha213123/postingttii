@@ -266,6 +266,84 @@
     }
   }
 
+  async function generateCreatorProfile(account) {
+    if (!account?.id) return;
+
+    if (account.profile_ready) {
+      const confirm = await modal({
+        title: "Regenerate creator profile?",
+        body:
+          '<p style="margin:0;color:#cbd5e1;font-size:12px;line-height:1.6">' +
+          'Название, username, bio и локальный avatar будут заменены новой версией.</p>',
+        actions: [
+          { label: "Cancel", value: false },
+          { label: "Regenerate", value: true, className: "primary" }
+        ]
+      });
+      if (!confirm) return;
+    }
+
+    try {
+      const updated = await api("/api/account-manager/accounts/" + Number(account.id) + "/profile/generate", {
+        method: "POST",
+        body: "{}"
+      });
+      selectedAccountId = updated.id;
+      toast("Creator profile готов");
+      await renderCreate();
+    } catch (error) {
+      toast("Не удалось создать profile: " + error.message);
+    }
+  }
+
+  async function editCreatorProfile(account) {
+    if (!account?.id) return;
+
+    const form = document.createElement("form");
+    form.className = "am-form-grid";
+    form.innerHTML =
+      '<div class="am-field"><label>Display name</label><input class="am-input" name="display_name" maxlength="120"></div>' +
+      '<div class="am-field"><label>Username</label><input class="am-input" name="username" maxlength="64"></div>' +
+      '<div class="am-field full"><label>Bio</label><textarea class="am-textarea" name="bio" maxlength="500"></textarea></div>';
+
+    form.elements.display_name.value = account.display_name || "";
+    form.elements.username.value = account.username || "";
+    form.elements.bio.value = account.bio || "";
+
+    const save = await modal({
+      title: "Edit creator profile",
+      body: form,
+      actions: [
+        { label: "Cancel", value: false },
+        { label: "Save", value: true, className: "primary" }
+      ]
+    });
+    if (!save) return;
+
+    const displayName = form.elements.display_name.value.trim();
+    const username = form.elements.username.value.trim();
+    if (displayName.length < 2 || username.length < 3) {
+      toast("Заполни Display name и Username");
+      return;
+    }
+
+    try {
+      const updated = await api("/api/account-manager/accounts/" + Number(account.id) + "/profile", {
+        method: "PUT",
+        body: JSON.stringify({
+          display_name: displayName,
+          username,
+          bio: form.elements.bio.value.trim()
+        })
+      });
+      selectedAccountId = updated.id;
+      toast("Creator profile сохранён");
+      await renderCreate();
+    } catch (error) {
+      toast("Не удалось сохранить profile: " + error.message);
+    }
+  }
+
   async function renderCreate() {
     let account = null;
 
@@ -296,7 +374,9 @@
       onChooseAlias: account => {
         preferredAliasAccountId = account?.id || selectedAccountId;
         go("aliases");
-      }
+      },
+      onGenerateProfile: generateCreatorProfile,
+      onEditProfile: editCreatorProfile
     });
   }
 
