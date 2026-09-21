@@ -64,10 +64,8 @@
         const target = button.dataset.openBrowser || "home";
         button.disabled = true;
         try {
-          const url = target === "instagram"
-            ? "/api/account-manager/accounts/" + accountId + "/instagram/start"
-            : "/api/account-manager/accounts/" + accountId + "/browser/open";
-          const body = target === "instagram" ? "{}" : JSON.stringify({ target });
+          const url = "/api/account-manager/accounts/" + accountId + "/instagram/open";
+          const body = "{}";
           const result = await options.api(url, {
             method: "POST",
             body
@@ -114,9 +112,7 @@
         '<span class="am-state ' + (profile.running ? "free" : "") + '">' + (profile.running ? "RUNNING" : "CLOSED") + '</span>' +
       '</div>' +
       '<div class="am-browser-actions">' +
-        '<button type="button" class="am-btn subtle small" data-open-browser="home" data-account-id="' + Number(profile.account_id) + '" ' + (browserAvailable ? "" : "disabled") + '>Open</button>' +
-        '<button type="button" class="am-btn subtle small" data-open-browser="instagram" data-account-id="' + Number(profile.account_id) + '" ' + (edgeAvailable ? "" : "disabled") + '>Instagram Edge</button>' +
-        '<button type="button" class="am-btn subtle small" data-open-browser="youtube" data-account-id="' + Number(profile.account_id) + '" ' + (browserAvailable ? "" : "disabled") + '>YouTube</button>' +
+        '<button type="button" class="am-btn primary small" data-open-browser="instagram" data-account-id="' + Number(profile.account_id) + '" ' + (edgeAvailable && profile.email ? "" : "disabled") + '>Open Instagram</button>' +
         '<button type="button" class="am-btn danger small" data-close-browser data-account-id="' + Number(profile.account_id) + '">Close</button>' +
       '</div>' +
     '</article>';
