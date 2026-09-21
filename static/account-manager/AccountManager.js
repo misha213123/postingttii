@@ -182,12 +182,11 @@
     const form = document.createElement("form");
     form.className = "am-form-grid";
     form.innerHTML =
-      '<div class="am-field full"><label>Email</label><input class="am-input" name="email" type="email"></div>' +
+      '<div class="am-field full"><label>Email alias</label><div class="am-readonly">' + esc(account.email || "Not assigned") + '</div></div>' +
       '<div class="am-field"><label>Display Name</label><input class="am-input" name="display_name"></div>' +
       '<div class="am-field"><label>Username</label><input class="am-input" name="username"></div>' +
       '<div class="am-field full"><label>Bio</label><textarea class="am-textarea" name="bio"></textarea></div>';
 
-    form.elements.email.value = account.email || "";
     form.elements.display_name.value = account.display_name || "";
     form.elements.username.value = account.username || "";
     form.elements.bio.value = account.bio || "";
@@ -207,7 +206,6 @@
       await api("/api/account-manager/accounts/" + account.id, {
         method: "PATCH",
         body: JSON.stringify({
-          email: form.elements.email.value,
           display_name: form.elements.display_name.value,
           username: form.elements.username.value,
           bio: form.elements.bio.value
