@@ -21,6 +21,7 @@
     );
     const instagramStatus = socialState(existing, "instagram");
     const instagramConnected = instagramStatus === "CONNECTED";
+    const instagramStarted = instagramStatus !== "NOT_CREATED";
     const instagramJob = existing?.creation_jobs?.instagram || {};
 
     root.innerHTML =
@@ -131,16 +132,14 @@
                     '</div>' +
 
                     '<div class="am-wizard-actions">' +
-                      '<button type="button" class="am-btn primary" data-instagram-open>Open Instagram in Edge</button>' +
+                      (instagramStarted
+                        ? '<button type="button" class="am-btn primary" data-instagram-open-account>Open this Instagram account</button>'
+                        : '<button type="button" class="am-btn primary" data-instagram-open>Open Instagram in Edge</button>') +
                       (emailReady ? '<button type="button" class="am-btn" data-copy-email>Copy Email</button>' : '') +
                       (instagramConnected
                         ? '<button type="button" class="am-btn" disabled>✓ Connected</button>'
                         : '<button type="button" class="am-btn" data-instagram-connected>Mark Connected</button>') +
                     '</div>' +
-                  '</div>' +
-
-                  '<div class="am-wizard-actions">' +
-                    '<button type="button" class="am-btn" data-open-platform="youtube">Open YouTube</button>' +
                   '</div>' +
                 '</div>' +
               '</section>' +
