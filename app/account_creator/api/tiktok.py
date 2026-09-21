@@ -106,6 +106,7 @@ async def start_tiktok(account_id: int):
         )
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
+        detail = str(exc).strip() or exc.__class__.__name__
         database.set_platform_state(
             account_id,
             "tiktok",
@@ -113,9 +114,9 @@ async def start_tiktok(account_id: int):
             account_status="FAILED",
             step="OPEN_SIGNUP",
             job_status="FAILED",
-            error=str(exc),
+            error=detail,
         )
-        raise HTTPException(500, f"TikTok automation error: {exc}") from exc
+        raise HTTPException(500, f"TikTok automation error: {detail}") from exc
 
     updated = _persist_result(account_id, result)
     return {"result": result, "account": updated}
@@ -135,7 +136,8 @@ async def continue_tiktok(account_id: int):
     except TikTokSetupError as exc:
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(500, f"TikTok automation error: {exc}") from exc
+        detail = str(exc).strip() or exc.__class__.__name__
+        raise HTTPException(500, f"TikTok automation error: {detail}") from exc
 
     updated = _persist_result(account_id, result)
     return {"result": result, "account": updated}
