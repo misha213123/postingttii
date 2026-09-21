@@ -364,6 +364,28 @@
     }
   }
 
+  async function runTikTokRegistration(account, action) {
+    if (!account?.id) return;
+
+    const endpoint = action === "continue"
+      ? "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/continue"
+      : "/api/account-manager/accounts/" + Number(account.id) + "/tiktok/start";
+
+    try {
+      const payload = await api(endpoint, {
+        method: "POST",
+        body: "{}"
+      });
+      selectedAccountId = account.id;
+      const message = payload?.result?.message || "TikTok step выполнен";
+      toast(message);
+      await renderCreate();
+    } catch (error) {
+      toast("TikTok: " + error.message);
+      await renderCreate();
+    }
+  }
+
   async function renderCreate() {
     let account = null;
 
@@ -397,7 +419,8 @@
       },
       onGenerateProfile: generateCreatorProfile,
       onEditProfile: editCreatorProfile,
-      onOpenPlatform: openPlatformBrowser
+      onOpenPlatform: openPlatformBrowser,
+      onTikTokAction: runTikTokRegistration
     });
   }
 
