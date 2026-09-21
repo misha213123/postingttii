@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,11 @@ _SESSIONS: dict[int, TikTokSession] = {}
 
 class TikTokSetupError(RuntimeError):
     pass
+
+
+def _profile_is_locked(profile: Path) -> bool:
+    lock_names = ("SingletonLock", "SingletonCookie", "SingletonSocket")
+    return any((profile / name).exists() for name in lock_names)
 
 
 async def _first_visible(page: Page, selectors: list[str]):
@@ -183,13 +189,27 @@ async def _ensure_session(account_id: int, profile_path: str) -> TikTokSession:
     profile = Path(profile_path).resolve()
     profile.mkdir(parents=True, exist_ok=True)
 
+    # Chrome may need a moment to release Singleton* locks after a normal
+    # browser window is closed. Do not delete those locks: if they remain,
+    # another Chrome process may still own this profile.
+    for _ in range(8):
+        if not _profile_is_locked(profile):
+            break
+        await asyncio.sleep(0.4)
+
+    if _profile_is_locked(profile):
+        raise TikTokSetupError(
+            "Browser Profile этого Account всё ещё открыт в Chrome/Edge. "
+            "Закрой окно этого Account полностью и снова нажми Start TikTok registration."
+        )
+
     playwright = await async_playwright().start()
     try:
         context = await playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile),
             executable_path=str(browser),
             headless=False,
-            viewport=None,
+            no_viewport=True,
             args=[
                 "--start-maximized",
                 "--no-first-run",
@@ -198,8 +218,11 @@ async def _ensure_session(account_id: int, profile_path: str) -> TikTokSession:
         )
     except Exception as exc:
         await playwright.stop()
+        detail = str(exc).strip() or exc.__class__.__name__
         raise TikTokSetupError(
-            "Не удалось открыть TikTok registration browser. Закрой другие окна этого Account и попробуй снова."
+            "Не удалось открыть TikTok registration browser. "
+            "Закрой другие окна этого Account и попробуй снова. "
+            f"Детали: {detail}"
         ) from exc
 
     page = context.pages[0] if context.pages else await context.new_page()
