@@ -41,7 +41,7 @@
           '<div class="am-hero-copy">' +
             '<span class="am-eyebrow">ACCOUNT WORKSPACE</span>' +
             '<h2>Accounts</h2>' +
-            '<p>Одна карточка = одна связка Email → Identity → TikTok / Instagram / YouTube.</p>' +
+            '<p>Одна карточка = одна связка Email → Identity → Instagram / YouTube.</p>' +
           '</div>' +
           '<div class="am-hero-actions">' +
             '<button type="button" class="am-btn" data-refresh>↻ Refresh</button>' +
