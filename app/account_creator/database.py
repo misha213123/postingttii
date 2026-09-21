@@ -145,7 +145,8 @@ def create_account(
 
     with _connect() as conn:
         number = _next_account_number(conn)
-        profile_rel = f"data/browser_profiles/account_{number:02d}"
+        profile_path = settings.data_dir / "browser_profiles" / f"account_{number:02d}"
+        profile_value = str(profile_path)
         cursor = conn.execute(
             """
             INSERT INTO accounts (
@@ -160,7 +161,7 @@ def create_account(
                 display_name.strip(),
                 username.strip(),
                 bio.strip(),
-                profile_rel,
+                profile_value,
                 now,
                 now,
             ),
@@ -188,10 +189,7 @@ def create_account(
         # Create only the safe local container folders here. Playwright will own
         # their contents later in Phase 6.
         (settings.data_dir / "accounts" / str(account_id)).mkdir(parents=True, exist_ok=True)
-        (settings.data_dir / "browser_profiles" / f"account_{number:02d}").mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        profile_path.mkdir(parents=True, exist_ok=True)
 
         return _account_payload(conn, account_id)  # type: ignore[return-value]
 
