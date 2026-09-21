@@ -111,14 +111,25 @@ def stop_instagram_browser(account_id: int) -> dict[str, str | bool]:
         }
 
     if process.poll() is None:
-        try:
-            process.terminate()
-            process.wait(timeout=3)
-        except (OSError, subprocess.TimeoutExpired):
+        if os.name == "nt":
             try:
-                process.kill()
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
             except OSError:
                 pass
+        else:
+            try:
+                process.terminate()
+                process.wait(timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
 
     _PROCESSES.pop(account_id, None)
     return {
