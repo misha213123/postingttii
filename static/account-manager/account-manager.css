@@ -315,6 +315,8 @@
 .am-profile-preview span{display:block;color:#79a8e7;font-size:10px;margin-top:3px}
 .am-profile-preview p{margin:6px 0 0!important;color:#8c9db1!important;font-size:10px!important;line-height:1.45!important}
 .am-network-mini{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.am-platform-guidance{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;padding:9px 10px;border:1px solid #274260;border-radius:11px;background:#09141f}
+.am-platform-guidance strong{font-size:10px;color:#c7d8eb}.am-platform-guidance span{font-size:9px;color:#7fa0c6;text-transform:uppercase;font-weight:800;letter-spacing:.05em}
 .am-network-mini span{border:1px solid #26384e;border-radius:9px;padding:7px 8px;color:#8799ae;font-size:9px}
 .am-network-mini b{color:#c9d5e3;margin-left:5px}
 .am-account-tech{
