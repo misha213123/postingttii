@@ -353,6 +353,19 @@
     }
   }
 
+  async function openPlatformBrowser(account, target) {
+    if (!account?.id) return;
+    try {
+      const result = await api("/api/account-manager/accounts/" + Number(account.id) + "/browser/open", {
+        method: "POST",
+        body: JSON.stringify({ target: target || "home" })
+      });
+      toast(result.message || "Browser открыт");
+    } catch (error) {
+      toast("Browser: " + error.message);
+    }
+  }
+
   async function renderCreate() {
     let account = null;
 
@@ -385,7 +398,8 @@
         go("aliases");
       },
       onGenerateProfile: generateCreatorProfile,
-      onEditProfile: editCreatorProfile
+      onEditProfile: editCreatorProfile,
+      onOpenPlatform: openPlatformBrowser
     });
   }
 
