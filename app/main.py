@@ -697,4 +697,6 @@ async def disconnect(platform: Literal["youtube", "tiktok", "instagram"], slot: 
 
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=True)
+    # On Windows, uvicorn reload mode switches to SelectorEventLoopPolicy.
+    # Playwright needs subprocess support, so run the local app without reload.
+    uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=False)
