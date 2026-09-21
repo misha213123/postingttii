@@ -21,25 +21,21 @@ class BrowserProfileError(RuntimeError):
     pass
 
 
-def _candidate_executables() -> list[Path]:
+def _browser_paths(kind: str) -> list[Path]:
     items: list[Path] = []
-    explicit = os.getenv("BROWSER_EXECUTABLE", "").strip()
-    if explicit:
-        items.append(Path(explicit))
 
     for env_name in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"):
         base = os.getenv(env_name, "").strip()
         if not base:
             continue
         root = Path(base)
-        items.extend(
-            [
-                root / "Google" / "Chrome" / "Application" / "chrome.exe",
-                root / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-            ]
-        )
+        if kind == "edge":
+            items.append(root / "Microsoft" / "Edge" / "Application" / "msedge.exe")
+        elif kind == "chrome":
+            items.append(root / "Google" / "Chrome" / "Application" / "chrome.exe")
 
-    for name in ("chrome.exe", "chrome", "msedge.exe", "msedge"):
+    names = ("msedge.exe", "msedge") if kind == "edge" else ("chrome.exe", "chrome")
+    for name in names:
         found = shutil.which(name)
         if found:
             items.append(Path(found))
@@ -55,12 +51,41 @@ def _candidate_executables() -> list[Path]:
     return unique
 
 
-def find_browser() -> Path:
-    for path in _candidate_executables():
+def _candidate_executables(preferred: str = "auto") -> list[Path]:
+    preferred = (preferred or "auto").strip().lower()
+    items: list[Path] = []
+
+    explicit = os.getenv("BROWSER_EXECUTABLE", "").strip()
+    if explicit and preferred == "auto":
+        items.append(Path(explicit))
+
+    if preferred == "edge":
+        items.extend(_browser_paths("edge"))
+        items.extend(_browser_paths("chrome"))
+    elif preferred == "chrome":
+        items.extend(_browser_paths("chrome"))
+        items.extend(_browser_paths("edge"))
+    else:
+        items.extend(_browser_paths("chrome"))
+        items.extend(_browser_paths("edge"))
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for item in items:
+        key = str(item).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def find_browser(preferred: str = "auto") -> Path:
+    for path in _candidate_executables(preferred):
         if path.exists() and path.is_file():
             return path
     raise BrowserProfileError(
-        "Chrome/Edge не найден. Установи Chrome или укажи BROWSER_EXECUTABLE в .env"
+        "Chrome/Edge не найден. Установи браузер или укажи BROWSER_EXECUTABLE в .env"
     )
 
 
