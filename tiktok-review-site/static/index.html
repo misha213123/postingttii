@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="PostingTTII helps creators publish their own short-form videos to TikTok accounts they explicitly authorize.">
+  <title>PostingTTII · TikTok Publishing</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="nav">
+    <a class="brand" href="/">PostingTTII</a>
+    <nav>
+      <a href="#product">Product</a>
+      <a href="#demo">Live demo</a>
+      <a href="#privacy">Data & privacy</a>
+      <a href="/terms">Terms</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" id="product">
+      <div class="hero-copy">
+        <span class="eyebrow">CREATOR PUBLISHING WORKFLOW</span>
+        <h1>Publish your own short-form videos to your authorized TikTok accounts.</h1>
+        <p class="lead">PostingTTII is a creator tool for selecting a video, reviewing its caption and TikTok publishing settings, and sending it to an account that the creator has explicitly connected.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#demo">Open live demo</a>
+          <a class="button" href="#how">How it works</a>
+        </div>
+        <p class="disclaimer">Independent third-party product. PostingTTII is not TikTok and is not affiliated with TikTok.</p>
+      </div>
+      <div class="hero-card">
+        <div class="hero-card-top"><span>Publishing checklist</span><b>USER CONTROLLED</b></div>
+        <div class="check-row"><i>1</i><div><strong>Connect TikTok</strong><span>Authorization happens on TikTok.</span></div></div>
+        <div class="check-row"><i>2</i><div><strong>Select your content</strong><span>The creator chooses the video to send.</span></div></div>
+        <div class="check-row"><i>3</i><div><strong>Review every setting</strong><span>Caption, audience and interactions remain editable.</span></div></div>
+        <div class="check-row"><i>4</i><div><strong>Explicitly publish</strong><span>Nothing is sent until the creator confirms.</span></div></div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="section-head">
+        <span class="eyebrow">HOW IT WORKS</span>
+        <h2>A transparent TikTok publishing flow</h2>
+        <p>The workflow is intentionally designed so the creator knows which account and content will be used before anything is sent to TikTok.</p>
+      </div>
+      <div class="features">
+        <article><span>01</span><h3>Authorize an account</h3><p>Connect through TikTok Login and grant only the permissions required for profile identification and Direct Post.</p></article>
+        <article><span>02</span><h3>Choose a video</h3><p>Select a local video file that you own or have permission to publish. PostingTTII does not add promotional watermarks.</p></article>
+        <article><span>03</span><h3>Review TikTok options</h3><p>The app requests the latest creator information and displays only the privacy and interaction options available to that account.</p></article>
+        <article><span>04</span><h3>Publish with consent</h3><p>The creator explicitly confirms the upload. The app then reports TikTok's processing status back to the creator.</p></article>
+      </div>
+    </section>
+
+    <section class="section demo-section" id="demo">
+      <div class="section-head split">
+        <div>
+          <span class="eyebrow">LIVE PRODUCT DEMO</span>
+          <h2>Connect, review and publish</h2>
+          <p>This screen uses the actual TikTok authorization and Content Posting API configuration when the server environment is configured.</p>
+        </div>
+        <div id="apiBadge" class="status-badge">Checking configuration…</div>
+      </div>
+
+      <div class="demo-grid">
+        <section class="panel">
+          <div class="panel-head">
+            <div><span class="step-label">STEP 1</span><h3>Authorized TikTok accounts</h3></div>
+            <button class="ghost-button" id="refreshAccounts">Refresh</button>
+          </div>
+          <p class="panel-copy">Up to three creator accounts can be kept as separate authorized connections. Each account must authorize PostingTTII on TikTok.</p>
+          <div id="accounts" class="account-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div><span class="step-label">STEP 2</span><h3>Prepare Direct Post</h3></div>
+          </div>
+
+          <form id="publishForm">
+            <label class="field">
+              <span>Destination account</span>
+              <select id="accountSelect" required></select>
+            </label>
+
+            <div id="creatorCard" class="creator-card hidden"></div>
+
+            <label class="field">
+              <span>Video file</span>
+              <input id="videoFile" type="file" accept="video/mp4,video/quicktime,video/webm" required>
+              <small>For this review build, use a short MP4/MOV/WebM under 64 MB.</small>
+            </label>
+
+            <label class="field">
+              <span>Caption</span>
+              <textarea id="caption" maxlength="2200" rows="5" placeholder="Write and edit your caption before publishing."></textarea>
+              <small><span id="captionCount">0</span>/2200 characters</small>
+            </label>
+
+            <label class="field">
+              <span>Who can view this post?</span>
+              <select id="privacy" required>
+                <option value="">Connect an account to load current TikTok options</option>
+              </select>
+            </label>
+
+            <div class="setting-grid">
+              <label class="toggle"><input id="comments" type="checkbox"><span>Allow comments</span></label>
+              <label class="toggle"><input id="duet" type="checkbox"><span>Allow Duet</span></label>
+              <label class="toggle"><input id="stitch" type="checkbox"><span>Allow Stitch</span></label>
+              <label class="toggle"><input id="aigc" type="checkbox"><span>AI-generated content</span></label>
+              <label class="toggle"><input id="paid" type="checkbox"><span>Paid partnership</span></label>
+              <label class="toggle"><input id="ownBusiness" type="checkbox"><span>Promotes my own business</span></label>
+            </div>
+
+            <label class="consent">
+              <input id="consent" type="checkbox" required>
+              <span>I confirm that I chose this video and these TikTok publishing settings, and I explicitly consent to send this content to the selected TikTok account.</span>
+            </label>
+
+            <button id="publishButton" class="button primary full" type="submit">Publish to TikTok</button>
+          </form>
+
+          <div id="publishStatus" class="publish-status hidden"></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="section policy-grid" id="privacy">
+      <article class="policy-card">
+        <span class="eyebrow">DATA MINIMIZATION</span>
+        <h3>Only the TikTok data needed for publishing</h3>
+        <p>PostingTTII uses authorized profile details to identify the selected account, access tokens to perform user-requested API actions, and current creator settings to render the publishing screen.</p>
+      </article>
+      <article class="policy-card">
+        <span class="eyebrow">NO SILENT POSTING</span>
+        <h3>The creator stays in control</h3>
+        <p>Content is not sent in the background from this review flow. The creator selects the account, video and settings, then gives explicit consent for each Direct Post.</p>
+      </article>
+      <article class="policy-card">
+        <span class="eyebrow">ACCOUNT CONTROL</span>
+        <h3>Disconnect and delete</h3>
+        <p>Connected TikTok authorization data can be removed from PostingTTII. Users can also revoke application access from TikTok.</p>
+        <a href="/data-deletion">Read Data Deletion instructions →</a>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    <div><strong>PostingTTII</strong><span>Creator publishing tool</span></div>
+    <nav><a href="/privacy">Privacy Policy</a><a href="/terms">Terms of Service</a><a href="/data-deletion">Data Deletion</a></nav>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
