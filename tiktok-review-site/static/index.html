@@ -86,11 +86,15 @@
 
             <div id="creatorCard" class="creator-card hidden"></div>
 
-            <label class="field">
+            <div class="field">
               <span>Video file</span>
-              <input id="videoFile" type="file" accept="video/mp4,video/quicktime,video/webm" required>
+              <input id="videoFile" class="native-file-input" type="file" accept="video/mp4,video/quicktime,video/webm" required>
+              <label class="file-picker" for="videoFile">
+                <span class="file-button">Choose video</span>
+                <span id="videoFileName" class="file-name">No file selected</span>
+              </label>
               <small>For this review build, use a short MP4/MOV/WebM under 64 MB.</small>
-            </label>
+            </div>
 
             <label class="field">
               <span>Caption</span>
