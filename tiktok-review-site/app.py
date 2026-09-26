@@ -284,8 +284,6 @@ def connect_tiktok(slot: int):
     slot = _slot(slot)
 
     state = secrets.token_urlsafe(32)
-    verifier = secrets.token_urlsafe(64)
-    challenge = hashlib.sha256(verifier.encode("utf-8")).hexdigest()
 
     with _db() as con:
         con.execute(
@@ -294,7 +292,7 @@ def connect_tiktok(slot: int):
         )
         con.execute(
             "INSERT INTO oauth_states(state, slot, verifier, created_at) VALUES (?, ?, ?, ?)",
-            (state, slot, verifier, int(time.time())),
+            (state, slot, "", int(time.time())),
         )
 
     params = {
@@ -303,8 +301,6 @@ def connect_tiktok(slot: int):
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
         "state": state,
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
     }
     return RedirectResponse(
         "https://www.tiktok.com/v2/auth/authorize/?" + urlencode(params)
@@ -334,7 +330,6 @@ async def tiktok_callback(code: str, state: str):
                 "code": code,
                 "grant_type": "authorization_code",
                 "redirect_uri": REDIRECT_URI,
-                "code_verifier": row["verifier"],
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -431,9 +426,9 @@ async def publish(
     if privacy_level not in allowed_privacy:
         raise HTTPException(400, "Selected privacy option is not available for this TikTok creator")
 
-    await video.seek(0, 2)
+    video.file.seek(0, 2)
     size = video.file.tell()
-    await video.seek(0)
+    video.file.seek(0)
     if size <= 0:
         raise HTTPException(400, "Video file is empty")
     if size > 64 * 1024 * 1024:
