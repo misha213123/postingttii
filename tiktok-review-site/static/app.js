@@ -265,6 +265,10 @@
   $("caption").addEventListener("input", () => {
     $("captionCount").textContent = $("caption").value.length;
   });
+  $("videoFile").addEventListener("change", () => {
+    const file = $("videoFile").files[0];
+    $("videoFileName").textContent = file ? file.name : "No file selected";
+  });
   $("publishForm").addEventListener("submit", publish);
 
   loadConfig();
