@@ -349,10 +349,16 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         wave += 1
         job["wave"] = wave
         tasks = []
+        reserved = set()
         for target, queue in pending.items():
             if not queue:
                 continue
-            index, filename = queue.pop(0)
+            choice = next((i for i, (_, filename) in enumerate(queue)
+                           if filename not in reserved), None)
+            if choice is None:
+                continue
+            index, filename = queue.pop(choice)
+            reserved.add(filename)
             tasks.append(publish_one(target, index, filename))
         if not tasks:
             break
@@ -367,7 +373,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         job["completed_videos"] = sum(
             x["status"] in {"done", "partial"} for x in job["items"]
         )
-        if any(pending.values()) and any(results):
+        if any(pending.values()) and tasks:
             job["status"] = "waiting"
             job["next_video_at"] = int(time.time() + body.interval_minutes * 60)
             event("waiting", "Пауза между волнами")
