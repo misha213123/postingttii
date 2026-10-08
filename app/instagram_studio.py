@@ -34,9 +34,9 @@ class Run(BaseModel):
 
 def load():
     if not CONFIG.exists():
-        return {"accounts": [], "processed": [], "hashes": []}
+        return {"accounts": [], "disabled": [], "processed": [], "hashes": []}
     data = json.loads(CONFIG.read_text(encoding="utf-8"))
-    for key in ("accounts", "processed", "hashes"):
+    for key in ("accounts", "disabled", "processed", "hashes"):
         data.setdefault(key, [])
     return data
 
@@ -60,7 +60,7 @@ def normalize(url):
 @router.get("/status")
 def status():
     d = load()
-    return {"accounts": d["accounts"], "job": JOB, "processed_count": len(d["processed"])}
+    return {"accounts": d["accounts"], "disabled": d["disabled"], "job": JOB, "processed_count": len(d["processed"])}
 
 @router.post("/accounts")
 def add(body: Source):
@@ -70,6 +70,24 @@ def add(body: Source):
         d["accounts"].append(url)
         save(d)
     return {"accounts": d["accounts"]}
+
+class Toggle(BaseModel):
+    enabled: bool
+
+@router.post("/accounts/{username}/toggle")
+def toggle(username: str, body: Toggle):
+    url = normalize(username)
+    d = load()
+    if url not in d["accounts"]:
+        raise HTTPException(404, "Аккаунт не найден")
+    disabled = set(d["disabled"])
+    if body.enabled:
+        disabled.discard(url)
+    else:
+        disabled.add(url)
+    d["disabled"] = sorted(disabled)
+    save(d)
+    return {"disabled": d["disabled"]}
 
 @router.delete("/accounts/{username}")
 def remove(username: str):
@@ -135,6 +153,8 @@ async def process(limit):
         hashes = set(d["hashes"])
         candidates = []
         for account in d["accounts"]:
+            if account in d["disabled"]:
+                continue
             try:
                 links = await asyncio.to_thread(discover, account)
                 random.shuffle(links)
