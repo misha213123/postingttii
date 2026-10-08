@@ -84,6 +84,20 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 .target-progress-head{display:flex;justify-content:space-between;gap:8px;font-size:10px}
 .bar{height:4px;background:#263343;border-radius:99px;margin-top:5px;overflow:hidden}.bar>div{height:100%;background:#dce6f4}
 .caption-preview{font-size:10px;color:#9aa9bc;margin-top:7px;line-height:1.35;max-height:42px;overflow:hidden}
+.account-job-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.account-job-card{background:#0d1723;border:1px solid #28394d;border-radius:13px;padding:13px;min-width:0}
+.account-job-card.live{border-color:#3b82f6}
+.account-job-top{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:13px}
+.account-job-name{font-size:13px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-job-count{font-size:10px;color:var(--muted);white-space:nowrap}
+.account-job-video{font-size:12px;min-height:34px;line-height:1.4;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.account-job-status{font-size:11px;color:var(--muted);margin-top:10px;min-height:18px}
+.account-job-bar{height:6px;background:#253244;border-radius:20px;overflow:hidden;margin-top:7px}
+.account-job-bar>div{height:100%;background:#60a5fa;transition:width .3s}
+.account-job-bar>div.finished{background:#4ade80}
+.queue-footnote{font-size:11px;color:var(--muted);margin-top:12px}
+@media(max-width:1100px){.account-job-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:680px){.account-job-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .preview-modal{display:none;position:fixed;inset:0;background:#000b;z-index:99;align-items:center;justify-content:center;padding:20px}
 .preview-modal.open{display:flex}
 .preview-box{width:min(980px,96vw);background:#090e14;border:1px solid #304156;border-radius:16px;overflow:hidden}
@@ -150,7 +164,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 
       <div class="field"><label for="intervalMaxMinutes">Максимальная пауза</label><select id="intervalMaxMinutes"><option value="20">20 минут</option><option value="30">30 минут</option><option value="35" selected>35 минут</option><option value="45">45 минут</option><option value="60">1 час</option><option value="90">1,5 часа</option><option value="120">2 часа</option></select></div>
       <label class="muted" style="display:flex;gap:8px;align-items:center;margin:10px 0"><input type="checkbox" id="shuffleVideos" checked> Перемешивать видео перед запуском</label>
-      <div class="ai-note">✨ Описание и хештеги OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
+      <div class="ai-note">✨ Японское описание без хештегов OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
       <div class="note" id="cadenceNote"></div>
       <button class="primary start" id="startBatch" onclick="startBatch()">Запустить очередь</button>
     </aside>
@@ -356,15 +370,18 @@ function renderJob(job){
   document.getElementById('queueSubtitle').textContent=labels[job.status]||job.status;
   document.getElementById('cancelBatch').disabled=['done','cancelled','error'].includes(job.status);
   const root=document.getElementById('jobList');
-  root.innerHTML=(job.items||[]).map((item,index)=>{
-    const active=['caption','publishing'].includes(item.status);
-    let targets='';
-    for(const [target,t] of Object.entries(item.targets||{})){
-      targets+='<div class="target-progress"><div class="target-progress-head"><b>'+prettyTarget(target)+'</b><span>'+esc(targetText(t))+'</span></div><div class="bar"><div style="width:'+targetPercent(t.status)+'%"></div></div></div>';
-    }
-    const itemLabel={queued:'В очереди',caption:'AI описание',publishing:'Публикация',done:'Готово',partial:'Частично',error:'Ошибка'}[item.status]||item.status;
-    return '<div class="job '+(active?'active':'')+'"><div class="job-title"><b>'+(index+1)+'. '+esc(item.filename)+'</b><span class="'+(item.status==='done'?'good':item.status==='error'?'bad':'muted')+'">'+esc(itemLabel)+'</span></div><div class="targets">'+targets+'</div>'+(item.caption?'<div class="caption-preview">'+esc(item.caption)+'</div>':'')+(item.error?'<div class="bad" style="font-size:10px;margin-top:5px">'+esc(item.error)+'</div>':'')+'</div>';
-  }).join('');
+  const items=job.items||[];
+  const accounts=(job.targets||[]).filter(t=>t.startsWith('instagram:'));
+  root.innerHTML='<div class="account-job-grid">'+accounts.map(target=>{
+    const assigned=items.filter(item=>job.assignments?.[item.filename]===target);
+    const completed=assigned.filter(item=>['done','partial','error'].includes(item.status)).length;
+    const active=assigned.find(item=>['caption','publishing'].includes(item.status))||assigned.find(item=>item.status==='queued');
+    const t=active?.targets?.[target]||{};
+    const finished=assigned.length>0&&completed===assigned.length;
+    const percent=assigned.length?Math.round(completed/assigned.length*100):0;
+    const status=finished?'Готово':active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео';
+    return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+completed+' / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(finished?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
+  }).join('')+'</div><div class="queue-footnote">Пять аккаунтов и текущие ролики. Подробный список файлов скрыт для компактности.</div>';
 }
 async function cancelBatch(){if(currentJobId)await fetch('/api/batch/'+currentJobId+'/cancel',{method:'POST'});}
 async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
