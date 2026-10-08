@@ -315,6 +315,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
     job["status"] = "running"
     job["started_at"] = int(time.time())
     blocked_targets: dict[str, str] = {}
+    round_published = False
 
     try:
         for index, filename in enumerate(body.filenames):
@@ -424,6 +425,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                         target_state["status"] = "done"
                         target_state["message"] = "Опубликовано"
                         published_now = True
+                        round_published = True
                     else:
                         target_state["status"] = "error"
                         target_state["message"] = result.get("error", "Ошибка")
@@ -490,6 +492,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     )
                 job["next_video_at"] = None
                 job["status"] = "running"
+                round_published = False
 
         job["status"] = "done"
         job["finished_at"] = int(time.time())
