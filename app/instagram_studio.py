@@ -94,35 +94,34 @@ def delete_link(shortcode: str):
     save(d)
     return {"links": d["links"]}
 
-EDGE_PROFILE = ROOT / "edge_instagram_profile"
+CHROME_PROFILE = ROOT / "chrome_instagram_profile"
 
-def find_edge():
-    candidates = [shutil.which("msedge"), shutil.which("msedge.exe")]
+def find_chrome():
+    candidates = [shutil.which("chrome"), shutil.which("chrome.exe")]
     if os.name == "nt":
-        for env, suffix in (("PROGRAMFILES(X86)", "Microsoft/Edge/Application/msedge.exe"),
-                            ("PROGRAMFILES", "Microsoft/Edge/Application/msedge.exe"),
-                            ("LOCALAPPDATA", "Microsoft/Edge/Application/msedge.exe")):
+        for env, suffix in (("PROGRAMFILES", "Google/Chrome/Application/chrome.exe"),
+                            ("PROGRAMFILES(X86)", "Google/Chrome/Application/chrome.exe"),
+                            ("LOCALAPPDATA", "Google/Chrome/Application/chrome.exe")):
             if os.environ.get(env):
                 candidates.append(str(Path(os.environ[env]) / suffix))
     return next((p for p in candidates if p and Path(p).is_file()), None)
 
-@router.post("/edge/open")
-def open_edge_instagram():
+@router.post("/chrome/open")
+def open_chrome_instagram():
     if sys.platform != "win32":
-        raise HTTPException(400, "Вход через Edge доступен только в локальном приложении Windows")
-    executable = find_edge()
+        raise HTTPException(400, "Вход через Chrome доступен только в локальном приложении Windows")
+    executable = find_chrome()
     if not executable:
-        raise HTTPException(404, "Microsoft Edge не найден")
-    EDGE_PROFILE.mkdir(parents=True, exist_ok=True)
+        raise HTTPException(404, "Google Chrome не найден")
+    CHROME_PROFILE.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.Popen([executable, f"--user-data-dir={EDGE_PROFILE.resolve()}",
-                          "--profile-directory=Default", "--new-window",
-                          "https://www.instagram.com/"],
+        subprocess.Popen([executable, f"--user-data-dir={CHROME_PROFILE.resolve()}",
+                          "--new-window", "https://www.instagram.com/"],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, close_fds=True)
     except OSError as exc:
-        raise HTTPException(500, f"Не удалось открыть Edge: {exc}") from exc
-    return {"opened": True, "message": "Открылся отдельный профиль Edge. Войди в Instagram в этом окне."}
+        raise HTTPException(500, f"Не удалось открыть Chrome: {exc}") from exc
+    return {"opened": True, "message": "Открылся отдельный профиль Chrome для PostingTTII. Войди в Instagram в этом окне."}
 
 @router.post("/session")
 async def import_session(file: UploadFile = File(...)):
@@ -232,16 +231,16 @@ def render(source, target, background):
 def discover_edge(account):
     """Read visible reel links from a signed-in Edge profile; no private API."""
     from playwright.sync_api import sync_playwright
-    if not EDGE_PROFILE.exists():
-        raise RuntimeError("Сначала войди в Instagram через кнопку Edge")
+    if not CHROME_PROFILE.exists():
+        raise RuntimeError("Сначала войди в Instagram через кнопку Chrome")
     username = urlparse(account).path.strip("/")
     with sync_playwright() as playwright:
         try:
             context = playwright.chromium.launch_persistent_context(
-                str(EDGE_PROFILE.resolve()), channel="msedge", headless=False,
+                str(CHROME_PROFILE.resolve()), channel="chrome", headless=False,
                 args=["--disable-extensions"], timeout=60000)
         except Exception as exc:
-            raise RuntimeError("Не удалось открыть Edge для сканирования. Закрой все окна Edge с профилем PostingTTII и проверь, что Edge не остался в фоновых процессах. Подробности: " + str(exc)[:450]) from exc
+            raise RuntimeError("Не удалось открыть Chrome для сканирования. Закрой все окна Chrome с профилем PostingTTII с профилем PostingTTII и проверь, что Chrome не остался в фоновых процессах. Подробности: " + str(exc)[:450]) from exc
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(f"https://www.instagram.com/{username}/reels/", wait_until="domcontentloaded", timeout=45000)
@@ -320,7 +319,7 @@ async def process(limit):
                     links = await asyncio.to_thread(discover, account)
                 except Exception as first_error:
                     try:
-                        links = await asyncio.to_thread(discover_edge, account) if EDGE_PROFILE.exists() else await asyncio.to_thread(discover_instaloader, account)
+                        links = await asyncio.to_thread(discover_edge, account) if CHROME_PROFILE.exists() else await asyncio.to_thread(discover_instaloader, account)
                     except Exception as second_error:
                         raise RuntimeError(f"yt-dlp: {first_error}; Edge/Instaloader: {second_error}") from second_error
                 random.shuffle(links)
