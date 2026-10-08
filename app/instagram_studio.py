@@ -262,12 +262,14 @@ def discover_edge(account):
             # Instagram may render a Reel grid before attaching its navigation links.
             # Collect both anchors and DOM URLs, then retry while scrolling.
             links = []
-            for attempt in range(8):
+            seen_links = set()
+            # Scroll down to older posts; the visible Instagram grid starts newest-first.
+            for attempt in range(16):
                 page.wait_for_timeout(2000)
                 current = page.url
                 if "/accounts/login" in current or "/challenge/" in current:
                     raise RuntimeError("Instagram требует вход или проверку. Открой Chrome PostingTTII и подтверди вход.")
-                links = page.evaluate("""() => {
+                page_links = page.evaluate("""() => {
                     const urls = new Set();
                     const add = value => {
                         if (!value) return;
@@ -287,9 +289,13 @@ def discover_edge(account):
                     }
                     return Array.from(urls);
                 }""")
-                if links:
-                    break
-                page.mouse.wheel(0, 1000)
+                for candidate in page_links:
+                    if candidate not in seen_links:
+                        seen_links.add(candidate)
+                        links.append(candidate)
+                page.mouse.wheel(0, 1350)
+            # Oldest among discovered posts first; dates are not exposed reliably by the grid.
+            links.reverse()
             # Keep a snapshot of the DOM links to make future failures actionable.
             cleaned = []
             for link in links:
@@ -379,25 +385,34 @@ async def process(limit):
                     links = await asyncio.to_thread(discover_instaloader, account)
                 else:
                     raise RuntimeError("Сначала открой Instagram через Chrome и войди в аккаунт. Файл Instaloader не нужен.")
-                random.shuffle(links)
                 candidates.extend((account, link) for link in links
                                   if reel_id(link) not in known_ids)
             except Exception as exc:
                 JOB["errors"].append(f"{account}: " + str(exc)[:500])
         candidates.extend(("direct", link) for link in d["links"]
                           if reel_id(link) not in known_ids)
-        random.shuffle(candidates)
-        counts = {}
+        # Randomize source accounts, not the chronological priority inside each source.
+        pools = {}
+        for account, link in candidates:
+            pools.setdefault(account, []).append(link)
         selected = []
         selected_ids = set()
-        for account, link in candidates:
-            if reel_id(link) in selected_ids:
-                continue
-            if account != "direct" and counts.get(account, 0) >= limit:
-                continue
-            counts[account] = counts.get(account, 0) + 1
-            selected.append((account, link))
-            selected_ids.add(reel_id(link))
+        counts = {}
+        while any(pools.values()):
+            active = [account for account, pool in pools.items()
+                      if pool and (account == "direct" or counts.get(account, 0) < limit)]
+            if not active:
+                break
+            random.shuffle(active)
+            for account in active:
+                while pools[account]:
+                    link = pools[account].pop(0)
+                    if reel_id(link) in selected_ids:
+                        continue
+                    selected.append((account, link))
+                    selected_ids.add(reel_id(link))
+                    counts[account] = counts.get(account, 0) + 1
+                    break
         JOB["total"] = len(selected)
         for account, link in selected:
             stem = "ig_" + hashlib.sha256(link.encode()).hexdigest()[:18]
