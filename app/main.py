@@ -29,6 +29,7 @@ from app.services.platforms import (
     youtube_upload,
 )
 from app.telegram_studio import router as telegram_studio_router, shutdown_telegram_studio
+from app.instagram_studio import router as instagram_studio_router
 from app.store import store
 from app.account_creator.api.accounts import router as account_manager_router
 from app.account_creator.api.aliases import router as account_aliases_router
@@ -47,6 +48,7 @@ app.include_router(account_browser_router)
 app.include_router(account_tiktok_router)
 app.include_router(account_instagram_router)
 app.include_router(telegram_studio_router)
+app.include_router(instagram_studio_router)
 
 @app.on_event("shutdown")
 async def stop_telegram_studio():
