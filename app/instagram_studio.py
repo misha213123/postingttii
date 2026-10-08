@@ -156,6 +156,10 @@ def discover(account):
             links.append(url)
     return list(dict.fromkeys(links))
 
+def is_profile_extraction_error(message):
+    return "Unable to extract data" in message and "instagram:user" in message
+
+
 async def process(limit):
     JOB.update(status="running", done=0, total=0, errors=[])
     try:
@@ -171,7 +175,7 @@ async def process(limit):
                 random.shuffle(links)
                 candidates.extend((account, link) for link in links if link not in known)
             except Exception as exc:
-                JOB["errors"].append(f"{account}: {str(exc)[:600]}")
+                JOB["errors"].append(f"{account}: "+ ("Instagram сейчас не отдает список Reels этого профиля через yt-dlp. Обнови yt-dlp; если ошибка повторится, используй официальный экспорт своих видео или импорт отдельных MP4. " if is_profile_extraction_error(str(exc)) else "") + str(exc)[:500])
         random.shuffle(candidates)
         counts = {}
         selected = []
