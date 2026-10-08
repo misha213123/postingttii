@@ -324,7 +324,7 @@ async def process(limit):
                 random.shuffle(links)
                 candidates.extend((account, link) for link in links if link not in known)
             except Exception as exc:
-                JOB["errors"].append(f"{account}: "+  + str(exc)[:500])
+                JOB["errors"].append(f"{account}: " + str(exc)[:500])
         candidates.extend(("direct", link) for link in d["links"] if link not in known)
         random.shuffle(candidates)
         counts = {}
