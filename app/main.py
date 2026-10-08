@@ -734,7 +734,7 @@ input{margin:12px 0}img{max-height:180px;display:block;margin-top:10px}
 </style><h1>Обложки Instagram Reels</h1>
 <p>Назначь свою JPG/PNG-обложку каждому слоту. Видео без обложки не публикуется.</p>
 <div id="items"></div><script>
-const names=['@streamnarezchik','@clipnarez','@6anxr2dt','@mxsic.png','@9a1xmmx0'];
+const names=['Аккаунт 1','Аккаунт 2','Аккаунт 3','Аккаунт 4','Аккаунт 5'];
 const root=document.getElementById('items');
 for(let i=1;i<=5;i++){let el=document.createElement('section');
 el.innerHTML='<h3>Instagram #'+i+' — '+names[i-1]+'</h3><input type="file" accept="image/png,image/jpeg"><button>Сохранить</button><span></span>';
@@ -766,8 +766,8 @@ def _require_platform(platform: str) -> None:
 
 @app.get("/connect/{platform}/{slot}")
 async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
-    if slot not in (1, 2):
-        raise HTTPException(400, "Слот должен быть 1 или 2")
+    if slot not in (range(1, 6) if platform == "instagram" else (1, 2)):
+        raise HTTPException(400, "Недопустимый слот")
     _require_platform(platform)
     if platform == "tiktok" and not settings.tiktok_enabled:
         raise HTTPException(503, "TikTok временно отключен")
