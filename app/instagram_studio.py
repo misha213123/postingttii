@@ -252,24 +252,23 @@ def discover_edge(account):
                 current = page.url
                 if "/accounts/login" in current or "/challenge/" in current:
                     raise RuntimeError("Instagram требует вход или проверку. Открой Chrome PostingTTII и подтверди вход.")
-                links = page.evaluate(r"""() => {
+                links = page.evaluate("""() => {
                     const urls = new Set();
                     const add = value => {
                         if (!value) return;
                         const text = String(value);
-                        const matches = text.match(/(?:https?:\\/\\/(?:www\\.)?instagram\\.com)?\\/(?:reel|reels|p|tv)\\/[A-Za-z0-9_-]+\\/?/g) || [];
-                        for (const match of matches) {
-                            try { urls.add(new URL(match, location.origin).href); } catch (_) {}
+                        // Avoid regex literals: Instagram markup can contain escaped slashes.
+                        for (const part of text.split(/["'\\s<>]+/)) {
+                            const match = part.match(new RegExp('(?:https?://(?:www[.])?instagram[.]com)?/(?:reel|reels|p|tv)/[A-Za-z0-9_-]+/?'));
+                            if (match) {
+                                try { urls.add(new URL(match[0], location.origin).href); } catch (_) {}
+                            }
                         }
                     };
                     for (const a of document.querySelectorAll('a[href]')) add(a.href);
                     for (const el of document.querySelectorAll('[href], [role="link"], [data-href]')) {
                         add(el.getAttribute('href'));
                         add(el.getAttribute('data-href'));
-                    }
-                    // Instagram sometimes stores target paths in rendered attributes.
-                    for (const el of document.querySelectorAll('article a, main a, [role="main"] a')) {
-                        add(el.outerHTML);
                     }
                     return Array.from(urls);
                 }""")
