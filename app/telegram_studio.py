@@ -380,6 +380,11 @@ async def process(limit):
                         source = ORIGINALS / f"{channel}_{message.id}.mp4"
                         target = settings.upload_dir / f"tg_{channel}_{message.id}.mp4"
                         try:
+                            # Never overwrite a previously rendered or queued reel.
+                            if target.exists() and target.stat().st_size > 0:
+                                d["processed"].append(key)
+                                save(d)
+                                continue
                             # Re-download incomplete or unreadable originals rather than retrying a bad cache.
                             if source.exists():
                                 try:
@@ -399,7 +404,15 @@ async def process(limit):
                                     temp_source.unlink(missing_ok=True)
                             if not source.exists():
                                 raise ValueError("Не удалось скачать кружок")
-                            await asyncio.to_thread(render, source, next_background(), target)
+                            # Render to a temporary file, publish only after ffprobe validates it.
+                            temp_target = target.with_name(target.stem + ".rendering.mp4")
+                            try:
+                                await asyncio.to_thread(render, source, next_background(), temp_target)
+                                if duration(temp_target) <= 0:
+                                    raise ValueError("Готовый ролик не прошёл проверку FFprobe")
+                                temp_target.replace(target)
+                            finally:
+                                temp_target.unlink(missing_ok=True)
                             d["processed"].append(key)
                             save(d)
                             JOB["done"] += 1
