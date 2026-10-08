@@ -380,8 +380,23 @@ async def process(limit):
                         source = ORIGINALS / f"{channel}_{message.id}.mp4"
                         target = settings.upload_dir / f"tg_{channel}_{message.id}.mp4"
                         try:
+                            # Re-download incomplete or unreadable originals rather than retrying a bad cache.
+                            if source.exists():
+                                try:
+                                    if source.stat().st_size == 0 or duration(source) <= 0:
+                                        raise ValueError("Empty or invalid media")
+                                except (OSError, ValueError, subprocess.CalledProcessError):
+                                    source.unlink(missing_ok=True)
                             if not source.exists():
-                                await client.download_media(message, file=str(source))
+                                temp_source = source.with_suffix(".part.mp4")
+                                temp_source.unlink(missing_ok=True)
+                                try:
+                                    await client.download_media(message, file=str(temp_source))
+                                    if not temp_source.exists() or duration(temp_source) <= 0:
+                                        raise ValueError("Telegram прислал повреждённый или неполный кружок")
+                                    temp_source.replace(source)
+                                finally:
+                                    temp_source.unlink(missing_ok=True)
                             if not source.exists():
                                 raise ValueError("Не удалось скачать кружок")
                             await asyncio.to_thread(render, source, next_background(), target)
