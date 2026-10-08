@@ -10,3 +10,5 @@ telethon>=1.40,<2
 qrcode[pil]>=8,<9
 
 yt-dlp>=2025.9
+
+instaloader>=4.14
