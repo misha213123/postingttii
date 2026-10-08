@@ -163,6 +163,20 @@ def render(source, target, background):
              "-movflags", "+faststart", str(target)]
     cmd(args, timeout=3600)
 
+def discover_instaloader(account):
+    import instaloader
+    from itertools import islice
+    username = urlparse(account).path.strip("/")
+    loader = instaloader.Instaloader(quiet=True)
+    profile = instaloader.Profile.from_username(loader.context, username)
+    posts = profile.get_posts()
+    links = []
+    for post in islice(posts, 150):
+        if post.is_video:
+            links.append(f"https://www.instagram.com/p/{post.shortcode}/")
+    return links
+
+
 def discover(account):
     result = cmd(["yt-dlp", "--flat-playlist", "--dump-single-json",
                   "--playlist-end", "100", account], timeout=120)
@@ -199,7 +213,13 @@ async def process(limit):
             if account in d["disabled"]:
                 continue
             try:
-                links = await asyncio.to_thread(discover, account)
+                try:
+                    links = await asyncio.to_thread(discover, account)
+                except Exception as first_error:
+                    try:
+                        links = await asyncio.to_thread(discover_instaloader, account)
+                    except Exception as second_error:
+                        raise RuntimeError(f"yt-dlp: {first_error}; Instaloader: {second_error}") from second_error
                 random.shuffle(links)
                 candidates.extend((account, link) for link in links if link not in known)
             except Exception as exc:
