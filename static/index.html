@@ -113,7 +113,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 .monitor-pager{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:12px}
 .monitor-summary{font-size:11px;color:#94a3b8;margin:8px 0 12px}
 @media(max-width:650px){.monitor-account{grid-template-columns:85px minmax(0,1fr)}.monitor-account .status{grid-column:2;text-align:left}.monitor-account .bar{grid-column:1/3}.monitor-event{grid-template-columns:55px 1fr 120px}.monitor-event .filename{grid-column:2/4}}
-</style>
+.monitor-filters{display:flex;gap:7px;margin-bottom:12px;flex-wrap:wrap}.monitor-filters button{padding:7px 12px;font-size:12px}.monitor-filters button.selected{background:#263e60;border-color:#4672ae;color:#fff}.monitor-event b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.monitor-event .good{color:#4ade80}.monitor-event .bad{color:#f87171}</style>
 </head>
 <body>
 <div class="shell">
@@ -211,7 +211,7 @@ let pollTimer=null;
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function connected(platform,slot){return (state.accounts[platform]||[]).find(a=>Number(a.slot)===slot);}
-function prettyTarget(target){const [p,n]=target.split(':');return ({youtube:'YouTube',instagram:'Instagram',tiktok:'TikTok'}[p]||p)+' #'+n;}
+function prettyTarget(target){const [p,n]=String(target).split(':');const a=(state?.accounts?.[p]||[]).find(x=>String(x.slot)===n);const label=String(a?.username||a?.label||'').trim();return label&&!/^(instagram|youtube|tiktok)\s*#?\s*\d+$/i.test(label)?(label.startsWith('@')?label:'@'+label):({youtube:'YouTube',instagram:'Instagram',tiktok:'TikTok'}[p]||p)+' #'+n;}
 function fmtTime(seconds){seconds=Math.max(0,Math.floor(Number(seconds)||0));const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;return h? h+'ч '+m+'м':m+':'+String(s).padStart(2,'0');}
 
 async function load(){
@@ -342,7 +342,8 @@ function targetText(t){
   return t.message||t.status;
 }
 
-let monitorTab='now',monitorPage=1,monitorJob=null;
+let monitorTab='now',monitorPage=1,monitorJob=null,monitorFilter='all';
+function setMonitorFilter(v){monitorFilter=v;monitorPage=1;if(monitorJob)renderJob(monitorJob);}
 function setMonitorTab(tab){monitorTab=tab;monitorPage=1;if(monitorJob)renderJob(monitorJob);}
 function monitorTurn(delta){monitorPage+=delta;if(monitorJob)renderJob(monitorJob);}
 function renderJob(job){
@@ -379,11 +380,19 @@ function renderJob(job){
     root.innerHTML='<div class="monitor-summary">Волна '+(job.wave||'—')+' · Проверено '+(job.checked_pairs??'—')+' / '+(job.total_pairs??'—')+' · Повторов '+(job.skipped_pairs??'—')+'</div>'+rows.join('');
     return;
   }
-  let history=(job.events||[]).map((e,i)=>({time:e.at||0,target:e.target||'',filename:e.filename||'',message:e.message||e.kind||'',order:i})).reverse();
-  if(!history.length)history=items.flatMap(item=>Object.entries(item.targets||{}).filter(([target,t])=>!['queued','waiting'].includes(t.status)).map(([target,t])=>({time:item.finished_at||item.started_at||0,target,filename:item.filename,message:targetText(t)}))).reverse();
-  const perPage=8,pages=Math.max(1,Math.ceil(history.length/perPage));monitorPage=Math.min(Math.max(1,monitorPage),pages);
-  root.innerHTML='<div class="monitor-summary">'+history.length+' событий · по 8 на странице</div>'+
-    history.slice((monitorPage-1)*perPage,monitorPage*perPage).map(e=>'<div class="monitor-event"><span class="muted">'+(e.time?new Date(e.time*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'—')+'</span><b>'+esc(e.target?prettyTarget(e.target):'Система')+'</b><span class="filename" title="'+esc(e.filename)+'">'+esc(e.filename||'Очередь')+'</span><span>'+esc(e.message)+'</span></div>').join('')+
+  const raw=(job.events||[]).map((e,i)=>({time:e.at||0,target:e.target||'',filename:e.filename||'',message:e.message||e.kind||'',kind:e.kind||'',order:i})).reverse();
+  const grouped=new Map();
+  const important=e=>/успешно|опубликовано|ошибка|не удалось|пропуск|уже было|done|error|already|failed/i.test(e.message+' '+e.kind);
+  for(const e of raw){if(!e.target||!e.filename)continue;const key=e.target+'|'+e.filename;if(!grouped.has(key)||important(e)&&!important(grouped.get(key)))grouped.set(key,e);}
+  let history=[...grouped.values()];
+  if(!history.length)history=items.flatMap(item=>Object.entries(item.targets||{}).filter(([target,t])=>!['queued','waiting'].includes(t.status)).map(([target,t])=>({time:item.finished_at||item.started_at||0,target,filename:item.filename,message:targetText(t),kind:t.status}))).reverse();
+  const isError=e=>/ошибка|не удалось|error|failed|blocked/i.test(e.message+' '+e.kind);
+  const isSuccess=e=>/успешно|опубликовано|done|success/i.test(e.message+' '+e.kind);
+  const filtered=history.filter(e=>monitorFilter==='all'||(monitorFilter==='ok'?isSuccess(e):isError(e)));
+  const perPage=20,pages=Math.max(1,Math.ceil(filtered.length/perPage));monitorPage=Math.min(Math.max(1,monitorPage),pages);
+  const filters='<div class="monitor-filters">'+[['all','Все'],['ok','Успешные'],['error','Ошибки']].map(([v,label])=>'<button class="secondary '+(monitorFilter===v?'selected':'')+'" onclick="setMonitorFilter(\''+v+'\')">'+label+'</button>').join('')+'</div>';
+  root.innerHTML='<div class="monitor-summary">'+history.length+' публикаций · '+filtered.length+' по фильтру · по 20 на странице</div>'+filters+
+    filtered.slice((monitorPage-1)*perPage,monitorPage*perPage).map(e=>'<div class="monitor-event"><span class="muted">'+(e.time?new Date(e.time*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'—')+'</span><b>'+esc(prettyTarget(e.target))+'</b><span class="filename" title="'+esc(e.filename)+'">'+esc(e.filename)+'</span><span class="'+(isError(e)?'bad':isSuccess(e)?'good':'muted')+'">'+esc(e.message)+'</span></div>').join('')+
     '<div class="monitor-pager"><button class="secondary" onclick="monitorTurn(-1)" '+(monitorPage===1?'disabled':'')+'>← Назад</button><span>'+monitorPage+' / '+pages+'</span><button class="secondary" onclick="monitorTurn(1)" '+(monitorPage===pages?'disabled':'')+'>Вперёд →</button></div>';
 }
 async function cancelBatch(){if(currentJobId)await fetch('/api/batch/'+currentJobId+'/cancel',{method:'POST'});}
