@@ -251,8 +251,17 @@ def discover_edge(account):
                 current = page.url
                 if "/accounts/login" in current or "/challenge/" in current:
                     raise RuntimeError("Instagram требует вход или проверку. Открой Chrome PostingTTII и подтверди вход.")
-                links = page.locator('a[href*="/reel/"], a[href*="/p/"]').evaluate_all(
-                    "(nodes) => nodes.map(a => a.href)")
+                links = page.evaluate("""() => {
+                    const values = new Set();
+                    for (const a of document.querySelectorAll('a[href]')) {
+                        values.add(a.href);
+                    }
+                    for (const el of document.querySelectorAll('[href], [role="link"]')) {
+                        const href = el.getAttribute('href');
+                        if (href) values.add(new URL(href, location.origin).href);
+                    }
+                    return Array.from(values).filter(x => /instagram\\.com\\/(reel|p|tv)\\//.test(x));
+                }""")
                 if links:
                     break
                 page.mouse.wheel(0, 1100)
@@ -268,7 +277,18 @@ def discover_edge(account):
                     raise RuntimeError("Instagram показывает страницу входа вместо Reels. Войди через кнопку Chrome и закрой окно перед запуском.")
                 if any(term in body for term in ("sorry, this page isn't available", "страница недоступна", "profile isn't available")):
                     raise RuntimeError(f"Instagram не открыл профиль @{username}. Проверь имя аккаунта и доступность профиля.")
-                raise RuntimeError(f"У @{username} не найдены видимые Reels после ожидания и прокрутки. Проверь, что вкладка /reels/ открывается в Chrome PostingTTII.")
+                debug_image = ROOT / "instagram_discovery_debug.png"
+                try:
+                    page.screenshot(path=str(debug_image), full_page=False)
+                except Exception:
+                    pass
+                actual_url = page.url
+                title = page.title()[:100]
+                raise RuntimeError(
+                    f"У @{username} не найдены ссылки Reels. Открыта страница: {actual_url}; "
+                    f"заголовок: {title}. Скриншот диагностики: {debug_image}. "
+                    "Закрой отдельное окно Chrome перед запуском и проверь снимок."
+                )
             return list(dict.fromkeys(cleaned))
         finally:
             context.close()
