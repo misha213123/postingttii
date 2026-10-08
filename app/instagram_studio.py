@@ -229,6 +229,41 @@ def render(source, target, background):
              "-movflags", "+faststart", str(target)]
     cmd(args, timeout=3600)
 
+def discover_edge(account):
+    """Read visible reel links from a signed-in Edge profile; no private API."""
+    from playwright.sync_api import sync_playwright
+    if not EDGE_PROFILE.exists():
+        raise RuntimeError("Сначала войди в Instagram через кнопку Edge")
+    username = urlparse(account).path.strip("/")
+    with sync_playwright() as playwright:
+        try:
+            context = playwright.chromium.launch_persistent_context(
+                str(EDGE_PROFILE.resolve()), channel="msedge", headless=False,
+                args=["--profile-directory=Default"], timeout=20000)
+        except Exception as exc:
+            raise RuntimeError("Закрой окно Instagram Edge, открытое из Studio, и повтори сканирование. " + str(exc)[:160]) from exc
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto(f"https://www.instagram.com/{username}/reels/", wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(4500)
+            current = page.url
+            if "/accounts/login" in current or "/challenge/" in current:
+                raise RuntimeError("Instagram требует вход или проверку. Открой Edge и подтверди вход.")
+            links = page.locator('a[href*="/reel/"]').evaluate_all(
+                "(nodes) => nodes.map(a => a.href)")
+            cleaned = []
+            for link in links:
+                try:
+                    cleaned.append(normalize_post(link))
+                except HTTPException:
+                    continue
+            if not cleaned:
+                raise RuntimeError("На странице нет доступных ссылок Reels. Instagram мог ограничить доступ; попробуй позже.")
+            return list(dict.fromkeys(cleaned))
+        finally:
+            context.close()
+
+
 def discover_instaloader(account):
     import instaloader
     from itertools import islice
@@ -285,9 +320,9 @@ async def process(limit):
                     links = await asyncio.to_thread(discover, account)
                 except Exception as first_error:
                     try:
-                        links = await asyncio.to_thread(discover_instaloader, account)
+                        links = await asyncio.to_thread(discover_edge, account) if EDGE_PROFILE.exists() else await asyncio.to_thread(discover_instaloader, account)
                     except Exception as second_error:
-                        raise RuntimeError(f"yt-dlp: {first_error}; Instaloader: {second_error}") from second_error
+                        raise RuntimeError(f"yt-dlp: {first_error}; Edge/Instaloader: {second_error}") from second_error
                 random.shuffle(links)
                 candidates.extend((account, link) for link in links if link not in known)
             except Exception as exc:
