@@ -169,15 +169,29 @@ def telegram_client():
     return TelegramClient(str(SESSION), int(api_id), api_hash)
 
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def connected_telegram_client():
+    """Connect without Telethon's interactive start()/console login."""
+    client = telegram_client()
+    await client.connect()
+    try:
+        yield client
+    finally:
+        await client.disconnect()
+
+
 @router.get("/auth")
 async def auth_status():
-    async with telegram_client() as client:
+    async with connected_telegram_client() as client:
         return {"authorized": await client.is_user_authorized()}
 
 
 @router.post("/auth/start")
 async def auth_start(body: LoginStart):
-    async with telegram_client() as client:
+    async with connected_telegram_client() as client:
         result = await client.send_code_request(body.phone)
         d = config()
         d["auth_phone"] = body.phone
@@ -192,7 +206,7 @@ async def auth_finish(body: LoginFinish):
     d = config()
     if not d.get("auth_phone") or not d.get("phone_code_hash"):
         raise HTTPException(400, "Сначала запроси код")
-    async with telegram_client() as client:
+    async with connected_telegram_client() as client:
         try:
             await client.sign_in(phone=d["auth_phone"], code=body.code, phone_code_hash=d["phone_code_hash"])
         except SessionPasswordNeededError:
@@ -243,7 +257,7 @@ async def process(limit):
         bgs = [BACKGROUNDS / b["name"] for b in backgrounds() if b["enabled"]]
         if not bgs:
             raise ValueError("Добавь хотя бы один активный фон")
-        async with telegram_client() as client:
+        async with connected_telegram_client() as client:
             if not await client.is_user_authorized():
                 raise ValueError("Сначала авторизуй Telegram")
             for channel in d["channels"]:
