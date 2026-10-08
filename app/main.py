@@ -59,6 +59,26 @@ async def telegram_studio_page():
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
+IG_CIRCLE_CLAIMS: dict[str, str] = {}
+
+def _circle_id(filename: str) -> str | None:
+    import re
+    m = re.fullmatch(r"tg_([a-zA-Z0-9_]+)_([0-9]+)[.]mp4", Path(filename).name, re.I)
+    return f"{m.group(1).lower()}:{m.group(2)}" if m else None
+
+def _circle_owner(circle_id: str) -> str | None:
+    for item in publish_state._read().values():
+        if _circle_id(item.get("filename", "")) == circle_id:
+            for target in item.get("targets", {}):
+                if target.startswith("instagram:"):
+                    return target
+    return IG_CIRCLE_CLAIMS.get(circle_id)
+
+def _circle_conflict(filename: str, target: str) -> bool:
+    circle_id = _circle_id(filename)
+    return bool(target.startswith("instagram:") and circle_id and
+                _circle_owner(circle_id) not in (None, target))
+
 
 
 async def _expire_media_token(token: str, delay_seconds: int = 300) -> None:
@@ -193,6 +213,8 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
     if platform == "tiktok" and not settings.tiktok_enabled:
         raise HTTPException(503, "TikTok временно отключен")
 
+    if _circle_conflict(video.name, target):
+        raise HTTPException(409, "Кружок уже назначен другому Instagram")
     video_key = publish_state.video_key(video)
     if publish_state.is_completed(video_key, target):
         return {
@@ -272,6 +294,10 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
 
             for target in body.targets:
                 target_state = item["targets"][target]
+                if target.startswith("instagram:") and job["assignments"].get(filename) != target:
+                    target_state["status"] = "blocked"
+                    target_state["message"] = "Кружок назначен другому Instagram"
+                    continue
                 if target in blocked_targets:
                     target_state["status"] = "blocked"
                     target_state["message"] = blocked_targets[target]
@@ -428,6 +454,9 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         job["status"] = "error"
         job["error"] = str(exc)
         job["finished_at"] = int(time.time())
+    finally:
+        for circle_id in job.get("claimed_circles", []):
+            IG_CIRCLE_CLAIMS.pop(circle_id, None)
 
 
 @app.post("/api/batch/start")
@@ -464,6 +493,18 @@ async def batch_start(body: BatchPublishRequest):
         )
 
     job_id = secrets.token_urlsafe(12)
+    instagram_targets = [t for t in targets if t.startswith("instagram:")]
+    assignments = {}
+    claims = []
+    for filename in filenames:
+        circle_id = _circle_id(filename)
+        if circle_id and instagram_targets:
+            owner = _circle_owner(circle_id)
+            if owner is None:
+                owner = instagram_targets[len(claims) % len(instagram_targets)]
+                IG_CIRCLE_CLAIMS[circle_id] = owner
+                claims.append(circle_id)
+            assignments[filename] = owner
     normalized = BatchPublishRequest(
         filenames=filenames,
         targets=targets,
@@ -489,6 +530,8 @@ async def batch_start(body: BatchPublishRequest):
         "cancel_requested": False,
         "error": "",
         "blocked_targets": {},
+        "assignments": assignments,
+        "claimed_circles": claims,
         "items": [
             {
                 "filename": filename,
