@@ -35,6 +35,8 @@ from app.account_creator.api.browser_profiles import router as account_browser_r
 from app.account_creator.api.tiktok import router as account_tiktok_router
 from app.account_creator.api.instagram import router as account_instagram_router
 
+from app.telegram_studio import router as telegram_studio_router
+
 app = FastAPI(title="PostingTTII", version="0.1.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -44,6 +46,11 @@ app.include_router(account_profile_router)
 app.include_router(account_browser_router)
 app.include_router(account_tiktok_router)
 app.include_router(account_instagram_router)
+app.include_router(telegram_studio_router)
+
+@app.get("/telegram-studio", response_class=HTMLResponse)
+async def telegram_studio_page():
+    return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
