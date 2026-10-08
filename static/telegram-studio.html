@@ -10,6 +10,7 @@
 </div></main>
 <script>
 const api='/api/telegram-studio';
+let lastBackgroundSignature=null;
 const el=id=>document.getElementById(id);
 const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function request(path,opts){const r=await fetch(api+path,opts);const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));return d}
@@ -17,7 +18,7 @@ function notify(e){alert(e.message||String(e))}
 async function refresh(){
 try{const d=await request('/status');el('health').textContent=(d.ffmpeg_ready?'FFmpeg ✓':'FFmpeg отсутствует')+' · '+(d.telegram_configured?'Telegram API ✓':'Telegram API не настроен');
 el('channels').innerHTML=d.channels.length?d.channels.map(c=>'<div class="item"><strong>@'+safe(c)+'</strong><button class="danger" data-channel="'+safe(c)+'">Удалить</button></div>').join(''):'<div class="empty">Каналы ещё не добавлены</div>';
-el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>'<div class="item"><video preload="metadata" controls src="'+api+'/backgrounds/'+encodeURIComponent(b.name)+'/preview"></video><div><strong>'+safe(b.name)+'</strong><div class="muted">'+b.size_mb+' MB</div></div><div class="actions"><label><input type="checkbox" data-toggle="'+safe(b.name)+'" '+(b.enabled?'checked':'')+'> Вкл.</label><button class="danger" data-bg="'+safe(b.name)+'">×</button></div></div>').join(''):'<div class="empty">Добавь хотя бы один фон</div>';
+const bgSignature=JSON.stringify(d.backgrounds);if(bgSignature!==lastBackgroundSignature){lastBackgroundSignature=bgSignature;el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>'<div class="item"><video preload="metadata" controls src="'+api+'/backgrounds/'+encodeURIComponent(b.name)+'/preview"></video><div><strong>'+safe(b.name)+'</strong><div class="muted">'+b.size_mb+' MB</div></div><div class="actions"><label><input type="checkbox" data-toggle="'+safe(b.name)+'" '+(b.enabled?'checked':'')+'> Вкл.</label><button class="danger" data-bg="'+safe(b.name)+'">×</button></div></div>').join('') :'<div class="empty">Добавь хотя бы один фон</div>'; }
 const j=d.job;el('progress').textContent=j.status+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=(j.errors||[]).join('\n');el('run').disabled=j.status==='running';
 }catch(e){el('log').textContent=e.message}}
 el('addChannel').onsubmit=async e=>{e.preventDefault();try{await request('/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:el('channel').value})});el('channel').value='';await refresh()}catch(e){notify(e)}};
