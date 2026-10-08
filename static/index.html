@@ -191,7 +191,7 @@ let pollTimer=null;
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function connected(platform,slot){return (state.accounts[platform]||[]).find(a=>Number(a.slot)===slot);}
-function prettyTarget(target){const [p,n]=target.split(':');return ({youtube:'YouTube',instagram:'Instagram',tiktok:'TikTok'}[p]||p)+' #'+n;}
+function prettyTarget(target){const [p,n]=target.split(':');const a=connected(p,Number(n));return a?(a.label||a.id||p+' #'+n):p+' #'+n;}
 function fmtTime(seconds){seconds=Math.max(0,Math.floor(Number(seconds)||0));const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;return h? h+'ч '+m+'м':m+':'+String(s).padStart(2,'0');}
 
 async function load(){
@@ -212,22 +212,37 @@ function renderPlatforms(){
     const title=platform==='youtube'?'YouTube':'Instagram';
     const card=document.createElement('div');card.className='card platform';
     let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div><div class="account-row">';
-    for(const slot of [1,2]){
+    for(const slot of (platform==='instagram'?[1,2,3,4,5]:[1,2])){
       const a=connected(platform,slot);
-      html+='<div class="account"><b>Аккаунт #'+slot+'</b>';
+      html+='<div class="account"><b>'+esc(a?(a.label||a.id||'Instagram '+slot):'Слот '+slot)+'</b>';
       if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div><button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
       else html+='<div class="label muted">Не подключён</div><a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
+      if(platform==='instagram')html+='<div style="margin-top:8px"><small>Обложка: <span id="cover-state-'+slot+'">проверка...</span></small><input type="file" accept="image/png,image/jpeg" style="width:100%;font-size:11px" onchange="saveCover('+slot+',this)"></div>';
       html+='</div>';
     }
     html+='</div>';
     if(platform==='instagram'&&!state.configured.instagram_public_url)html+='<div class="warn" style="font-size:10px;margin-top:6px">Нет PUBLIC_BASE_URL</div>';
     card.innerHTML=html;root.appendChild(card);
   }
+  refreshCoverStates();
   const t=document.createElement('div');t.className='card platform';
   t.innerHTML='<div class="platform-head"><h3>TikTok</h3><span class="bad" style="font-size:11px">Отключён</span></div><div class="muted" style="font-size:12px">Не участвует в очереди, пока приложение проходит проверку.</div>';
   root.appendChild(t);
 }
 
+async function refreshCoverStates(){
+ try{const r=await fetch('/api/instagram/covers');const d=await r.json();
+ for(let i=1;i<=5;i++){const el=document.getElementById('cover-state-'+i);
+ if(el)el.textContent=d.covers?.[String(i)]?'✓ Сохранена':'Не выбрана';}}catch(e){}
+}
+async function saveCover(slot,input){
+ if(!input.files?.length)return;
+ const body=new FormData();body.append('file',input.files[0]);
+ const el=document.getElementById('cover-state-'+slot);if(el)el.textContent='Загрузка...';
+ try{const r=await fetch('/api/instagram/covers/'+slot,{method:'POST',body});
+ if(!r.ok)throw Error(await r.text());if(el)el.textContent='✓ Сохранена';}
+ catch(e){if(el)el.textContent='Ошибка';alert(e.message);}
+}
 function renderVideos(){
   const root=document.getElementById('videos');
   if(!state)return;
