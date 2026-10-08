@@ -122,7 +122,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
       <h1>PostingTTII</h1>
       <div class="muted">Массовая очередь публикаций</div>
     </div>
-    <div class="muted" id="folder"></div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><a href="/telegram-studio" class="btn primary">Telegram Studio</a><a href="/instagram-covers" class="btn secondary">Обложки Instagram</a><div class="muted" id="folder"></div></div>
   </div>
 
   <section class="accounts-strip" id="platforms"></section>
@@ -168,7 +168,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
         </select>
       </div>
 
-      <div class="ai-note">✨ Описание и хештеги OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
+      <div class="ai-note">✨ Описание OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
       <div class="note" id="cadenceNote"></div>
       <button class="primary start" id="startBatch" onclick="startBatch()">Запустить очередь</button>
     </aside>
