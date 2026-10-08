@@ -229,7 +229,7 @@ def render(source, target, background):
     cmd(args, timeout=3600)
 
 def discover_edge(account):
-    """Read visible reel links from a signed-in Edge profile; no private API."""
+    """Read visible reel links from a signed-in Chrome profile; no private API."""
     from playwright.sync_api import sync_playwright
     if not CHROME_PROFILE.exists():
         raise RuntimeError("Сначала войди в Instagram через кнопку Chrome")
@@ -240,14 +240,14 @@ def discover_edge(account):
                 str(CHROME_PROFILE.resolve()), channel="chrome", headless=False,
                 args=["--disable-extensions"], timeout=60000)
         except Exception as exc:
-            raise RuntimeError("Не удалось открыть Chrome для сканирования. Закрой все окна Chrome с профилем PostingTTII с профилем PostingTTII и проверь, что Chrome не остался в фоновых процессах. Подробности: " + str(exc)[:450]) from exc
+            raise RuntimeError("Не удалось открыть Chrome для сканирования. Закрой все окна Chrome с профилем PostingTTII и проверь, что Chrome не остался в фоновых процессах. Подробности: " + str(exc)[:450]) from exc
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(f"https://www.instagram.com/{username}/reels/", wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(4500)
             current = page.url
             if "/accounts/login" in current or "/challenge/" in current:
-                raise RuntimeError("Instagram требует вход или проверку. Открой Edge и подтверди вход.")
+                raise RuntimeError("Instagram требует вход или проверку. Открой Chrome и подтверди вход.")
             links = page.locator('a[href*="/reel/"]').evaluate_all(
                 "(nodes) => nodes.map(a => a.href)")
             cleaned = []
@@ -315,17 +315,16 @@ async def process(limit):
             if account in d["disabled"]:
                 continue
             try:
-                try:
-                    links = await asyncio.to_thread(discover, account)
-                except Exception as first_error:
-                    try:
-                        links = await asyncio.to_thread(discover_edge, account) if CHROME_PROFILE.exists() else await asyncio.to_thread(discover_instaloader, account)
-                    except Exception as second_error:
-                        raise RuntimeError(f"yt-dlp: {first_error}; Edge/Instaloader: {second_error}") from second_error
+                if CHROME_PROFILE.exists():
+                    links = await asyncio.to_thread(discover_edge, account)
+                elif SESSION_FILE.exists():
+                    links = await asyncio.to_thread(discover_instaloader, account)
+                else:
+                    raise RuntimeError("Сначала открой Instagram через Chrome и войди в аккаунт. Файл Instaloader не нужен.")
                 random.shuffle(links)
                 candidates.extend((account, link) for link in links if link not in known)
             except Exception as exc:
-                JOB["errors"].append(f"{account}: "+ ("Instagram сейчас не отдает список Reels этого профиля через yt-dlp. Обнови yt-dlp; если ошибка повторится, используй официальный экспорт своих видео или импорт отдельных MP4. " if is_profile_extraction_error(str(exc)) else "") + str(exc)[:500])
+                JOB["errors"].append(f"{account}: "+  + str(exc)[:500])
         candidates.extend(("direct", link) for link in d["links"] if link not in known)
         random.shuffle(candidates)
         counts = {}
