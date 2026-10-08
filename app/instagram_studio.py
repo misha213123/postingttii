@@ -244,12 +244,18 @@ def discover_edge(account):
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(f"https://www.instagram.com/{username}/reels/", wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(4500)
-            current = page.url
-            if "/accounts/login" in current or "/challenge/" in current:
-                raise RuntimeError("Instagram требует вход или проверку. Открой Chrome и подтверди вход.")
-            links = page.locator('a[href*="/reel/"]').evaluate_all(
-                "(nodes) => nodes.map(a => a.href)")
+            # Instagram loads its grid asynchronously; allow time and scroll to load visible posts.
+            links = []
+            for attempt in range(6):
+                page.wait_for_timeout(2500)
+                current = page.url
+                if "/accounts/login" in current or "/challenge/" in current:
+                    raise RuntimeError("Instagram требует вход или проверку. Открой Chrome PostingTTII и подтверди вход.")
+                links = page.locator('a[href*="/reel/"], a[href*="/p/"]').evaluate_all(
+                    "(nodes) => nodes.map(a => a.href)")
+                if links:
+                    break
+                page.mouse.wheel(0, 1100)
             cleaned = []
             for link in links:
                 try:
@@ -257,7 +263,12 @@ def discover_edge(account):
                 except HTTPException:
                     continue
             if not cleaned:
-                raise RuntimeError("На странице нет доступных ссылок Reels. Instagram мог ограничить доступ; попробуй позже.")
+                body = page.locator("body").inner_text(timeout=5000)[:3000].lower()
+                if any(term in body for term in ("log in", "sign up", "войти", "зарегистрироваться")):
+                    raise RuntimeError("Instagram показывает страницу входа вместо Reels. Войди через кнопку Chrome и закрой окно перед запуском.")
+                if any(term in body for term in ("sorry, this page isn't available", "страница недоступна", "profile isn't available")):
+                    raise RuntimeError(f"Instagram не открыл профиль @{username}. Проверь имя аккаунта и доступность профиля.")
+                raise RuntimeError(f"У @{username} не найдены видимые Reels после ожидания и прокрутки. Проверь, что вкладка /reels/ открывается в Chrome PostingTTII.")
             return list(dict.fromkeys(cleaned))
         finally:
             context.close()
