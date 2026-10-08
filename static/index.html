@@ -93,6 +93,26 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 @media(max-width:1200px){.video-grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:900px){.accounts-strip{grid-template-columns:1fr}.workspace{grid-template-columns:1fr}.sidebar{position:static}.video-scroll{height:55vh}.video-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px){.video-grid{grid-template-columns:1fr}.search{min-width:0;width:100%}.queue-stats{grid-template-columns:1fr 1fr}.targets{grid-template-columns:1fr}}
+
+/* Compact queue monitor */
+.queue{padding:15px}
+.job-list{max-height:none;overflow:visible;display:block}
+.monitor-progress{height:7px;background:#263343;border-radius:99px;overflow:hidden;margin:12px 0}
+.monitor-progress>div{height:100%;background:linear-gradient(90deg,#2563eb,#38bdf8);transition:width .3s}
+.monitor-tabs{display:flex;gap:5px;background:#101923;border-radius:12px;padding:4px;margin-bottom:12px}
+.monitor-tabs button{flex:1;background:transparent;color:#94a3b8;font-size:12px;font-weight:700}
+.monitor-tabs button.active{background:#253952;color:white}
+.monitor-account{display:grid;grid-template-columns:110px minmax(0,1fr) 150px;gap:9px;align-items:center;background:#101923;border:1px solid #223041;border-radius:10px;padding:10px;margin-bottom:7px}
+.monitor-account .filename{font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.monitor-account .status{text-align:right;font-size:11px}
+.monitor-account .bar{grid-column:1/4;margin-top:0}
+.monitor-account .bar>div{background:#3b82f6}
+.monitor-account .bar.done>div{background:#22c55e}
+.monitor-event{display:grid;grid-template-columns:65px 120px minmax(0,1fr) 180px;gap:8px;padding:10px 5px;border-bottom:1px solid #263343;align-items:center;font-size:12px}
+.monitor-event .filename{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#94a3b8}
+.monitor-pager{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:12px}
+.monitor-summary{font-size:11px;color:#94a3b8;margin:8px 0 12px}
+@media(max-width:650px){.monitor-account{grid-template-columns:85px minmax(0,1fr)}.monitor-account .status{grid-column:2;text-align:left}.monitor-account .bar{grid-column:1/3}.monitor-event{grid-template-columns:55px 1fr 120px}.monitor-event .filename{grid-column:2/4}}
 </style>
 </head>
 <body>
@@ -169,7 +189,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
       <div class="stat"><span>Следующее</span><b id="statNext">—</b></div>
       <div class="stat"><span>Интервал</span><b id="statInterval">—</b></div>
     </div>
-    <div class="job-list" id="jobList"></div>
+    <div class="monitor-progress"><div id="monitorProgress" style="width:0%"></div></div><div class="monitor-tabs"><button id="monitorNow" class="active" onclick="setMonitorTab('now')">Сейчас</button><button id="monitorHistory" onclick="setMonitorTab('history')">История</button></div><div class="job-list" id="jobList"></div>
   </section>
 </div>
 
@@ -321,28 +341,50 @@ function targetText(t){
   if(t.status==='error')return t.message||'Ошибка';
   return t.message||t.status;
 }
+
+let monitorTab='now',monitorPage=1,monitorJob=null;
+function setMonitorTab(tab){monitorTab=tab;monitorPage=1;if(monitorJob)renderJob(monitorJob);}
+function monitorTurn(delta){monitorPage+=delta;if(monitorJob)renderJob(monitorJob);}
 function renderJob(job){
-  document.getElementById('statTotal').textContent=job.total_videos||0;
+  monitorJob=job;
+  const items=job.items||[];
+  document.getElementById('statTotal').textContent=job.total_videos||items.length;
   document.getElementById('statDone').textContent=job.completed_videos||0;
   document.getElementById('statInterval').textContent=(job.interval_minutes||0)+' мин';
   let next='—';
   if(job.next_video_at)next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
-  else if(job.status==='waiting_account')next='пауза аккаунта';
+  else if(job.status==='checking')next='Проверка';
   else if(job.status==='running')next='сейчас';
   document.getElementById('statNext').textContent=next;
-  const labels={queued:'Очередь создана',running:'Публикую',waiting:'Жду следующий ролик',waiting_account:'Жду паузу аккаунта',done:'Очередь завершена',cancelled:'Очередь остановлена',error:'Ошибка очереди'};
+  const labels={queued:'Очередь создана',checking:'Проверяю повторы',running:'Публикую',waiting:'Пауза между волнами',waiting_account:'Пауза аккаунта',done:'Очередь завершена',cancelled:'Очередь остановлена',error:'Ошибка очереди'};
   document.getElementById('queueSubtitle').textContent=labels[job.status]||job.status;
   document.getElementById('cancelBatch').disabled=['done','cancelled','error'].includes(job.status);
+  document.getElementById('monitorNow').classList.toggle('active',monitorTab==='now');
+  document.getElementById('monitorHistory').classList.toggle('active',monitorTab==='history');
+  const total=items.length,completed=items.filter(x=>['done','partial','error'].includes(x.status)).length;
+  document.getElementById('monitorProgress').style.width=(total?Math.round(completed/total*100):0)+'%';
   const root=document.getElementById('jobList');
-  root.innerHTML=(job.items||[]).map((item,index)=>{
-    const active=['caption','publishing'].includes(item.status);
-    let targets='';
-    for(const [target,t] of Object.entries(item.targets||{})){
-      targets+='<div class="target-progress"><div class="target-progress-head"><b>'+prettyTarget(target)+'</b><span>'+esc(targetText(t))+'</span></div><div class="bar"><div style="width:'+targetPercent(t.status)+'%"></div></div></div>';
-    }
-    const itemLabel={queued:'В очереди',caption:'AI описание',publishing:'Публикация',done:'Готово',partial:'Частично',error:'Ошибка'}[item.status]||item.status;
-    return '<div class="job '+(active?'active':'')+'"><div class="job-title"><b>'+(index+1)+'. '+esc(item.filename)+'</b><span class="'+(item.status==='done'?'good':item.status==='error'?'bad':'muted')+'">'+esc(itemLabel)+'</span></div><div class="targets">'+targets+'</div>'+(item.caption?'<div class="caption-preview">'+esc(item.caption)+'</div>':'')+(item.error?'<div class="bad" style="font-size:10px;margin-top:5px">'+esc(item.error)+'</div>':'')+'</div>';
-  }).join('');
+  if(monitorTab==='now'){
+    const targets=[...new Set(items.flatMap(x=>Object.keys(x.targets||{})))];
+    const rows=targets.map(target=>{
+      const entries=items.map((item,index)=>({item,index,state:(item.targets||{})[target]})).filter(x=>x.state);
+      const active=entries.find(x=>['publishing','waiting','caption'].includes(x.state.status));
+      const upcoming=entries.find(x=>x.state.status==='queued');
+      const recent=[...entries].reverse().find(x=>['done','already','error','blocked','cooldown'].includes(x.state.status));
+      const chosen=active||upcoming||recent;
+      if(!chosen)return '';
+      const t=chosen.state,percent=targetPercent(t.status);
+      return '<div class="monitor-account"><b>'+esc(prettyTarget(target))+'</b><span class="filename" title="'+esc(chosen.item.filename)+'">'+esc(chosen.item.filename)+'</span><span class="status '+(t.status==='done'?'good':t.status==='error'?'bad':'muted')+'">'+esc(targetText(t))+'</span><div class="bar '+(t.status==='done'?'done':'')+'"><div style="width:'+percent+'%"></div></div></div>';
+    });
+    root.innerHTML='<div class="monitor-summary">Волна '+(job.wave||'—')+' · Проверено '+(job.checked_pairs??'—')+' / '+(job.total_pairs??'—')+' · Повторов '+(job.skipped_pairs??'—')+'</div>'+rows.join('');
+    return;
+  }
+  let history=(job.events||[]).map((e,i)=>({time:e.at||0,target:e.target||'',filename:e.filename||'',message:e.message||e.kind||'',order:i})).reverse();
+  if(!history.length)history=items.flatMap(item=>Object.entries(item.targets||{}).filter(([target,t])=>!['queued','waiting'].includes(t.status)).map(([target,t])=>({time:item.finished_at||item.started_at||0,target,filename:item.filename,message:targetText(t)}))).reverse();
+  const perPage=8,pages=Math.max(1,Math.ceil(history.length/perPage));monitorPage=Math.min(Math.max(1,monitorPage),pages);
+  root.innerHTML='<div class="monitor-summary">'+history.length+' событий · по 8 на странице</div>'+
+    history.slice((monitorPage-1)*perPage,monitorPage*perPage).map(e=>'<div class="monitor-event"><span class="muted">'+(e.time?new Date(e.time*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'—')+'</span><b>'+esc(e.target?prettyTarget(e.target):'Система')+'</b><span class="filename" title="'+esc(e.filename)+'">'+esc(e.filename||'Очередь')+'</span><span>'+esc(e.message)+'</span></div>').join('')+
+    '<div class="monitor-pager"><button class="secondary" onclick="monitorTurn(-1)" '+(monitorPage===1?'disabled':'')+'>← Назад</button><span>'+monitorPage+' / '+pages+'</span><button class="secondary" onclick="monitorTurn(1)" '+(monitorPage===pages?'disabled':'')+'>Вперёд →</button></div>';
 }
 async function cancelBatch(){if(currentJobId)await fetch('/api/batch/'+currentJobId+'/cancel',{method:'POST'});}
 async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
