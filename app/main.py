@@ -175,8 +175,8 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
     except Exception as exc:
         raise HTTPException(400, "Некорректный target") from exc
 
-    if slot not in (1, 2):
-        raise HTTPException(400, "Разрешены только слоты 1 и 2")
+    if slot not in (1, 2, 3, 4, 5):
+        raise HTTPException(400, "Разрешены только слоты 1–5")
     if platform not in {"youtube", "instagram", "tiktok"}:
         raise HTTPException(400, f"Неизвестная платформа: {platform}")
     if platform == "tiktok" and not settings.tiktok_enabled:
@@ -520,8 +520,8 @@ async def publish(body: PublishRequest):
         try:
             platform, slot_text = target.split(":", 1)
             slot = int(slot_text)
-            if slot not in (1, 2):
-                raise RuntimeError("Разрешены только слоты 1 и 2")
+            if slot not in (1, 2, 3, 4, 5):
+                raise RuntimeError("Разрешены только слоты 1–5")
 
             if platform == "youtube":
                 result = await youtube_upload(slot, video, body.caption)
@@ -580,8 +580,8 @@ def _require_platform(platform: str) -> None:
 
 @app.get("/connect/{platform}/{slot}")
 async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
-    if slot not in (1, 2):
-        raise HTTPException(400, "Слот должен быть 1 или 2")
+    if slot not in (1, 2, 3, 4, 5):
+        raise HTTPException(400, "Слот должен быть от 1 до 5")
     _require_platform(platform)
     if platform == "tiktok" and not settings.tiktok_enabled:
         raise HTTPException(503, "TikTok временно отключен")
@@ -639,8 +639,8 @@ async def instagram_callback(code: str, state: str):
 
 @app.delete("/api/account/{platform}/{slot}")
 async def disconnect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
-    if slot not in (1, 2):
-        raise HTTPException(400, "Слот должен быть 1 или 2")
+    if slot not in (1, 2, 3, 4, 5):
+        raise HTTPException(400, "Слот должен быть от 1 до 5")
     store.delete(platform, slot)
     return {"ok": True}
 
