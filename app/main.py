@@ -237,195 +237,133 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
 
 
 async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
+    """Preflight every account/video pair before publishing in parallel waves."""
     job = BATCH_JOBS[job_id]
-    job["status"] = "running"
+    job["status"] = "checking"
     job["started_at"] = int(time.time())
-    blocked_targets: dict[str, str] = {}
+    job["events"] = []
+    job["checked_pairs"] = 0
+    job["skipped_pairs"] = 0
+    job["total_pairs"] = len(body.filenames) * len(body.targets)
 
-    try:
-        for index, filename in enumerate(body.filenames):
-            if job.get("cancel_requested"):
-                job["status"] = "cancelled"
-                return
+    def event(kind: str, message: str, filename: str = "", target: str = "") -> None:
+        job["events"].append({
+            "at": int(time.time()), "kind": kind, "message": message,
+            "filename": filename, "target": target,
+        })
 
-            video = _safe_video(filename)
-            item = job["items"][index]
-            item["started_at"] = int(time.time())
-
-            # Fast pre-check: if this exact file is already on a selected
-            # account, mark it immediately. If nothing remains to publish,
-            # skip AI generation and move straight to the next clip without
-            # waiting the batch interval.
-            video_key = publish_state.video_key(video)
-            pending_targets: list[str] = []
-
-            for target in body.targets:
-                target_state = item["targets"][target]
-                if target in blocked_targets:
-                    target_state["status"] = "blocked"
-                    target_state["message"] = blocked_targets[target]
-                elif publish_state.is_completed(video_key, target):
-                    target_state["status"] = "already"
-                    target_state["message"] = "Уже на аккаунте — сразу следующий"
-                else:
-                    pending_targets.append(target)
-
-            if not pending_targets:
-                statuses = [x["status"] for x in item["targets"].values()]
-                item["status"] = (
-                    "done"
-                    if all(x in {"done", "already"} for x in statuses)
-                    else "partial"
-                )
-                item["finished_at"] = int(time.time())
-                job["completed_videos"] = index + 1
-                continue
-
-            caption = (body.captions.get(filename) or "").strip()
-            if caption:
-                item["status"] = "publishing"
-                item["caption"] = caption
+    # Check all pairs up front, not one clip at a time after waiting.
+    pending = {target: [] for target in body.targets}
+    for index, filename in enumerate(body.filenames):
+        if job.get("cancel_requested"):
+            job["status"] = "cancelled"
+            return
+        video = _safe_video(filename)
+        key = await asyncio.to_thread(publish_state.video_key, video)
+        item = job["items"][index]
+        for target in body.targets:
+            state = item["targets"][target]
+            already = publish_state.is_completed(key, target)
+            job["checked_pairs"] += 1
+            if already:
+                state.update(status="already", message="Уже опубликовано — пропущено")
+                job["skipped_pairs"] += 1
+                event("already", "Пропущен повтор", filename, target)
             else:
-                item["status"] = "caption"
-                try:
-                    caption = await asyncio.to_thread(
-                        generate_caption, video.name, body.hint
-                    )
-                    item["caption"] = caption
-                except Exception as exc:
-                    item["status"] = "error"
-                    item["error"] = f"OpenAI: {exc}"
-                    item["finished_at"] = int(time.time())
-                    job["completed_videos"] = index + 1
-                    continue
+                pending[target].append((index, filename))
+        if all(x["status"] == "already" for x in item["targets"].values()):
+            item["status"] = "done"
+            item["finished_at"] = int(time.time())
+    job["preflight_complete"] = True
+    event("checked", "Проверка всех роликов завершена")
+    if not any(pending.values()):
+        job["status"] = "done"
+        job["completed_videos"] = len(body.filenames)
+        job["finished_at"] = int(time.time())
+        return
 
-            published_now = False
-            item["status"] = "publishing"
-            for target in pending_targets:
-                if job.get("cancel_requested"):
-                    job["status"] = "cancelled"
-                    return
+    async def publish_one(target: str, index: int, filename: str) -> bool:
+        item = job["items"][index]
+        state = item["targets"][target]
+        if job.get("cancel_requested"):
+            return False
+        video = _safe_video(filename)
+        item["status"] = "publishing"
+        state.update(status="publishing", message="Публикация")
+        event("publishing", "Начата публикация", filename, target)
+        try:
+            manual = (body.captions.get(filename) or "").strip()
+            caption = manual or await asyncio.to_thread(
+                generate_caption, filename, body.hint, target
+            )
+            state["caption"] = caption
+            result = await _publish_single_target(video, caption, target)
+            if result.get("skipped"):
+                state.update(status="already", message="Уже опубликовано")
+                event("already", "Пропущен повтор", filename, target)
+                return False
+            if result.get("ok"):
+                state.update(status="done", message="Опубликовано", progress=100)
+                event("done", "Успешно опубликовано", filename, target)
+                return True
+            raise RuntimeError(result.get("error", "Ошибка публикации"))
+        except HTTPException as exc:
+            detail = exc.detail
+            if exc.status_code == 429 and isinstance(detail, dict):
+                state.update(status="cooldown", message=detail.get("message", "Пауза"),
+                             retry_after_seconds=int(detail.get("retry_after_seconds", 0)))
+            else:
+                state.update(status="error", message=str(detail))
+        except Exception as exc:
+            state.update(status="error", message=str(exc))
+        event("error", state["message"], filename, target)
+        return False
 
-                target_state = item["targets"][target]
-
-                if target in blocked_targets:
-                    target_state["status"] = "blocked"
-                    target_state["message"] = blocked_targets[target]
-                    continue
-
-                remaining = publish_state.cooldown_remaining(
-                    target, settings.post_cooldown_minutes * 60
-                )
-                if remaining > 0:
-                    target_state["status"] = "waiting"
-                    target_state["message"] = "Жду паузу аккаунта"
-                    target_state["retry_after_seconds"] = remaining
-                    job["status"] = "waiting_account"
-                    wait_until = time.time() + remaining
-                    while time.time() < wait_until:
-                        if job.get("cancel_requested"):
-                            job["status"] = "cancelled"
-                            return
-                        target_state["retry_after_seconds"] = max(
-                            0, int(wait_until - time.time())
-                        )
-                        await asyncio.sleep(
-                            min(5, max(0.2, wait_until - time.time()))
-                        )
-                    target_state["retry_after_seconds"] = 0
-                    job["status"] = "running"
-
-                target_state["status"] = "publishing"
-                target_state["message"] = "Публикую"
-                try:
-                    # Respect a manually entered caption; otherwise generate a
-                    # different description for each account/video pair.
-                    target_caption = (
-                        caption if (body.captions.get(filename) or "").strip()
-                        else await asyncio.to_thread(
-                            generate_caption, video.name, body.hint, target
-                        )
-                    )
-                    target_state["caption"] = target_caption
-                    result = await _publish_single_target(video, target_caption, target)
-                    if result.get("skipped"):
-                        target_state["status"] = "already"
-                        target_state["message"] = "Уже на аккаунте"
-                    elif result.get("ok"):
-                        target_state["status"] = "done"
-                        target_state["message"] = "Опубликовано"
-                        published_now = True
-                    else:
-                        target_state["status"] = "error"
-                        target_state["message"] = result.get("error", "Ошибка")
-                except HTTPException as exc:
-                    detail = exc.detail
-                    if exc.status_code == 429 and isinstance(detail, dict):
-                        target_state["status"] = "cooldown"
-                        target_state["message"] = detail.get("message", "Пауза")
-                        target_state["retry_after_seconds"] = int(
-                            detail.get("retry_after_seconds", 0)
-                        )
-                    else:
-                        target_state["status"] = "error"
-                        target_state["message"] = (
-                            detail if isinstance(detail, str) else str(detail)
-                        )
-                except Exception as exc:
-                    message = str(exc)
-                    target_state["status"] = "error"
-                    target_state["message"] = message
-
-                    # YouTube may temporarily block further uploads for a channel.
-                    # Once detected, do not waste time retrying the same account
-                    # for every remaining clip in this batch.
-                    if target.startswith("youtube:") and (
-                        "exceeded the number of videos they may upload" in message.lower()
-                        or "uploadlimitexceeded" in message.lower()
-                    ):
-                        blocked_targets[target] = (
-                            "Лимит загрузок YouTube — пропуск до конца этой очереди"
-                        )
-                        job["blocked_targets"][target] = blocked_targets[target]
-
+    # Each wave publishes at most one new video per account. Accounts run
+    # concurrently; the pause occurs only between waves, never inside one.
+    job["status"] = "running"
+    wave = 0
+    while any(pending.values()):
+        if job.get("cancel_requested"):
+            job["status"] = "cancelled"
+            job["finished_at"] = int(time.time())
+            return
+        wave += 1
+        job["wave"] = wave
+        tasks = []
+        for target, queue in pending.items():
+            if not queue:
+                continue
+            index, filename = queue.pop(0)
+            tasks.append(publish_one(target, index, filename))
+        if not tasks:
+            break
+        results = await asyncio.gather(*tasks)
+        for item in job["items"]:
             statuses = [x["status"] for x in item["targets"].values()]
             if all(x in {"done", "already"} for x in statuses):
                 item["status"] = "done"
-            elif any(x == "error" for x in statuses):
+                item.setdefault("finished_at", int(time.time()))
+            elif any(x in {"error", "cooldown"} for x in statuses):
                 item["status"] = "partial"
-            else:
-                item["status"] = "partial"
-            item["finished_at"] = int(time.time())
-            job["completed_videos"] = index + 1
-
-            # Wait between clips only when this clip actually produced at
-            # least one new publication. Already-uploaded/blocked/failed clips
-            # move to the next item immediately.
-            if (
-                published_now
-                and index < len(body.filenames) - 1
-                and not job.get("cancel_requested")
-            ):
-                job["status"] = "waiting"
-                job["next_video_at"] = int(
-                    time.time() + body.interval_minutes * 60
-                )
-                while time.time() < job["next_video_at"]:
-                    if job.get("cancel_requested"):
-                        job["status"] = "cancelled"
-                        return
-                    await asyncio.sleep(
-                        min(5, max(0.2, job["next_video_at"] - time.time()))
-                    )
-                job["next_video_at"] = None
-                job["status"] = "running"
-
-        job["status"] = "done"
-        job["finished_at"] = int(time.time())
-    except Exception as exc:
-        job["status"] = "error"
-        job["error"] = str(exc)
-        job["finished_at"] = int(time.time())
+        job["completed_videos"] = sum(
+            x["status"] in {"done", "partial"} for x in job["items"]
+        )
+        if any(pending.values()) and any(results):
+            job["status"] = "waiting"
+            job["next_video_at"] = int(time.time() + body.interval_minutes * 60)
+            event("waiting", "Пауза между волнами")
+            while time.time() < job["next_video_at"]:
+                if job.get("cancel_requested"):
+                    job["status"] = "cancelled"
+                    job["finished_at"] = int(time.time())
+                    return
+                await asyncio.sleep(min(5, max(0.2, job["next_video_at"] - time.time())))
+            job["next_video_at"] = None
+            job["status"] = "running"
+    job["status"] = "done"
+    job["finished_at"] = int(time.time())
+    event("finished", "Очередь завершена")
 
 
 @app.post("/api/batch/start")
