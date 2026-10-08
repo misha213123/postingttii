@@ -32,11 +32,14 @@ class Source(BaseModel):
 class Run(BaseModel):
     limit_per_account: int = 5
 
+class LinkInput(BaseModel):
+    url: str
+
 def load():
     if not CONFIG.exists():
-        return {"accounts": [], "disabled": [], "processed": [], "hashes": []}
+        return {"accounts": [], "disabled": [], "processed": [], "hashes": [], "links": []}
     data = json.loads(CONFIG.read_text(encoding="utf-8"))
-    for key in ("accounts", "disabled", "processed", "hashes"):
+    for key in ("accounts", "disabled", "processed", "hashes", "links"):
         data.setdefault(key, [])
     return data
 
@@ -60,7 +63,32 @@ def normalize(url):
 @router.get("/status")
 def status():
     d = load()
-    return {"accounts": d["accounts"], "disabled": d["disabled"], "job": JOB, "processed_count": len(d["processed"])}
+    return {"accounts": d["accounts"], "disabled": d["disabled"], "links": d["links"], "job": JOB, "processed_count": len(d["processed"])}
+
+def normalize_post(url):
+    parsed = urlparse(url.strip())
+    if parsed.scheme != "https" or parsed.hostname not in ("www.instagram.com", "instagram.com"):
+        raise HTTPException(400, "Нужна прямая HTTPS-ссылка на Instagram-публикацию")
+    match = re.fullmatch(r"/(p|reel|tv)/([A-Za-z0-9_-]+)/?", parsed.path)
+    if not match:
+        raise HTTPException(400, "Поддерживаются ссылки /p/, /reel/ и /tv/")
+    return f"https://www.instagram.com/{match.group(1)}/{match.group(2)}/"
+
+@router.post("/links")
+def add_link(body: LinkInput):
+    url = normalize_post(body.url)
+    d = load()
+    if url not in d["links"] and url not in d["processed"]:
+        d["links"].append(url)
+        save(d)
+    return {"links": d["links"]}
+
+@router.delete("/links/{shortcode}")
+def delete_link(shortcode: str):
+    d = load()
+    d["links"] = [url for url in d["links"] if urlparse(url).path.rstrip("/").split("/")[-1] != shortcode]
+    save(d)
+    return {"links": d["links"]}
 
 @router.post("/accounts")
 def add(body: Source):
@@ -176,11 +204,12 @@ async def process(limit):
                 candidates.extend((account, link) for link in links if link not in known)
             except Exception as exc:
                 JOB["errors"].append(f"{account}: "+ ("Instagram сейчас не отдает список Reels этого профиля через yt-dlp. Обнови yt-dlp; если ошибка повторится, используй официальный экспорт своих видео или импорт отдельных MP4. " if is_profile_extraction_error(str(exc)) else "") + str(exc)[:500])
+        candidates.extend(("direct", link) for link in d["links"] if link not in known)
         random.shuffle(candidates)
         counts = {}
         selected = []
         for account, link in candidates:
-            if counts.get(account, 0) >= limit:
+            if account != "direct" and counts.get(account, 0) >= limit:
                 continue
             counts[account] = counts.get(account, 0) + 1
             selected.append((account, link))
@@ -218,6 +247,7 @@ async def process(limit):
             finally:
                 temp.unlink(missing_ok=True)
                 d["processed"] = sorted(known)
+                d["links"] = [url for url in d["links"] if url not in known]
                 d["hashes"] = sorted(hashes)
                 save(d)
         JOB["status"] = "done" if not JOB["errors"] else "partial"
@@ -234,8 +264,8 @@ async def run(body: Run):
         raise HTTPException(400, "Лимит 1–100")
     if LOCK.locked():
         raise HTTPException(409, "Загрузка Instagram уже запущена")
-    if not load()["accounts"]:
-        raise HTTPException(400, "Сначала добавь Instagram-аккаунты")
+    if not load()["accounts"] and not load()["links"]:
+        raise HTTPException(400, "Добавь Instagram-аккаунт или ссылку на публикацию")
     await LOCK.acquire()
     TASK = asyncio.create_task(process(body.limit_per_account))
     return {"started": True}
