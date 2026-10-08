@@ -7,3 +7,4 @@ cryptography>=45,<46
 python-multipart>=0.0.20,<1
 playwright>=1.55,<2
 telethon>=1.40,<2
+qrcode[pil]>=8,<9
