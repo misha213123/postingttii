@@ -383,8 +383,9 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         event("error", state["message"], filename, target)
         return False
 
-    # A video belongs to exactly one account in this batch, across ALL waves.
-    # Do not assign it to another account even if its first upload fails.
+    # Reserve two distinct videos per account in each wave. Each account
+    # uploads its pair sequentially without a pause; accounts run in parallel.
+    # Never assign one video to more than one account across the whole job.
     assigned_videos = set()
     job["status"] = "running"
     wave = 0
@@ -395,58 +396,40 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             return
         wave += 1
         job["wave"] = wave
-        reserved = set()
-        first_success = set()
-        published_any = False
-
-        for round_number in (1, 2):
-            if job.get("cancel_requested"):
-                job["status"] = "cancelled"
-                job["finished_at"] = int(time.time())
-                return
-
-            assignments = []
-            for target, queue in pending.items():
-                if not queue or (round_number == 2 and target not in first_success):
+        assignments = {}
+        for target, queue in pending.items():
+            queue[:] = [(idx, name) for idx, name in queue
+                        if name not in assigned_videos]
+            pair = []
+            while queue and len(pair) < 2:
+                index, filename = queue.pop(0)
+                if filename in assigned_videos:
                     continue
-                # Discard videos assigned to a different account in a prior wave.
-                queue[:] = [(idx, name) for idx, name in queue
-                            if name not in assigned_videos]
-                choice = next((i for i, (_, filename) in enumerate(queue)
-                               if filename not in reserved), None)
-                if choice is None:
-                    continue
-                index, filename = queue.pop(choice)
-                reserved.add(filename)
                 assigned_videos.add(filename)
-                assignments.append((target, index, filename))
+                pair.append((index, filename))
+            if pair:
+                assignments[target] = pair
 
-            if not assignments:
-                continue
+        if not assignments:
+            break
 
-            if round_number == 2:
-                delay = random.randint(60, 120)
-                job["status"] = "waiting"
-                job["next_video_at"] = int(time.time() + delay)
-                event("waiting", f"Пауза {delay} сек. перед вторым роликом")
-                while time.time() < job["next_video_at"]:
-                    if job.get("cancel_requested"):
-                        job["status"] = "cancelled"
-                        job["finished_at"] = int(time.time())
-                        return
-                    await asyncio.sleep(min(5, max(0.2, job["next_video_at"] - time.time())))
-                job["next_video_at"] = None
-                job["status"] = "running"
+        async def publish_pair(target: str, pair: list) -> bool:
+            succeeded = False
+            for position, (index, filename) in enumerate(pair):
+                if job.get("cancel_requested"):
+                    break
+                # The second clip in the same wave skips only our own cooldown.
+                ok = await publish_one(
+                    target, index, filename, cycle_second=(position == 1)
+                )
+                succeeded = succeeded or ok
+            return succeeded
 
-            results = await asyncio.gather(*[
-                publish_one(target, index, filename, cycle_second=(round_number == 2))
-                for target, index, filename in assignments
-            ])
-            published_any = published_any or any(results)
-            if round_number == 1:
-                first_success = {
-                    target for (target, _, _), ok in zip(assignments, results) if ok
-                }
+        results = await asyncio.gather(*[
+            publish_pair(target, pair)
+            for target, pair in assignments.items()
+        ])
+        published_any = any(results)
 
         for item in job["items"]:
             statuses = [x["status"] for x in item["targets"].values()]
@@ -508,6 +491,19 @@ async def batch_start(body: BatchPublishRequest):
         raise HTTPException(
             400,
             "Недоступные аккаунты: " + ", ".join(invalid),
+        )
+
+    missing_covers = [
+        target for target in targets
+        if target.startswith("instagram:")
+        and not (COVER_DIR / f"{target.split(':', 1)[1]}.jpg").is_file()
+    ]
+    if missing_covers:
+        raise HTTPException(
+            400,
+            "Перед запуском добавь обложки для выбранных аккаунтов: "
+            + ", ".join(missing_covers)
+            + ". Открой /instagram-covers",
         )
 
     job_id = secrets.token_urlsafe(12)
