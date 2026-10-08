@@ -368,13 +368,15 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
         async with connected_telegram_client() as client:
             if not await client.is_user_authorized():
                 raise ValueError("Сначала авторизуй Telegram")
-            for channel in d["channels"]:
+            # Gather candidates from every channel before selecting any output.
+            pools = {}
+            channels = list(d["channels"])
+            random.shuffle(channels)
+            for channel in channels:
                 if STOP_REQUESTED:
                     break
                 try:
                     entity = await client.get_entity(channel)
-                    # Scan history beyond the output limit; choose old, new, or random notes.
-                    # Telegram yields newest first. Bound scanning to avoid unlimited requests.
                     candidates = []
                     async for message in client.iter_messages(entity, limit=3000):
                         if STOP_REQUESTED:
@@ -386,62 +388,70 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
                         if not message.video_note:
                             continue
                         key = f"{channel}:{message.id}"
-                        if key in d["processed"]:
-                            continue
-                        candidates.append(message)
+                        if key not in d["processed"]:
+                            candidates.append(message)
                     if order == "oldest":
                         candidates.reverse()
                     elif order == "random":
                         random.shuffle(candidates)
-                    for message in candidates[:limit]:
-                        if STOP_REQUESTED:
-                            break
-                        key = f"{channel}:{message.id}"
-                        JOB["total"] += 1
-                        source = ORIGINALS / f"{channel}_{message.id}.mp4"
-                        target = settings.upload_dir / f"tg_{channel}_{message.id}.mp4"
-                        try:
-                            # Never overwrite a previously rendered or queued reel.
-                            if target.exists() and target.stat().st_size > 0:
-                                d["processed"].append(key)
-                                save(d)
-                                continue
-                            # Re-download incomplete or unreadable originals rather than retrying a bad cache.
-                            if source.exists():
-                                try:
-                                    if source.stat().st_size == 0 or duration(source) <= 0:
-                                        raise ValueError("Empty or invalid media")
-                                except (OSError, ValueError, subprocess.CalledProcessError):
-                                    source.unlink(missing_ok=True)
-                            if not source.exists():
-                                temp_source = source.with_suffix(".part.mp4")
-                                temp_source.unlink(missing_ok=True)
-                                try:
-                                    await client.download_media(message, file=str(temp_source))
-                                    if not temp_source.exists() or duration(temp_source) <= 0:
-                                        raise ValueError("Telegram прислал повреждённый или неполный кружок")
-                                    temp_source.replace(source)
-                                finally:
-                                    temp_source.unlink(missing_ok=True)
-                            if not source.exists():
-                                raise ValueError("Не удалось скачать кружок")
-                            # Render to a temporary file, publish only after ffprobe validates it.
-                            temp_target = target.with_name(target.stem + ".rendering.mp4")
-                            try:
-                                await asyncio.to_thread(render, source, next_background(), temp_target)
-                                if duration(temp_target) <= 0:
-                                    raise ValueError("Готовый ролик не прошёл проверку FFprobe")
-                                temp_target.replace(target)
-                            finally:
-                                temp_target.unlink(missing_ok=True)
-                            d["processed"].append(key)
-                            save(d)
-                            JOB["done"] += 1
-                        except Exception as exc:
-                            target.unlink(missing_ok=True)
-                            JOB["errors"].append(f"{key}: {str(exc)[:250]}")
+                    pools[channel] = candidates[:limit]
                 except Exception as exc:
                     JOB["errors"].append(f"{channel}: {str(exc)[:250]}")
+            # Randomize channel order each round; cap remains per channel.
+            selected = []
+            while any(pools.values()):
+                round_channels = [name for name, items in pools.items() if items]
+                random.shuffle(round_channels)
+                for name in round_channels:
+                    selected.append((name, pools[name].pop(0)))
+            for channel, message in selected:
+                if STOP_REQUESTED:
+                    break
+                key = f"{channel}:{message.id}"
+                JOB["total"] += 1
+                source = ORIGINALS / f"{channel}_{message.id}.mp4"
+                target = settings.upload_dir / f"tg_{channel}_{message.id}.mp4"
+                try:
+                    # Never overwrite a previously rendered or queued reel.
+                    if target.exists() and target.stat().st_size > 0:
+                        d["processed"].append(key)
+                        save(d)
+                        continue
+                    # Re-download incomplete or unreadable originals rather than retrying a bad cache.
+                    if source.exists():
+                        try:
+                            if source.stat().st_size == 0 or duration(source) <= 0:
+                                raise ValueError("Empty or invalid media")
+                        except (OSError, ValueError, subprocess.CalledProcessError):
+                            source.unlink(missing_ok=True)
+                    if not source.exists():
+                        temp_source = source.with_suffix(".part.mp4")
+                        temp_source.unlink(missing_ok=True)
+                        try:
+                            await client.download_media(message, file=str(temp_source))
+                            if not temp_source.exists() or duration(temp_source) <= 0:
+                                raise ValueError("Telegram прислал повреждённый или неполный кружок")
+                            temp_source.replace(source)
+                        finally:
+                            temp_source.unlink(missing_ok=True)
+                    if not source.exists():
+                        raise ValueError("Не удалось скачать кружок")
+                    # Render to a temporary file, publish only after ffprobe validates it.
+                    temp_target = target.with_name(target.stem + ".rendering.mp4")
+                    try:
+                        await asyncio.to_thread(render, source, next_background(), temp_target)
+                        if duration(temp_target) <= 0:
+                            raise ValueError("Готовый ролик не прошёл проверку FFprobe")
+                        temp_target.replace(target)
+                    finally:
+                        temp_target.unlink(missing_ok=True)
+                    d["processed"].append(key)
+                    save(d)
+                    JOB["done"] += 1
+                except Exception as exc:
+                    target.unlink(missing_ok=True)
+                    JOB["errors"].append(f"{key}: {str(exc)[:250]}")
+
         JOB["status"] = "stopped" if STOP_REQUESTED else "done"
     except asyncio.CancelledError:
         JOB["status"] = "stopped"
