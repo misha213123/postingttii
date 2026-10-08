@@ -14,6 +14,7 @@ import uuid
 import os
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, UploadFile, File
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/api/telegram-studio/instagram", tags=["studio-instag
 ROOT = settings.data_dir / "instagram_studio"
 ROOT.mkdir(parents=True, exist_ok=True)
 CONFIG = ROOT / "sources.json"
+DOWNLOAD_LOG = ROOT / "download_history.jsonl"
 SESSION_FILE = ROOT / "instaloader.session"
 JOB = {"status": "idle", "done": 0, "total": 0, "errors": []}
 LOCK = asyncio.Lock()
@@ -51,6 +53,19 @@ def save(data):
     tmp = CONFIG.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(CONFIG)
+
+def reel_id(url: str) -> str:
+    """Identify a post regardless of /reel/ vs /p/ URL spelling."""
+    match = re.search(r"/(?:reel|p|tv)/([A-Za-z0-9_-]+)", urlparse(url).path)
+    return match.group(1) if match else url
+
+
+def record_download(account: str, url: str, result: str, **extra) -> None:
+    entry = {"at": datetime.now(timezone.utc).isoformat(),
+             "account": account, "url": url, "result": result, **extra}
+    with DOWNLOAD_LOG.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(entry, ensure_ascii=False) + "\\n")
+
 
 def normalize(url):
     url = url.strip()
@@ -352,6 +367,7 @@ async def process(limit):
         d = load()
         known = set(d["processed"])
         hashes = set(d["hashes"])
+        known_ids = {reel_id(link) for link in known}
         candidates = []
         for account in d["accounts"]:
             if account in d["disabled"]:
@@ -364,18 +380,24 @@ async def process(limit):
                 else:
                     raise RuntimeError("Сначала открой Instagram через Chrome и войди в аккаунт. Файл Instaloader не нужен.")
                 random.shuffle(links)
-                candidates.extend((account, link) for link in links if link not in known)
+                candidates.extend((account, link) for link in links
+                                  if reel_id(link) not in known_ids)
             except Exception as exc:
                 JOB["errors"].append(f"{account}: " + str(exc)[:500])
-        candidates.extend(("direct", link) for link in d["links"] if link not in known)
+        candidates.extend(("direct", link) for link in d["links"]
+                          if reel_id(link) not in known_ids)
         random.shuffle(candidates)
         counts = {}
         selected = []
+        selected_ids = set()
         for account, link in candidates:
+            if reel_id(link) in selected_ids:
+                continue
             if account != "direct" and counts.get(account, 0) >= limit:
                 continue
             counts[account] = counts.get(account, 0) + 1
             selected.append((account, link))
+            selected_ids.add(reel_id(link))
         JOB["total"] = len(selected)
         for account, link in selected:
             stem = "ig_" + hashlib.sha256(link.encode()).hexdigest()[:18]
@@ -385,6 +407,8 @@ async def process(limit):
             try:
                 if output.exists() and output.stat().st_size:
                     known.add(link)
+                    known_ids.add(reel_id(link))
+                    record_download(account, link, "already_in_queue", file=output.name)
                     continue
                 if not source.exists():
                     await asyncio.to_thread(cmd, ["yt-dlp", "--no-playlist",
@@ -395,6 +419,8 @@ async def process(limit):
                 digest = await asyncio.to_thread(lambda: hashlib.sha256(source.read_bytes()).hexdigest())
                 if digest in hashes:
                     known.add(link)
+                    known_ids.add(reel_id(link))
+                    record_download(account, link, "duplicate_content", sha256=digest)
                     continue
                 bgs = [BACKGROUNDS / b["name"] for b in backgrounds() if b["enabled"]]
                 bg = random.choice(bgs) if bgs and random.choice([True, False]) else None
@@ -404,9 +430,15 @@ async def process(limit):
                 temp.replace(output)
                 hashes.add(digest)
                 known.add(link)
+                known_ids.add(reel_id(link))
+                record_download(account, link, "downloaded", file=output.name, sha256=digest)
                 JOB["done"] += 1
             except Exception as exc:
                 JOB["errors"].append(f"{link}: {str(exc)[:600]}")
+                try:
+                    record_download(account, link, "error", message=str(exc)[:300])
+                except OSError:
+                    pass
             finally:
                 temp.unlink(missing_ok=True)
                 d["processed"] = sorted(known)
