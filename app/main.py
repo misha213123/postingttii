@@ -255,6 +255,35 @@ async def _publish_single_target(video: Path, caption: str, target: str, *, cycl
             MEDIA_TOKENS.pop(media_token, None)
 
 
+def _cleanup_published_batch_files(job: dict) -> None:
+    """Remove rendered clips only when every selected target has published them.
+
+    Publication history is persisted separately, so deleting the MP4 does not
+    erase duplicate detection. Never delete a file used by another active job.
+    """
+    for item in job["items"]:
+        if not all(
+            item["targets"][target]["status"] in {"done", "already"}
+            for target in job["targets"]
+        ):
+            continue
+        filename = item["filename"]
+        if any(
+            other is not job
+            and other.get("status") not in {"done", "cancelled", "error"}
+            and filename in (other.get("filenames") or [])
+            for other in BATCH_JOBS.values()
+        ):
+            continue
+        path = settings.upload_dir / filename
+        try:
+            if path.is_file() and path.parent.resolve() == settings.upload_dir.resolve():
+                path.unlink()
+                item["file_deleted"] = True
+        except OSError as exc:
+            item["cleanup_error"] = str(exc)
+
+
 async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
     """Preflight every account/video pair before publishing in parallel waves."""
     job = BATCH_JOBS[job_id]
@@ -423,6 +452,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
     job["status"] = "done"
     job["finished_at"] = int(time.time())
     event("finished", "Очередь завершена")
+    _cleanup_published_batch_files(job)
 
 
 @app.post("/api/batch/start")
@@ -481,6 +511,7 @@ async def batch_start(body: BatchPublishRequest):
         "total_videos": len(filenames),
         "interval_minutes": body.interval_minutes,
         "targets": targets,
+        "filenames": filenames,
         "cancel_requested": False,
         "error": "",
         "blocked_targets": {},
