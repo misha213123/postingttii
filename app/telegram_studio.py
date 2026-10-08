@@ -34,7 +34,7 @@ STOP_REQUESTED = False
 
 def config():
     if not CONFIG.exists():
-        return {"channels": [], "processed": [], "backgrounds_disabled": []}
+        return {"channels": [], "channels_disabled": [], "processed": [], "backgrounds_disabled": []}
     return json.loads(CONFIG.read_text(encoding="utf-8"))
 
 
@@ -116,7 +116,7 @@ class RenderRequest(BaseModel):
 @router.get("/status")
 def status():
     d = config()
-    return {"channels": d["channels"], "backgrounds": backgrounds(), "job": JOB,
+    return {"channels": d["channels"], "channels_disabled": d.get("channels_disabled", []), "backgrounds": backgrounds(), "job": JOB,
             "telegram_configured": bool(os.getenv("TG_API_ID") and os.getenv("TG_API_HASH")),
             "telegram_session_exists": SESSION.with_suffix(".session").exists(),
             "ffmpeg_ready": bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))}
@@ -130,6 +130,22 @@ def add_channel(body: ChannelInput):
         d["channels"].append(name)
         save(d)
     return {"channels": d["channels"]}
+
+
+@router.post("/channels/{channel}/toggle")
+def toggle_channel(channel: str, body: ToggleInput):
+    name = normalize(channel)
+    d = config()
+    if name not in d["channels"]:
+        raise HTTPException(404, "Канал не найден")
+    disabled = set(d.get("channels_disabled", []))
+    if body.enabled:
+        disabled.discard(name)
+    else:
+        disabled.add(name)
+    d["channels_disabled"] = sorted(disabled)
+    save(d)
+    return {"channels_disabled": d["channels_disabled"]}
 
 
 @router.delete("/channels/{channel}")
@@ -403,7 +419,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
                 raise ValueError("Сначала авторизуй Telegram")
             # Gather candidates from every channel before selecting any output.
             pools = {}
-            channels = list(d["channels"])
+            channels = [c for c in d["channels"] if c not in d.get("channels_disabled", [])]
             random.shuffle(channels)
             for channel in channels:
                 if STOP_REQUESTED:
