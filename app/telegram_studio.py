@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
+from datetime import date
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -78,6 +79,9 @@ class LoginFinish(BaseModel):
 
 class RenderRequest(BaseModel):
     limit_per_channel: int = 30
+    order: str = "oldest"
+    date_from: date | None = None
+    date_to: date | None = None
 
 
 @router.get("/status")
@@ -344,7 +348,7 @@ def render(source: Path, bg: Path, target: Path):
     subprocess.run(cmd, capture_output=True, text=True, check=True)
 
 
-async def process(limit):
+async def process(limit, order="oldest", date_from=None, date_to=None):
     JOB.update(status="running", total=0, done=0, errors=[])
     try:
         d = config()
@@ -369,14 +373,30 @@ async def process(limit):
                     break
                 try:
                     entity = await client.get_entity(channel)
-                    async for message in client.iter_messages(entity, limit=limit):
+                    # Scan history beyond the output limit; choose old, new, or random notes.
+                    # Telegram yields newest first. Bound scanning to avoid unlimited requests.
+                    candidates = []
+                    async for message in client.iter_messages(entity, limit=3000):
                         if STOP_REQUESTED:
                             break
+                        if date_from and message.date.date() < date_from:
+                            break
+                        if date_to and message.date.date() > date_to:
+                            continue
                         if not message.video_note:
                             continue
                         key = f"{channel}:{message.id}"
                         if key in d["processed"]:
                             continue
+                        candidates.append(message)
+                    if order == "oldest":
+                        candidates.reverse()
+                    elif order == "random":
+                        random.shuffle(candidates)
+                    for message in candidates[:limit]:
+                        if STOP_REQUESTED:
+                            break
+                        key = f"{channel}:{message.id}"
                         JOB["total"] += 1
                         source = ORIGINALS / f"{channel}_{message.id}.mp4"
                         target = settings.upload_dir / f"tg_{channel}_{message.id}.mp4"
@@ -439,10 +459,14 @@ async def run(body: RenderRequest):
         raise HTTPException(409, "Обработка уже запущена")
     if not 1 <= body.limit_per_channel <= 500:
         raise HTTPException(400, "Лимит 1–500")
+    if body.order not in ("oldest", "newest", "random"):
+        raise HTTPException(400, "Некорректный порядок")
+    if body.date_from and body.date_to and body.date_from > body.date_to:
+        raise HTTPException(400, "Начальная дата позже конечной")
     global JOB_TASK, STOP_REQUESTED
     await LOCK.acquire()
     STOP_REQUESTED = False
-    JOB_TASK = asyncio.create_task(process(body.limit_per_channel))
+    JOB_TASK = asyncio.create_task(process(body.limit_per_channel, body.order, body.date_from, body.date_to))
     return {"started": True}
 
 
