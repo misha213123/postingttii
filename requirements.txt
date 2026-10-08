@@ -8,3 +8,5 @@ python-multipart>=0.0.20,<1
 playwright>=1.55,<2
 telethon>=1.40,<2
 qrcode[pil]>=8,<9
+
+yt-dlp>=2025.9
