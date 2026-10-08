@@ -494,7 +494,7 @@ async def _instagram_access_token(slot: int) -> tuple[str, dict]:
     return account["access_token"], account
 
 
-async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
+async def instagram_upload(slot: int, video_url: str, caption: str, cover_url: str = "") -> dict:
     if not video_url:
         raise RuntimeError(
             "Для Instagram нужен PUBLIC_BASE_URL: локальный файл должен быть доступен Meta по HTTPS."
@@ -515,7 +515,7 @@ async def instagram_upload(slot: int, video_url: str, caption: str) -> dict:
         for attempt in range(1, max_attempts + 1):
             create = await client.post(
                 f"{base}/{user_id}/media",
-                data={
+                data={**({"cover_url": cover_url} if cover_url else {}),
                     "media_type": "REELS",
                     "video_url": video_url,
                     "caption": caption[:2200],
