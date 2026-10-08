@@ -338,7 +338,16 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 target_state["status"] = "publishing"
                 target_state["message"] = "Публикую"
                 try:
-                    result = await _publish_single_target(video, caption, target)
+                    # Respect a manually entered caption; otherwise generate a
+                    # different description for each account/video pair.
+                    target_caption = (
+                        caption if (body.captions.get(filename) or "").strip()
+                        else await asyncio.to_thread(
+                            generate_caption, video.name, body.hint, target
+                        )
+                    )
+                    target_state["caption"] = target_caption
+                    result = await _publish_single_target(video, target_caption, target)
                     if result.get("skipped"):
                         target_state["status"] = "already"
                         target_state["message"] = "Уже на аккаунте"
