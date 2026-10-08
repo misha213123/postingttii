@@ -12,6 +12,8 @@ import re
 import subprocess
 import uuid
 import os
+import shutil
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, UploadFile, File
@@ -91,6 +93,36 @@ def delete_link(shortcode: str):
     d["links"] = [url for url in d["links"] if urlparse(url).path.rstrip("/").split("/")[-1] != shortcode]
     save(d)
     return {"links": d["links"]}
+
+EDGE_PROFILE = ROOT / "edge_instagram_profile"
+
+def find_edge():
+    candidates = [shutil.which("msedge"), shutil.which("msedge.exe")]
+    if os.name == "nt":
+        for env, suffix in (("PROGRAMFILES(X86)", "Microsoft/Edge/Application/msedge.exe"),
+                            ("PROGRAMFILES", "Microsoft/Edge/Application/msedge.exe"),
+                            ("LOCALAPPDATA", "Microsoft/Edge/Application/msedge.exe")):
+            if os.environ.get(env):
+                candidates.append(str(Path(os.environ[env]) / suffix))
+    return next((p for p in candidates if p and Path(p).is_file()), None)
+
+@router.post("/edge/open")
+def open_edge_instagram():
+    if sys.platform != "win32":
+        raise HTTPException(400, "Вход через Edge доступен только в локальном приложении Windows")
+    executable = find_edge()
+    if not executable:
+        raise HTTPException(404, "Microsoft Edge не найден")
+    EDGE_PROFILE.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.Popen([executable, f"--user-data-dir={EDGE_PROFILE.resolve()}",
+                          "--profile-directory=Default", "--new-window",
+                          "https://www.instagram.com/"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True)
+    except OSError as exc:
+        raise HTTPException(500, f"Не удалось открыть Edge: {exc}") from exc
+    return {"opened": True, "message": "Открылся отдельный профиль Edge. Войди в Instagram в этом окне."}
 
 @router.post("/session")
 async def import_session(file: UploadFile = File(...)):
