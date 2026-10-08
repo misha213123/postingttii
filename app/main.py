@@ -111,6 +111,8 @@ class BatchPublishRequest(BaseModel):
     filenames: list[str]
     targets: list[str]
     interval_minutes: int = 20
+    interval_max_minutes: int | None = None
+    shuffle_videos: bool = True
     hint: str = ""
     captions: dict[str, str] = Field(default_factory=dict)
 
@@ -459,9 +461,11 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 and not job.get("cancel_requested")
             ):
                 job["status"] = "waiting"
-                job["next_video_at"] = int(
-                    time.time() + body.interval_minutes * 60
+                wait_seconds = secrets.SystemRandom().randint(
+                    body.interval_minutes * 60,
+                    (body.interval_max_minutes or body.interval_minutes) * 60,
                 )
+                job["next_video_at"] = int(time.time() + wait_seconds)
                 while time.time() < job["next_video_at"]:
                     if job.get("cancel_requested"):
                         job["status"] = "cancelled"
@@ -486,6 +490,8 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
 @app.post("/api/batch/start")
 async def batch_start(body: BatchPublishRequest):
     filenames = list(dict.fromkeys(Path(x).name for x in body.filenames))
+    if body.shuffle_videos:
+        secrets.SystemRandom().shuffle(filenames)
     targets = list(dict.fromkeys(body.targets))
 
     if not filenames:
@@ -498,8 +504,9 @@ async def batch_start(body: BatchPublishRequest):
             400,
             f"Интервал должен быть не меньше {minimum} минут",
         )
-    if body.interval_minutes > 24 * 60:
-        raise HTTPException(400, "Слишком большой интервал")
+    maximum = body.interval_max_minutes if body.interval_max_minutes is not None else body.interval_minutes
+    if maximum < body.interval_minutes or maximum > 24 * 60:
+        raise HTTPException(400, "Неверный диапазон паузы")
 
     for filename in filenames:
         _safe_video(filename)
@@ -533,6 +540,8 @@ async def batch_start(body: BatchPublishRequest):
         filenames=filenames,
         targets=targets,
         interval_minutes=body.interval_minutes,
+        interval_max_minutes=maximum,
+        shuffle_videos=body.shuffle_videos,
         hint=body.hint,
         captions={
             filename: (body.captions.get(filename) or "").strip()
@@ -550,6 +559,7 @@ async def batch_start(body: BatchPublishRequest):
         "completed_videos": 0,
         "total_videos": len(filenames),
         "interval_minutes": body.interval_minutes,
+        "interval_max_minutes": maximum,
         "targets": targets,
         "cancel_requested": False,
         "error": "",

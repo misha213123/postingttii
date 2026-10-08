@@ -136,7 +136,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
       <div class="target-list" id="batchTargets"></div>
 
       <div class="field">
-        <label for="intervalMinutes">Интервал между роликами</label>
+        <label for="intervalMinutes">Минимальная пауза</label>
         <select id="intervalMinutes">
           <option value="15">15 минут</option>
           <option value="20" selected>20 минут</option>
@@ -148,6 +148,8 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
         </select>
       </div>
 
+      <div class="field"><label for="intervalMaxMinutes">Максимальная пауза</label><select id="intervalMaxMinutes"><option value="20">20 минут</option><option value="30">30 минут</option><option value="35" selected>35 минут</option><option value="45">45 минут</option><option value="60">1 час</option><option value="90">1,5 часа</option><option value="120">2 часа</option></select></div>
+      <label class="muted" style="display:flex;gap:8px;align-items:center;margin:10px 0"><input type="checkbox" id="shuffleVideos" checked> Перемешивать видео перед запуском</label>
       <div class="ai-note">✨ Описание и хештеги OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
       <div class="note" id="cadenceNote"></div>
       <button class="primary start" id="startBatch" onclick="startBatch()">Запустить очередь</button>
@@ -281,10 +283,13 @@ function renderBatchTargets(){
 }
 
 function syncIntervalMin(){
-  const select=document.getElementById('intervalMinutes'),min=Math.max(1,Number(state.post_cooldown_minutes||15));
+  const select=document.getElementById('intervalMinutes'),maxSelect=document.getElementById('intervalMaxMinutes'),min=Math.max(1,Number(state.post_cooldown_minutes||15));
   for(const o of [...select.options])o.disabled=Number(o.value)<min;
   if(Number(select.value)<min){const first=[...select.options].find(o=>!o.disabled);if(first)select.value=first.value;}
-  document.getElementById('cadenceNote').textContent='Минимальная пауза проекта: '+min+' мин. Очередь сама ждёт паузу аккаунта.';
+  for(const o of [...maxSelect.options])o.disabled=Number(o.value)<Number(select.value);
+  if(Number(maxSelect.value)<Number(select.value)){const first=[...maxSelect.options].find(o=>!o.disabled);if(first)maxSelect.value=first.value;}
+  select.onchange=syncIntervalMin;
+  document.getElementById('cadenceNote').textContent='Пауза случайная, с точностью до секунд. Минимум проекта: '+min+' мин. Лимиты API продолжают действовать.';
 }
 
 async function startBatch(){
@@ -297,6 +302,8 @@ async function startBatch(){
       filenames:[...selectedVideos],
       targets,
       interval_minutes:Number(document.getElementById('intervalMinutes').value),
+      interval_max_minutes:Number(document.getElementById('intervalMaxMinutes').value),
+      shuffle_videos:document.getElementById('shuffleVideos').checked,
       hint:'',
       captions:{}
     })});
@@ -339,7 +346,7 @@ function targetText(t){
 function renderJob(job){
   document.getElementById('statTotal').textContent=job.total_videos||0;
   document.getElementById('statDone').textContent=job.completed_videos||0;
-  document.getElementById('statInterval').textContent=(job.interval_minutes||0)+' мин';
+  document.getElementById('statInterval').textContent=(job.interval_minutes||0)+'–'+(job.interval_max_minutes||job.interval_minutes||0)+' мин';
   let next='—';
   if(job.next_video_at)next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
   else if(job.status==='waiting_account')next='пауза аккаунта';
