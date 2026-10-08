@@ -239,9 +239,9 @@ def discover_edge(account):
         try:
             context = playwright.chromium.launch_persistent_context(
                 str(EDGE_PROFILE.resolve()), channel="msedge", headless=False,
-                args=["--profile-directory=Default"], timeout=20000)
+                args=["--disable-extensions"], timeout=60000)
         except Exception as exc:
-            raise RuntimeError("Закрой окно Instagram Edge, открытое из Studio, и повтори сканирование. " + str(exc)[:160]) from exc
+            raise RuntimeError("Не удалось открыть Edge для сканирования. Закрой все окна Edge с профилем PostingTTII и проверь, что Edge не остался в фоновых процессах. Подробности: " + str(exc)[:450]) from exc
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(f"https://www.instagram.com/{username}/reels/", wait_until="domcontentloaded", timeout=45000)
