@@ -323,12 +323,12 @@ def render(source: Path, bg: Path, target: Path):
     if seconds <= 0 or bg_seconds <= 0:
         raise ValueError("Некорректная длительность")
     offset = random.uniform(0, max(0, bg_seconds - seconds))
-    # Circular Telegram video messages are already square with a circular visible area.
+    # Enlarge circular videos to 980px within the 1080px-wide frame.
     # Overlay square with transparent corners, preserving the original audio.
-    filt = ("[0:v]scale=760:760:force_original_aspect_ratio=increase,"
-            "crop=760:760,format=rgba,"
+    filt = ("[0:v]scale=980:980:force_original_aspect_ratio=increase,"
+            "crop=980:980,format=rgba,"
             "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-            "a='if(lte((X-380)*(X-380)+(Y-380)*(Y-380),144400),255,0)'[circle];"
+            "a='if(lte((X-490)*(X-490)+(Y-490)*(Y-490),240100),255,0)'[circle];"
             "[1:v]scale=1080:1920:force_original_aspect_ratio=increase,"
             "crop=1080:1920,setsar=1[bg];"
             "[bg][circle]overlay=(W-w)/2:(H-h)/2:shortest=1,"
@@ -348,6 +348,16 @@ async def process(limit):
         bgs = [BACKGROUNDS / b["name"] for b in backgrounds() if b["enabled"]]
         if not bgs:
             raise ValueError("Добавь хотя бы один активный фон")
+        background_queue = []
+        previous_bg = None
+        def next_background():
+            nonlocal previous_bg
+            if not background_queue:
+                background_queue.extend(random.sample(bgs, len(bgs)))
+                if previous_bg is not None and len(background_queue) > 1 and background_queue[0] == previous_bg:
+                    background_queue[0], background_queue[1] = background_queue[1], background_queue[0]
+            previous_bg = background_queue.pop(0)
+            return previous_bg
         async with connected_telegram_client() as client:
             if not await client.is_user_authorized():
                 raise ValueError("Сначала авторизуй Telegram")
@@ -368,7 +378,7 @@ async def process(limit):
                                 await client.download_media(message, file=str(source))
                             if not source.exists():
                                 raise ValueError("Не удалось скачать кружок")
-                            await asyncio.to_thread(render, source, random.choice(bgs), target)
+                            await asyncio.to_thread(render, source, next_background(), target)
                             d["processed"].append(key)
                             save(d)
                             JOB["done"] += 1
