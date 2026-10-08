@@ -219,6 +219,97 @@ async def auth_finish(body: LoginFinish):
     return {"authorized": True}
 
 
+# QR sign-in is held in memory while the browser polls for completion.
+# Only the local application should expose these endpoints.
+QR_STATE = {"client": None, "task": None, "qr": None, "state": "idle", "error": ""}
+QR_LOCK = asyncio.Lock()
+
+
+async def qr_cleanup():
+    task = QR_STATE.get("task")
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    client = QR_STATE.get("client")
+    if client:
+        await client.disconnect()
+    QR_STATE.update(client=None, task=None, qr=None)
+
+
+async def qr_waiter(qr):
+    from telethon.errors import SessionPasswordNeededError
+    try:
+        await qr.wait(timeout=55)
+        QR_STATE["state"] = "authorized"
+    except SessionPasswordNeededError:
+        QR_STATE["state"] = "password_required"
+    except asyncio.TimeoutError:
+        QR_STATE["state"] = "expired"
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        QR_STATE["state"] = "error"
+        QR_STATE["error"] = str(exc)[:180]
+
+
+@router.post("/auth/qr/start")
+async def qr_start():
+    import base64
+    import io
+    import qrcode
+    async with QR_LOCK:
+        await qr_cleanup()
+        client = telegram_client()
+        try:
+            await client.connect()
+            if await client.is_user_authorized():
+                await client.disconnect()
+                QR_STATE["state"] = "authorized"
+                return {"state": "authorized"}
+            qr = await client.qr_login()
+            image = qrcode.make(qr.url)
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            QR_STATE.update(client=client, qr=qr, state="waiting", error="")
+            QR_STATE["task"] = asyncio.create_task(qr_waiter(qr))
+            return {"state": "waiting", "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}
+        except Exception:
+            await client.disconnect()
+            raise
+
+
+@router.get("/auth/qr/status")
+async def qr_status():
+    state = QR_STATE["state"]
+    if state == "authorized" and QR_STATE.get("client"):
+        async with QR_LOCK:
+            if QR_STATE.get("client"):
+                await qr_cleanup()
+    return {"state": state, "error": QR_STATE["error"]}
+
+
+class QRPassword(BaseModel):
+    password: str
+
+
+@router.post("/auth/qr/password")
+async def qr_password(body: QRPassword):
+    from telethon.errors import PasswordHashInvalidError
+    async with QR_LOCK:
+        if QR_STATE["state"] != "password_required" or not QR_STATE["client"]:
+            raise HTTPException(409, "Сначала отсканируй QR-код")
+        try:
+            await QR_STATE["client"].sign_in(password=body.password)
+        except PasswordHashInvalidError:
+            raise HTTPException(400, "Неверный пароль 2FA")
+        QR_STATE["state"] = "authorized"
+        await qr_cleanup()
+        return {"state": "authorized"}
+
+
 def duration(path):
     p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
