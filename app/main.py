@@ -661,8 +661,8 @@ async def publish(body: PublishRequest):
         try:
             platform, slot_text = target.split(":", 1)
             slot = int(slot_text)
-            if slot not in (1, 2):
-                raise RuntimeError("Разрешены только слоты 1 и 2")
+            if slot not in (1, 2, 3, 4, 5) or (slot > 2 and platform != "instagram"):
+                raise RuntimeError("Недопустимый слот аккаунта")
 
             if platform == "youtube":
                 result = await youtube_upload(slot, video, body.caption)
@@ -671,7 +671,14 @@ async def publish(body: PublishRequest):
                     raise RuntimeError("TikTok временно отключен")
                 result = await tiktok_upload(slot, video, body.caption)
             elif platform == "instagram":
-                result = await instagram_upload(slot, video_url, body.caption)
+                cover_path = COVER_DIR / f"{slot}.jpg"
+                if not cover_path.is_file():
+                    raise RuntimeError("Сначала выбери обложку для Instagram")
+                cover_token = secrets.token_urlsafe(24)
+                MEDIA_TOKENS[cover_token] = cover_path
+                cover_url = f"{settings.public_base_url}/media/{cover_token}"
+                result = await instagram_upload(slot, video_url, instagram_caption(body.caption, video.name), cover_url=cover_url)
+                asyncio.create_task(_expire_media_token(cover_token, 300))
             else:
                 raise RuntimeError(f"Неизвестная платформа: {platform}")
 
