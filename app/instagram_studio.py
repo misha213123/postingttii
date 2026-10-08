@@ -244,27 +244,39 @@ def discover_edge(account):
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(f"https://www.instagram.com/{username}/reels/", wait_until="domcontentloaded", timeout=45000)
-            # Instagram loads its grid asynchronously; allow time and scroll to load visible posts.
+            # Instagram may render a Reel grid before attaching its navigation links.
+            # Collect both anchors and DOM URLs, then retry while scrolling.
             links = []
-            for attempt in range(6):
-                page.wait_for_timeout(2500)
+            for attempt in range(8):
+                page.wait_for_timeout(2000)
                 current = page.url
                 if "/accounts/login" in current or "/challenge/" in current:
                     raise RuntimeError("Instagram требует вход или проверку. Открой Chrome PostingTTII и подтверди вход.")
-                links = page.evaluate("""() => {
-                    const values = new Set();
-                    for (const a of document.querySelectorAll('a[href]')) {
-                        values.add(a.href);
+                links = page.evaluate(r"""() => {
+                    const urls = new Set();
+                    const add = value => {
+                        if (!value) return;
+                        const text = String(value);
+                        const matches = text.match(/(?:https?:\\/\\/(?:www\\.)?instagram\\.com)?\\/(?:reel|reels|p|tv)\\/[A-Za-z0-9_-]+\\/?/g) || [];
+                        for (const match of matches) {
+                            try { urls.add(new URL(match, location.origin).href); } catch (_) {}
+                        }
+                    };
+                    for (const a of document.querySelectorAll('a[href]')) add(a.href);
+                    for (const el of document.querySelectorAll('[href], [role="link"], [data-href]')) {
+                        add(el.getAttribute('href'));
+                        add(el.getAttribute('data-href'));
                     }
-                    for (const el of document.querySelectorAll('[href], [role="link"]')) {
-                        const href = el.getAttribute('href');
-                        if (href) values.add(new URL(href, location.origin).href);
+                    // Instagram sometimes stores target paths in rendered attributes.
+                    for (const el of document.querySelectorAll('article a, main a, [role="main"] a')) {
+                        add(el.outerHTML);
                     }
-                    return Array.from(values).filter(x => /instagram\\.com\\/(reel|p|tv)\\//.test(x));
+                    return Array.from(urls);
                 }""")
                 if links:
                     break
-                page.mouse.wheel(0, 1100)
+                page.mouse.wheel(0, 1000)
+            # Keep a snapshot of the DOM links to make future failures actionable.
             cleaned = []
             for link in links:
                 try:
