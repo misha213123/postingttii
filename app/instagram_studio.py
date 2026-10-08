@@ -11,9 +11,10 @@ import random
 import re
 import subprocess
 import uuid
+import os
 from pathlib import Path
 from urllib.parse import urlparse
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from app.config import settings
 from app.telegram_studio import BACKGROUNDS, backgrounds, duration
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/api/telegram-studio/instagram", tags=["studio-instag
 ROOT = settings.data_dir / "instagram_studio"
 ROOT.mkdir(parents=True, exist_ok=True)
 CONFIG = ROOT / "sources.json"
+SESSION_FILE = ROOT / "instaloader.session"
 JOB = {"status": "idle", "done": 0, "total": 0, "errors": []}
 LOCK = asyncio.Lock()
 TASK = None
@@ -63,7 +65,7 @@ def normalize(url):
 @router.get("/status")
 def status():
     d = load()
-    return {"accounts": d["accounts"], "disabled": d["disabled"], "links": d["links"], "job": JOB, "processed_count": len(d["processed"])}
+    return {"accounts": d["accounts"], "disabled": d["disabled"], "links": d["links"], "session_connected": SESSION_FILE.exists(), "job": JOB, "processed_count": len(d["processed"])}
 
 def normalize_post(url):
     parsed = urlparse(url.strip())
@@ -89,6 +91,38 @@ def delete_link(shortcode: str):
     d["links"] = [url for url in d["links"] if urlparse(url).path.rstrip("/").split("/")[-1] != shortcode]
     save(d)
     return {"links": d["links"]}
+
+@router.post("/session")
+async def import_session(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".session"):
+        raise HTTPException(400, "Выбери файл Instaloader с расширением .session")
+    content = await file.read(1024 * 1024 + 1)
+    if not content or len(content) > 1024 * 1024:
+        raise HTTPException(400, "Файл сессии пустой или слишком большой")
+    try:
+        import tempfile
+        import instaloader
+        with tempfile.NamedTemporaryFile(delete=False, dir=ROOT) as tmp:
+            tmp.write(content)
+            temp_path = Path(tmp.name)
+        try:
+            loader = instaloader.Instaloader(quiet=True)
+            loader.load_session_from_file("session", str(temp_path))
+            if not loader.test_login():
+                raise ValueError("Instagram не подтвердил сессию")
+            temp_path.replace(SESSION_FILE)
+            if os.name != "nt":
+                SESSION_FILE.chmod(0o600)
+        finally:
+            temp_path.unlink(missing_ok=True)
+    except Exception as exc:
+        raise HTTPException(400, f"Не удалось подключить сессию: {str(exc)[:250]}") from exc
+    return {"connected": True}
+
+@router.delete("/session")
+def disconnect_session():
+    SESSION_FILE.unlink(missing_ok=True)
+    return {"connected": False}
 
 @router.post("/accounts")
 def add(body: Source):
@@ -168,6 +202,8 @@ def discover_instaloader(account):
     from itertools import islice
     username = urlparse(account).path.strip("/")
     loader = instaloader.Instaloader(quiet=True)
+    if SESSION_FILE.exists():
+        loader.load_session_from_file("session", str(SESSION_FILE))
     profile = instaloader.Profile.from_username(loader.context, username)
     posts = profile.get_posts()
     links = []
