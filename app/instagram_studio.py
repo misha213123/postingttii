@@ -64,7 +64,7 @@ def record_download(account: str, url: str, result: str, **extra) -> None:
     entry = {"at": datetime.now(timezone.utc).isoformat(),
              "account": account, "url": url, "result": result, **extra}
     with DOWNLOAD_LOG.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(entry, ensure_ascii=False) + "\\n")
+        stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def normalize(url):
