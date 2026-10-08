@@ -355,6 +355,20 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             if result.get("ok"):
                 state.update(status="done", message="Опубликовано", progress=100)
                 event("done", "Успешно опубликовано", filename, target)
+                # History has already been saved by _publish_single_target.
+                # Remove only the successful file; never delete on an error.
+                if not any(
+                    other is not job
+                    and other.get("status") not in {"done", "cancelled", "error"}
+                    and filename in (other.get("filenames") or [])
+                    for other in BATCH_JOBS.values()
+                ):
+                    try:
+                        video.unlink(missing_ok=True)
+                        item["file_deleted"] = True
+                        event("deleted", "Опубликованный файл удалён из очереди", filename, target)
+                    except OSError as exc:
+                        item["cleanup_error"] = str(exc)
                 return True
             raise RuntimeError(result.get("error", "Ошибка публикации"))
         except HTTPException as exc:
@@ -369,8 +383,9 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         event("error", state["message"], filename, target)
         return False
 
-    # Two rounds per cycle, one unique video per account in each round.
-    # The second round starts 60-120 seconds after the first round finishes.
+    # A video belongs to exactly one account in this batch, across ALL waves.
+    # Do not assign it to another account even if its first upload fails.
+    assigned_videos = set()
     job["status"] = "running"
     wave = 0
     while any(pending.values()):
@@ -394,12 +409,16 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             for target, queue in pending.items():
                 if not queue or (round_number == 2 and target not in first_success):
                     continue
+                # Discard videos assigned to a different account in a prior wave.
+                queue[:] = [(idx, name) for idx, name in queue
+                            if name not in assigned_videos]
                 choice = next((i for i, (_, filename) in enumerate(queue)
                                if filename not in reserved), None)
                 if choice is None:
                     continue
                 index, filename = queue.pop(choice)
                 reserved.add(filename)
+                assigned_videos.add(filename)
                 assignments.append((target, index, filename))
 
             if not assignments:
@@ -454,7 +473,8 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
     job["status"] = "done"
     job["finished_at"] = int(time.time())
     event("finished", "Очередь завершена")
-    _cleanup_published_batch_files(job)
+    # Successful clips were removed immediately after confirmed publication.
+    # Failed clips remain on disk for review or retry.
 
 
 @app.post("/api/batch/start")
