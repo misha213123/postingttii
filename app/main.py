@@ -199,6 +199,24 @@ async def caption(body: CaptionRequest):
     return {"caption": text}
 
 
+JAPANESE_REEL_ENDINGS = (
+    "今日のひとコマ 🌸\n#おすすめ #動画 #日常",
+    "楽しい瞬間をシェア ✨\n#おすすめ #リール #楽しい",
+    "また見たくなる瞬間 🎮\n#動画 #おすすめ #エンタメ",
+)
+
+
+def instagram_caption(caption: str, filename: str) -> str:
+    """Keep the existing caption and append a Japanese ending exactly once."""
+    import hashlib
+    caption = (caption or "").strip()
+    if any(ending in caption for ending in JAPANESE_REEL_ENDINGS):
+        return caption
+    index = int(hashlib.sha256(filename.encode("utf-8")).hexdigest()[:8], 16) % len(JAPANESE_REEL_ENDINGS)
+    ending = JAPANESE_REEL_ENDINGS[index]
+    return f"{caption}\n\n{ending}" if caption else ending
+
+
 async def _publish_single_target(video: Path, caption: str, target: str) -> dict:
     try:
         platform, slot_text = target.split(":", 1)
@@ -249,7 +267,7 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
         if platform == "youtube":
             result = await youtube_upload(slot, video, caption)
         elif platform == "instagram":
-            result = await instagram_upload(slot, video_url, caption)
+            result = await instagram_upload(slot, video_url, instagram_caption(caption, video.name))
         else:
             result = await tiktok_upload(slot, video, caption)
 
