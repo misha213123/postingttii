@@ -327,19 +327,20 @@ def render(source: Path, bg: Path, target: Path):
     offset = random.uniform(0, max(0, bg_seconds - seconds))
     # Enlarge circular videos to 980px within the 1080px-wide frame.
     # Overlay square with transparent corners, preserving the original audio.
-    filt = ("[0:v]scale=980:980:force_original_aspect_ratio=increase,"
+    filt = ("[0:v]scale=980:980:force_original_aspect_ratio=increase:flags=lanczos,"
             "crop=980:980,format=rgba,"
             "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
             "a='if(lte((X-490)*(X-490)+(Y-490)*(Y-490),240100),255,0)'[circle];"
-            "[1:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
             "crop=1080:1920,setsar=1[bg];"
             "[bg][circle]overlay=(W-w)/2:(H-h)/2:shortest=1,"
-            "format=yuv420p[v]")
+            "fps=30,format=yuv420p[v]")
     cmd = ["ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
            "-ss", str(offset), "-i", str(bg), "-filter_complex", filt,
            "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-           "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(target)]
+           "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+           "-profile:v", "high", "-level:v", "4.2", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(target)]
     subprocess.run(cmd, capture_output=True, text=True, check=True)
 
 
