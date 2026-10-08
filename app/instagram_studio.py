@@ -219,6 +219,33 @@ def cmd(args, timeout=300):
         raise RuntimeError(error[:600])
     return result
 
+def download_reel(link: str, source: Path) -> None:
+    """Try public download first, then the user's own signed-in Chrome profile."""
+    base = ["yt-dlp", "--no-playlist", "--max-filesize", "500M",
+            "-f", "bv*+ba/b", "--merge-output-format", "mp4",
+            "-o", str(source)]
+    try:
+        cmd(base + [link], 900)
+        return
+    except RuntimeError as first_error:
+        message = str(first_error).lower()
+        access_error = any(term in message for term in (
+            "empty media response", "isn't available to everyone",
+            "login required", "sign in", "cookies", "not available to everyone"))
+        if not access_error or not CHROME_PROFILE.is_dir():
+            raise
+        # The Playwright discovery browser is closed before downloading.
+        # yt-dlp reads cookies locally; no credentials are sent to our server.
+        try:
+            cmd(base + ["--cookies-from-browser",
+                        "chrome:" + str(CHROME_PROFILE.resolve()), link], 900)
+        except RuntimeError as retry_error:
+            raise RuntimeError(
+                f"Обычное скачивание: {str(first_error)[:230]}; "
+                f"повтор с Chrome: {str(retry_error)[:230]}"
+            ) from retry_error
+
+
 def render(source, target, background):
     seconds = duration(source)
     if seconds <= 0:
@@ -426,9 +453,7 @@ async def process(limit):
                     record_download(account, link, "already_in_queue", file=output.name)
                     continue
                 if not source.exists():
-                    await asyncio.to_thread(cmd, ["yt-dlp", "--no-playlist",
-                        "--max-filesize", "500M", "-f", "bv*+ba/b",
-                        "--merge-output-format", "mp4", "-o", str(source), link], 900)
+                    await asyncio.to_thread(download_reel, link, source)
                 if not source.exists() or duration(source) <= 0:
                     raise ValueError("Instagram не предоставил доступный MP4")
                 digest = await asyncio.to_thread(lambda: hashlib.sha256(source.read_bytes()).hexdigest())
