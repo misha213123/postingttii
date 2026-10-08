@@ -98,7 +98,18 @@ def remove(username: str):
     return {"accounts": d["accounts"]}
 
 def cmd(args, timeout=300):
-    return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=True)
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError as exc:
+        raise RuntimeError("Не найден yt-dlp или FFmpeg. Установи зависимости и перезапусти приложение.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Истекло время ожидания Instagram/FFmpeg") from exc
+    if result.returncode:
+        details = (result.stderr or result.stdout or "").strip()
+        lines = [line.strip() for line in details.splitlines() if line.strip()]
+        error = next((line for line in reversed(lines) if "ERROR:" in line), lines[-1] if lines else "Неизвестная ошибка")
+        raise RuntimeError(error[:600])
+    return result
 
 def render(source, target, background):
     seconds = duration(source)
@@ -160,7 +171,7 @@ async def process(limit):
                 random.shuffle(links)
                 candidates.extend((account, link) for link in links if link not in known)
             except Exception as exc:
-                JOB["errors"].append(f"{account}: {str(exc)[:230]}")
+                JOB["errors"].append(f"{account}: {str(exc)[:600]}")
         random.shuffle(candidates)
         counts = {}
         selected = []
@@ -199,7 +210,7 @@ async def process(limit):
                 known.add(link)
                 JOB["done"] += 1
             except Exception as exc:
-                JOB["errors"].append(f"{link}: {str(exc)[:220]}")
+                JOB["errors"].append(f"{link}: {str(exc)[:600]}")
             finally:
                 temp.unlink(missing_ok=True)
                 d["processed"] = sorted(known)
