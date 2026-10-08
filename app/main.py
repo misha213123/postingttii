@@ -373,7 +373,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         job["completed_videos"] = sum(
             x["status"] in {"done", "partial"} for x in job["items"]
         )
-        if any(pending.values()) and tasks:
+        if any(pending.values()) and any(results):
             job["status"] = "waiting"
             job["next_video_at"] = int(time.time() + body.interval_minutes * 60)
             event("waiting", "Пауза между волнами")
