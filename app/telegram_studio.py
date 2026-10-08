@@ -26,6 +26,8 @@ for p in (ROOT, BACKGROUNDS, ORIGINALS):
     p.mkdir(parents=True, exist_ok=True)
 LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
+JOB_TASK = None
+STOP_REQUESTED = False
 
 
 def config():
@@ -362,9 +364,13 @@ async def process(limit):
             if not await client.is_user_authorized():
                 raise ValueError("Сначала авторизуй Telegram")
             for channel in d["channels"]:
+                if STOP_REQUESTED:
+                    break
                 try:
                     entity = await client.get_entity(channel)
                     async for message in client.iter_messages(entity, limit=limit):
+                        if STOP_REQUESTED:
+                            break
                         if not message.video_note:
                             continue
                         key = f"{channel}:{message.id}"
@@ -387,7 +393,10 @@ async def process(limit):
                             JOB["errors"].append(f"{key}: {str(exc)[:250]}")
                 except Exception as exc:
                     JOB["errors"].append(f"{channel}: {str(exc)[:250]}")
-        JOB["status"] = "done"
+        JOB["status"] = "stopped" if STOP_REQUESTED else "done"
+    except asyncio.CancelledError:
+        JOB["status"] = "stopped"
+        raise
     except Exception as exc:
         JOB["status"] = "error"
         JOB["errors"].append(str(exc)[:300])
@@ -401,6 +410,17 @@ async def run(body: RenderRequest):
         raise HTTPException(409, "Обработка уже запущена")
     if not 1 <= body.limit_per_channel <= 500:
         raise HTTPException(400, "Лимит 1–500")
+    global JOB_TASK, STOP_REQUESTED
     await LOCK.acquire()
-    asyncio.create_task(process(body.limit_per_channel))
+    STOP_REQUESTED = False
+    JOB_TASK = asyncio.create_task(process(body.limit_per_channel))
     return {"started": True}
+
+
+async def shutdown_telegram_studio():
+    global STOP_REQUESTED
+    STOP_REQUESTED = True
+    if JOB_TASK is not None and not JOB_TASK.done():
+        await JOB_TASK
+    async with QR_LOCK:
+        await qr_cleanup()
