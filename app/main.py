@@ -215,13 +215,13 @@ def instagram_caption(caption: str, filename: str, slot: int = 1) -> str:
     import hashlib
     import re
 
-    intro, hashtags = JAPANESE_ACCOUNT_STYLES[(slot - 1) % len(JAPANESE_ACCOUNT_STYLES)]
+    intro, _ = JAPANESE_ACCOUNT_STYLES[(slot - 1) % len(JAPANESE_ACCOUNT_STYLES)]
     raw = (caption or "").strip()
     # Legacy Russian/English captions must not leak into Japanese-only Reels.
     if re.search(r"[\\u0400-\\u04ff]", raw) or re.search(r"[A-Za-z]{3,}", raw):
         raw = ""
     # Remove previous hashtag blocks; keep account-specific Japanese tags.
-    body = re.sub(r"(?m)^\\s*#.*$", "", raw).strip()
+    body = re.sub(r"#[^\\s#]+", "", raw).strip()
     if not body:
         variants = (
             "気になるシーンをまとめました。ぜひ最後まで見てね！",
@@ -231,7 +231,7 @@ def instagram_caption(caption: str, filename: str, slot: int = 1) -> str:
         )
         digest = hashlib.sha256((filename + str(slot)).encode("utf-8")).digest()
         body = variants[int.from_bytes(digest[:2], "big") % len(variants)]
-    return f"{intro}\\n{body}\\n\\n{hashtags}"
+    return f"{intro}\\n{body}"
 
 
 async def _publish_single_target(video: Path, caption: str, target: str) -> dict:
@@ -426,6 +426,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                         target_state["message"] = "Опубликовано"
                         published_now = True
                         round_published = True
+                        round_published = True
                     else:
                         target_state["status"] = "error"
                         target_state["message"] = result.get("error", "Ошибка")
@@ -472,8 +473,10 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             # Wait between clips only when this clip actually produced at
             # least one new publication. Already-uploaded/blocked/failed clips
             # move to the next item immediately.
+            instagram_count = len([t for t in body.targets if t.startswith("instagram:")])
             if (
-                published_now
+                round_published
+                and (index + 1) % (instagram_count or 1) == 0
                 and index < len(body.filenames) - 1
                 and not job.get("cancel_requested")
             ):
@@ -547,10 +550,10 @@ async def batch_start(body: BatchPublishRequest):
     claims = []
     for filename in filenames:
         circle_id = _circle_id(filename)
-        if circle_id and instagram_targets:
+        if instagram_targets:
             owner = _circle_owner(circle_id)
             if owner is None:
-                owner = instagram_targets[len(claims) % len(instagram_targets)]
+                owner = instagram_targets[len(assignments) % len(instagram_targets)]
                 IG_CIRCLE_CLAIMS[circle_id] = owner
                 claims.append(circle_id)
             assignments[filename] = owner
