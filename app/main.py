@@ -396,23 +396,11 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     target, settings.post_cooldown_minutes * 60
                 )
                 if remaining > 0:
-                    target_state["status"] = "waiting"
-                    target_state["message"] = "Жду паузу аккаунта"
+                    # Keep account-specific cooldown without blocking other accounts.
+                    target_state["status"] = "cooldown"
+                    target_state["message"] = "Аккаунт на паузе — пропускаю"
                     target_state["retry_after_seconds"] = remaining
-                    job["status"] = "waiting_account"
-                    wait_until = time.time() + remaining
-                    while time.time() < wait_until:
-                        if job.get("cancel_requested"):
-                            job["status"] = "cancelled"
-                            return
-                        target_state["retry_after_seconds"] = max(
-                            0, int(wait_until - time.time())
-                        )
-                        await asyncio.sleep(
-                            min(5, max(0.2, wait_until - time.time()))
-                        )
-                    target_state["retry_after_seconds"] = 0
-                    job["status"] = "running"
+                    continue
 
                 target_state["status"] = "publishing"
                 target_state["message"] = "Публикую"
@@ -548,15 +536,20 @@ async def batch_start(body: BatchPublishRequest):
     instagram_targets = [t for t in targets if t.startswith("instagram:")]
     assignments = {}
     claims = []
+    planned_counts = {target: 0 for target in instagram_targets}
     for filename in filenames:
+        if not instagram_targets:
+            break
         circle_id = _circle_id(filename)
-        if instagram_targets:
-            owner = _circle_owner(circle_id)
-            if owner is None:
-                owner = instagram_targets[len(assignments) % len(instagram_targets)]
+        owner = _circle_owner(circle_id) if circle_id else None
+        if owner is None:
+            owner = min(instagram_targets, key=lambda target: planned_counts[target])
+            if circle_id:
                 IG_CIRCLE_CLAIMS[circle_id] = owner
                 claims.append(circle_id)
-            assignments[filename] = owner
+        assignments[filename] = owner
+        if owner in planned_counts:
+            planned_counts[owner] += 1
     normalized = BatchPublishRequest(
         filenames=filenames,
         targets=targets,
