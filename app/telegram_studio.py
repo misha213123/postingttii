@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import random
@@ -35,6 +36,34 @@ def config():
     if not CONFIG.exists():
         return {"channels": [], "processed": [], "backgrounds_disabled": []}
     return json.loads(CONFIG.read_text(encoding="utf-8"))
+
+
+def file_digest(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def rendered_hashes(data):
+    # Rebuild from cached Telegram originals that have actually been rendered.
+    # Includes older runs from before hash tracking was introduced.
+    hashes = set(data.get("rendered_hashes", []))
+    processed = set(data.get("processed", []))
+    for source in ORIGINALS.glob("*.mp4"):
+        stem = source.stem
+        if "_" not in stem:
+            continue
+        channel, message_id = stem.rsplit("_", 1)
+        key = f"{channel}:{message_id}"
+        target = settings.upload_dir / f"tg_{channel}_{message_id}.mp4"
+        if key in processed or (target.is_file() and target.stat().st_size > 0):
+            try:
+                hashes.add(file_digest(source))
+            except OSError:
+                pass
+    return hashes
 
 
 def save(data):
@@ -352,6 +381,10 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
     JOB.update(status="running", total=0, done=0, errors=[])
     try:
         d = config()
+        d.setdefault("processed", [])
+        known_hashes = rendered_hashes(d)
+        d["rendered_hashes"] = sorted(known_hashes)
+        save(d)
         bgs = [BACKGROUNDS / b["name"] for b in backgrounds() if b["enabled"]]
         if not bgs:
             raise ValueError("Добавь хотя бы один активный фон")
@@ -388,8 +421,13 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
                         if not message.video_note:
                             continue
                         key = f"{channel}:{message.id}"
-                        if key not in d["processed"]:
-                            candidates.append(message)
+                        target = settings.upload_dir / f"tg_{channel}_{message.id}.mp4"
+                        if key in d["processed"]:
+                            continue
+                        if target.is_file() and target.stat().st_size > 0:
+                            d["processed"].append(key)
+                            continue
+                        candidates.append(message)
                     if order == "oldest":
                         candidates.reverse()
                     elif order == "random":
@@ -436,6 +474,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
                             temp_source.unlink(missing_ok=True)
                     if not source.exists():
                         raise ValueError("Не удалось скачать кружок")
+                    digest = file_digest(source)
+                    if digest in known_hashes:
+                        # Same original media may have been forwarded to another channel.
+                        d["processed"].append(key)
+                        save(d)
+                        continue
                     # Render to a temporary file, publish only after ffprobe validates it.
                     temp_target = target.with_name(target.stem + ".rendering.mp4")
                     try:
@@ -445,6 +489,8 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
                         temp_target.replace(target)
                     finally:
                         temp_target.unlink(missing_ok=True)
+                    known_hashes.add(digest)
+                    d["rendered_hashes"] = sorted(known_hashes)
                     d["processed"].append(key)
                     save(d)
                     JOB["done"] += 1
