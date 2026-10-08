@@ -1,85 +1,97 @@
-"""Japanese/Chinese entertainment-style captions for Instagram Reels."""
-
+"""Diverse Japanese and Chinese entertainment captions for Instagram Reels."""
 from __future__ import annotations
-
 import hashlib
 import re
-
 from openai import OpenAI
-
 from app.config import settings
 
-
 SHORT_JA = (
-    "世界中の思いがけない瞬間をお届け！",
-    "日常に隠れた不思議な出来事を紹介中！",
-    "思わず見返したくなる珍しい瞬間を公開！",
-    "予想外の展開と楽しい場面をお届け！",
+    "突然の出来事に注目！",
+    "思いがけない瞬間を公開！",
+    "世界中の面白い場面を紹介！",
+    "予想外の展開が話題に！",
+    "日常に隠された驚きの瞬間！",
+    "何度も見返したくなる映像！",
+    "思わず笑ってしまう出来事！",
+    "不思議な瞬間をお届け！",
+    "珍しい場面を集めました！",
+    "最後まで目が離せない展開！",
+    "ありふれた日常に小さな驚き！",
+    "想像を超える瞬間がここに！",
+    "ちょっと変わった出来事を紹介！",
+    "思わぬ反応が生まれた瞬間！",
+    "今日の印象的なワンシーン！",
+    "偶然生まれた面白い瞬間！",
+    "見逃せない日常の一場面！",
+    "予想もしなかった結末に注目！",
+    "世界のユニークな瞬間を発見！",
+    "何気ない時間が特別な瞬間に！",
 )
-
 LONG_JA = (
-    "日常の中で起こる思いがけない出来事に注目！何気ない瞬間から生まれる驚きや笑い、予想外の展開を紹介します。さまざまな場面に隠された面白さをお楽しみください！",
-    "世界中で見つかった印象的な瞬間を紹介！思わず二度見してしまう出来事や、意外な反応が生まれる場面を集めました。最後まで目が離せない展開をお楽しみください！",
+    "何気ない日常の中で起こった不思議な出来事が話題に！予想もしなかった展開や思わず笑ってしまう瞬間を紹介します。最後まで目が離せない場面をお楽しみください！",
+    "世界中から集まった印象的な瞬間を紹介！いつもの風景が突然変わる場面や、意外な反応が生まれる出来事に注目。思わず何度も見返したくなる映像をお届けします！",
+    "普段は見過ごしてしまう小さな出来事にも、驚きや面白さが隠れています。予想外の展開とユニークな瞬間を集めました。新しい発見をお楽しみください！",
+    "ありふれた一日が忘れられない瞬間に変わることがあります。思いがけない出来事と印象的な反応を紹介。最後の展開にもぜひ注目してください！",
+    "身近な場所で起こる予想外の出来事を紹介します。ちょっとした偶然が生み出す驚きの場面や、思わず笑顔になる瞬間をお楽しみください！",
+    "今日も世界のどこかで不思議な瞬間が生まれています。いつもと違う出来事や印象に残る場面を集めました。あなたのお気に入りの瞬間を見つけてください！",
+    "予想できない展開こそ、日常の面白さかもしれません。何気ない場面に隠された驚きと、忘れられない瞬間を紹介します。ぜひ最後までご覧ください！",
+    "世界のさまざまな場所で撮影されたユニークな瞬間に注目！驚きの反応や思わぬ展開など、印象に残る場面をお届けします。次の瞬間に何が起こるでしょうか？",
+    "日常の小さな発見から、想像を超える出来事まで。何度も見たくなる場面や、思わず誰かに伝えたくなる瞬間を紹介しています。",
+    "ちょっとした出来事が思い出に残る瞬間へ。予想外の展開とユニークな反応が重なった印象的な場面をお楽しみください！",
 )
-
 LONG_ZH = (
-    "生活中总有令人意想不到的精彩瞬间！看似平凡的场景里，往往藏着有趣的变化和出人意料的反应。一起发现这些值得回味的画面！",
-    "来自日常生活的奇妙片段再次引起关注！意料之外的发展和真实有趣的反应，让普通的瞬间变得格外难忘。更多精彩画面持续分享中！",
+    "生活中总会出现意想不到的精彩瞬间！看似平常的画面里隐藏着有趣的变化，令人惊讶的反应让这一刻变得格外难忘。更多有趣的片段持续分享中！",
+    "令人意外的场景再次引起关注！原本普通的一天因为突如其来的变化而充满惊喜，独特的反应和有趣的细节让人忍不住反复观看。",
+    "世界各地总有让人眼前一亮的奇妙瞬间。平凡的生活里也藏着惊喜，意想不到的发展和自然的反应，让这些画面留下深刻印象。",
+    "精彩的瞬间往往发生在不经意之间！看似简单的场景突然出现新的变化，令人难忘的画面和独特的反应值得细细回味。",
+    "平凡的日常也可以充满趣味！从意外的转折到令人会心一笑的瞬间，每个画面都可能带来新的发现。一起看看这些特别的片段！",
+    "谁也无法提前猜到下一秒会发生什么。生活中的小小意外与独特反应交织在一起，形成了让人印象深刻的有趣瞬间。",
+    "令人惊喜的画面总是来得突然！一个普通场景也可能因为意想不到的变化而变得特别，精彩的细节值得再次回味。",
+    "那些让人忍不住多看几遍的瞬间，往往来自最平常的生活。独特的场景与出乎意料的变化，为每一天增添新的趣味。",
+    "世界上有许多值得记录的奇妙时刻。从轻松有趣的反应到令人意外的发展，这些画面让人发现生活中不同寻常的一面。",
+    "一个瞬间也能带来许多惊喜！日常中的特别画面与有趣变化，让普通的故事呈现出不一样的魅力。",
 )
+CAPTION_BANK = SHORT_JA + LONG_JA + LONG_ZH
 
+def _clean_caption(value: str) -> str:
+    value = re.sub(r"#[^\s#]+", "", value)
+    value = re.sub(r"[A-Za-zＡ-Ｚａ-ｚ]+", "", value)
+    value = re.sub(r"[\U00010000-\U0010ffff\u2600-\u27bf]", "", value)
+    value = re.sub(r"[ \t]+", " ", value)
+    return re.sub(r"\n{3,}", "\n\n", value).strip(" \n\t#")
 
-def _fallback(filename: str) -> str:
-    """Stable variation for each video, even without a useful filename."""
-    digest = hashlib.sha256(filename.encode("utf-8")).digest()
-    options = SHORT_JA + LONG_JA + LONG_ZH
-    return options[int.from_bytes(digest[:4], "big") % len(options)]
+def _choice(filename: str, target: str = "", salt: str = "") -> int:
+    seed = (filename + "\0" + target + "\0" + salt).encode("utf-8")
+    return int.from_bytes(hashlib.sha256(seed).digest()[:8], "big")
 
-
-def _clean_caption(text: str) -> str:
-    # Captions must not contain hashtags, emoji or Latin letters.
-    text = re.sub(r"#[^\s#]+", "", text)
-    text = re.sub(r"[A-Za-zＡ-Ｚａ-ｚ]+", "", text)
-    text = re.sub(r"[\U00010000-\U0010ffff\u2600-\u27bf]", "", text)
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip(" \n\t#")
-
-
-def generate_caption(filename: str, hint: str = "") -> str:
-    """Produce an Asian-language caption; never add tags or unrelated brands."""
+def generate_caption(filename: str, hint: str = "", target: str = "") -> str:
+    """Different target/video pairs get stable, varied captions without tags."""
+    index = _choice(filename, target) % len(CAPTION_BANK)
+    fallback = CAPTION_BANK[index]
     if not settings.openai_api_key:
-        return _fallback(filename)
-
-    digest = hashlib.sha256(filename.encode("utf-8")).digest()
-    style = ("short_ja", "long_ja", "long_zh")[digest[0] % 3]
-    instructions = {
-        "short_ja": "Одна короткая фраза на японском (15–40 символов).",
-        "long_ja": "2–3 предложения на японском, около 90–150 символов.",
-        "long_zh": "2–3 предложения на упрощённом китайском, около 80–130 иероглифов.",
+        return fallback
+    style = ("short_ja", "long_ja", "long_zh")[_choice(filename, target, "style") % 3]
+    style_prompt = {
+        "short_ja": "Одна короткая подпись на японском, до 40 символов.",
+        "long_ja": "Три предложения на японском, в стиле развлекательной заметки.",
+        "long_zh": "Три предложения на упрощённом китайском, в стиле развлекательной заметки.",
     }[style]
-
-    prompt = f"""Напиши подпись к развлекательному короткому видео.
-Контекст пользователя: {hint or "не предоставлен"}.
-Имя файла (только слабая подсказка, не достоверный факт): {filename}.
-
-Стиль: как нейтральные японские или китайские развлекательные заметки.
-{instructions}
-Не заявляй, что видео связано с аниме, фильмом, брендом или знаменитостью,
-если этого нет в контексте. Не выдумывай факты о содержании видео.
-Если контекста недостаточно, используй универсальный текст про неожиданные моменты.
-Никаких хештегов, эмодзи, латинских букв, английских слов, заголовков и пояснений.
-Верни только готовую подпись."""
-
+    prompt = f"""Напиши подпись для короткого развлекательного ролика.
+Стиль как у японских и китайских развлекательных страниц: выразительно,
+но без утверждений о конкретных событиях, которых ты не видел.
+{style_prompt}
+Подсказка пользователя: {hint or 'нет'}.
+Имя файла (не подтверждение содержания): {filename}.
+Сохрани стиль и структуру, но придумай собственный текст.
+Не упоминай чужие бренды, персонажей, новости и факты без контекста.
+Без хештегов, эмодзи, латинских букв и английских слов.
+Верни только подпись."""
     try:
-        client = OpenAI(api_key=settings.openai_api_key)
-        response = client.responses.create(
-            model=settings.openai_model,
-            input=prompt,
-            reasoning={"effort": "minimal"},
-            max_output_tokens=450,
-            store=False,
+        response = OpenAI(api_key=settings.openai_api_key).responses.create(
+            model=settings.openai_model, input=prompt,
+            reasoning={"effort": "minimal"}, max_output_tokens=450, store=False,
         )
-        cleaned = _clean_caption(response.output_text or "")
-        return cleaned if len(cleaned) >= 12 else _fallback(filename)
+        result = _clean_caption(response.output_text or "")
+        return result if len(result) >= 12 else fallback
     except Exception:
-        return _fallback(filename)
+        return fallback
