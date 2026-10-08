@@ -42,7 +42,7 @@ def save(data):
 
 def normalize(value):
     value = value.strip().rstrip("/")
-    value = re.sub(r"^https?://(?:www\\.)?(?:t\\.me|telegram\\.me)/", "", value, flags=re.I)
+    value = re.sub(r"^https?://(?:www[.])?(?:t[.]me|telegram[.]me)/", "", value, flags=re.I)
     value = value.lstrip("@")
     value = value.split("/")[0]
     if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", value):
