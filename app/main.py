@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -27,6 +27,7 @@ from app.services.platforms import (
     youtube_exchange,
     youtube_upload,
 )
+from app.telegram_studio import router as telegram_studio_router, shutdown_telegram_studio
 from app.store import store
 from app.account_creator.api.accounts import router as account_manager_router
 from app.account_creator.api.aliases import router as account_aliases_router
@@ -44,6 +45,15 @@ app.include_router(account_profile_router)
 app.include_router(account_browser_router)
 app.include_router(account_tiktok_router)
 app.include_router(account_instagram_router)
+app.include_router(telegram_studio_router)
+
+@app.on_event("shutdown")
+async def stop_telegram_studio():
+    await shutdown_telegram_studio()
+
+@app.get("/telegram-studio", response_class=HTMLResponse)
+async def telegram_studio_page():
+    return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
@@ -216,7 +226,13 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
         if platform == "youtube":
             result = await youtube_upload(slot, video, caption)
         elif platform == "instagram":
-            result = await instagram_upload(slot, video_url, caption)
+            cover_path = COVER_DIR / f"{slot}.jpg"
+            if not cover_path.is_file():
+                raise HTTPException(400, f"Instagram #{slot}: сначала сохрани обложку на /instagram-covers")
+            cover_token = secrets.token_urlsafe(24)
+            MEDIA_TOKENS[cover_token] = cover_path
+            cover_url = f"{settings.public_base_url}/media/{cover_token}" if settings.public_base_url else ""
+            result = await instagram_upload(slot, video_url, caption, cover_url=cover_url)
         else:
             result = await tiktok_upload(slot, video, caption)
 
@@ -232,6 +248,8 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
             # Do not cut Meta off immediately: keep the source URL alive for
             # another five minutes after success/error.
             asyncio.create_task(_expire_media_token(media_token, 300))
+            if 'cover_token' in locals():
+                asyncio.create_task(_expire_media_token(cover_token, 300))
         else:
             MEDIA_TOKENS.pop(media_token, None)
 
@@ -559,6 +577,61 @@ async def publish(body: PublishRequest):
         "all_done": all_done,
         "results": results,
     }
+
+
+COVER_DIR = settings.data_dir / "instagram_covers"
+COVER_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.get("/api/instagram/covers")
+async def list_instagram_covers():
+    return {"covers": {str(slot): (COVER_DIR / f"{slot}.jpg").exists() for slot in range(1, 6)}}
+
+
+@app.post("/api/instagram/covers/{slot}")
+async def upload_instagram_cover(slot: int, file: UploadFile = File(...)):
+    if slot not in range(1, 6):
+        raise HTTPException(400, "Номер аккаунта должен быть от 1 до 5")
+    data = await file.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(413, "Обложка больше 8 МБ")
+    from io import BytesIO
+    from PIL import Image, UnidentifiedImageError
+    try:
+        image = Image.open(BytesIO(data))
+        image.verify()
+        image = Image.open(BytesIO(data)).convert("RGB")
+        if image.width < 320 or image.height < 320:
+            raise ValueError("Слишком маленькая обложка")
+    except (UnidentifiedImageError, ValueError, OSError) as exc:
+        raise HTTPException(400, f"Неверный JPG/PNG: {exc}") from exc
+    image.save(COVER_DIR / f"{slot}.jpg", "JPEG", quality=92)
+    return {"slot": slot, "saved": True}
+
+
+@app.get("/instagram-covers")
+async def instagram_covers_page():
+    return HTMLResponse("""<!doctype html><html lang="ru"><meta charset="utf-8">
+<title>Instagram — обложки</title><style>
+body{font:16px system-ui;background:#11131a;color:white;max-width:760px;margin:40px auto;padding:20px}
+section{background:#202431;border-radius:14px;padding:18px;margin:14px 0}
+button{padding:10px 18px;border:0;border-radius:8px;background:#7d63f7;color:white;cursor:pointer}
+input{margin:12px 0}img{max-height:180px;display:block;margin-top:10px}
+</style><h1>Обложки Instagram Reels</h1>
+<p>Назначь свою JPG/PNG-обложку каждому слоту. Видео без обложки не публикуется.</p>
+<div id="items"></div><script>
+const names=['Аккаунт 1','Аккаунт 2','Аккаунт 3','Аккаунт 4','Аккаунт 5'];
+const root=document.getElementById('items');
+for(let i=1;i<=5;i++){let el=document.createElement('section');
+el.innerHTML='<h3>Instagram #'+i+' — '+names[i-1]+'</h3><input type="file" accept="image/png,image/jpeg"><button>Сохранить</button><span></span>';
+let inp=el.querySelector('input'),btn=el.querySelector('button'),out=el.querySelector('span');
+btn.onclick=async()=>{if(!inp.files.length)return;let form=new FormData();form.append('file',inp.files[0]);
+let r=await fetch('/api/instagram/covers/'+i,{method:'POST',body:form});
+out.textContent=r.ok?' ✓ Сохранено':' Ошибка: '+await r.text();};root.append(el);}
+fetch('/api/instagram/covers').then(r=>r.json()).then(d=>{[...root.children].forEach((el,i)=>{
+if(d.covers[String(i+1)])el.querySelector('span').textContent=' ✓ Обложка сохранена';});});
+</script></html>""")
+
 
 
 @app.get("/media/{token}")
