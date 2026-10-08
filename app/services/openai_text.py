@@ -3,10 +3,7 @@ from openai import OpenAI
 from app.config import settings
 
 
-BASE_HASHTAGS = (
-    "#стример #стрим #стримеры #нарезки #twitch #twitchclips "
-    "#streamer #gaming #gamingclips #reels #shorts #viral"
-)
+BASE_HASHTAGS = "#おすすめ #リール #動画 #エンタメ #ゲーム #配信 #切り抜き"
 
 
 def generate_caption(filename: str, hint: str = "") -> str:
@@ -16,23 +13,21 @@ def generate_caption(filename: str, hint: str = "") -> str:
     client = OpenAI(api_key=settings.openai_api_key)
 
     prompt = f"""
-Напиши короткое описание для стримерской нарезки.
+日本語のみで、配信・ゲーム動画のInstagram Reels向けキャプションを書いてください。
 Файл: {filename}
 Контекст: {hint or "не указан"}
 
 Формат:
-- 1-2 коротких предложения на русском;
-- живой стиль для TikTok / Reels / Shorts;
-- можно 1 уместный эмодзи;
-- не выдумывай имена, события, цитаты или факты;
-- затем отдельной строкой хештеги.
+- 日本語で自然な2〜3文。動画の内容に合う場合だけ具体的に書くこと。
+- Instagram Reelsに合う自然で読みやすい文体。
+- 絵文字は必要なら1〜2個まで。
+- ファイル名とコンテキストにない人物名、出来事、セリフや事実を創作しない。
+- 本文の後に改行し、日本語のハッシュタグを付ける。
 
-Эти хештеги ВСЕГДА оставляй без изменений:
+必ず以下の基本ハッシュタグを含める：
 {BASE_HASHTAGS}
 
-После них добавь еще 3-5 хештегов только по теме ролика, если контекст позволяет.
-Не заменяй базовые хештеги и не переставляй их.
-Без заголовков, пояснений и кавычек.
+内容が分かる場合だけ関連する日本語ハッシュタグを2〜4個追加する。日本語以外の文章やキリル文字、英語のハッシュタグは禁止。見出しや引用符は不要。
 """.strip()
 
     response = client.responses.create(

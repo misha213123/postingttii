@@ -201,22 +201,37 @@ async def caption(body: CaptionRequest):
     return {"caption": text}
 
 
-JAPANESE_REEL_ENDINGS = (
-    "今日のひとコマ 🌸\n#おすすめ #動画 #日常",
-    "楽しい瞬間をシェア ✨\n#おすすめ #リール #楽しい",
-    "また見たくなる瞬間 🎮\n#動画 #おすすめ #エンタメ",
+JAPANESE_ACCOUNT_STYLES = (
+    ("今日の注目シーンをチェック！🎬", "#おすすめ #リール #切り抜き #配信 #話題"),
+    ("思わずもう一度見たくなる瞬間 ✨", "#動画 #おすすめ #面白い #ハイライト #リール"),
+    ("このシーン、どう思う？ 👀", "#おすすめ #リアクション #エンタメ #動画 #注目"),
+    ("印象に残るワンシーンをお届け 🎧", "#リール #動画 #クリップ #瞬間 #おすすめ"),
+    ("今日のベストシーンはこちら！ 🎮", "#ゲーム #配信 #切り抜き #おすすめ #リール"),
 )
 
 
-def instagram_caption(caption: str, filename: str) -> str:
-    """Keep the existing caption and append a Japanese ending exactly once."""
+def instagram_caption(caption: str, filename: str, slot: int = 1) -> str:
+    """Japanese-only Reel caption, with a distinct stable style per Instagram account."""
     import hashlib
-    caption = (caption or "").strip()
-    if any(ending in caption for ending in JAPANESE_REEL_ENDINGS):
-        return caption
-    index = int(hashlib.sha256(filename.encode("utf-8")).hexdigest()[:8], 16) % len(JAPANESE_REEL_ENDINGS)
-    ending = JAPANESE_REEL_ENDINGS[index]
-    return f"{caption}\n\n{ending}" if caption else ending
+    import re
+
+    intro, hashtags = JAPANESE_ACCOUNT_STYLES[(slot - 1) % len(JAPANESE_ACCOUNT_STYLES)]
+    raw = (caption or "").strip()
+    # Legacy Russian/English captions must not leak into Japanese-only Reels.
+    if re.search(r"[\\u0400-\\u04ff]", raw) or re.search(r"[A-Za-z]{3,}", raw):
+        raw = ""
+    # Remove previous hashtag blocks; keep account-specific Japanese tags.
+    body = re.sub(r"(?m)^\\s*#.*$", "", raw).strip()
+    if not body:
+        variants = (
+            "気になるシーンをまとめました。ぜひ最後まで見てね！",
+            "何度でも見たくなるワンシーン。お気に入りの瞬間を見つけよう！",
+            "今回のハイライトをお届け。楽しんでもらえたら嬉しいです！",
+            "注目の瞬間をシェアします。感想をコメントで教えてね！",
+        )
+        digest = hashlib.sha256((filename + str(slot)).encode("utf-8")).digest()
+        body = variants[int.from_bytes(digest[:2], "big") % len(variants)]
+    return f"{intro}\\n{body}\\n\\n{hashtags}"
 
 
 async def _publish_single_target(video: Path, caption: str, target: str) -> dict:
@@ -275,7 +290,7 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
             cover_token = secrets.token_urlsafe(24)
             MEDIA_TOKENS[cover_token] = cover_path
             cover_url = f"{settings.public_base_url}/media/{cover_token}" if settings.public_base_url else ""
-            result = await instagram_upload(slot, video_url, instagram_caption(caption, video.name), cover_url=cover_url)
+            result = await instagram_upload(slot, video_url, instagram_caption(caption, video.name, slot), cover_url=cover_url)
         else:
             result = await tiktok_upload(slot, video, caption)
 
@@ -677,7 +692,7 @@ async def publish(body: PublishRequest):
                 cover_token = secrets.token_urlsafe(24)
                 MEDIA_TOKENS[cover_token] = cover_path
                 cover_url = f"{settings.public_base_url}/media/{cover_token}"
-                result = await instagram_upload(slot, video_url, instagram_caption(body.caption, video.name), cover_url=cover_url)
+                result = await instagram_upload(slot, video_url, instagram_caption(body.caption, video.name, slot), cover_url=cover_url)
                 asyncio.create_task(_expire_media_token(cover_token, 300))
             else:
                 raise RuntimeError(f"Неизвестная платформа: {platform}")
