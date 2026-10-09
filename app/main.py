@@ -71,6 +71,13 @@ MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
 IG_CIRCLE_CLAIMS: dict[str, str] = {}
 
+# A single Quick Tunnel video fetch can take close to a minute. Previously all
+# eight Instagram Reel containers could fetch MP4 files simultaneously while
+# YouTube and TikTok were uploading too. Limit Meta video processing to one
+# account at a time to avoid saturating the public tunnel. Other platforms
+# continue normally. This does not bypass Meta's content validation.
+INSTAGRAM_META_SEMAPHORE = asyncio.Semaphore(1)
+
 def _circle_id(filename: str) -> str | None:
     import re
     m = re.fullmatch(r"tg_([a-zA-Z0-9_]+)_([0-9]+)[.]mp4", Path(filename).name, re.I)
@@ -293,6 +300,7 @@ async def _publish_single_target(
         )
 
     media_token = secrets.token_urlsafe(24)
+    cover_token: str | None = None
     MEDIA_TOKENS[media_token] = video
     video_url = (
         f"{settings.public_base_url}/media/{media_token}"
@@ -309,13 +317,20 @@ async def _publish_single_target(
                 slot, video, metadata["description"], title=metadata["title"]
             )
         elif platform == "instagram":
-            cover_path = COVER_DIR / f"{slot}.jpg"
-            if not cover_path.exists():
-                raise HTTPException(400, f"Instagram #{slot}: сначала загрузи обложку на /instagram-covers")
-            cover_token = secrets.token_urlsafe(24)
-            MEDIA_TOKENS[cover_token] = cover_path
-            cover_url = f"{settings.public_base_url}/media/{cover_token}" if settings.public_base_url else ""
-            result = await instagram_upload(slot, video_url, instagram_caption(caption, video.name, slot), cover_url=cover_url)
+            # Throttle only Instagram, keeping TikTok/YouTube posting independent.
+            # Keep the media URLs registered while the Meta container is being
+            # created and processed; do not start a second Meta fetch meanwhile.
+            async with INSTAGRAM_META_SEMAPHORE:
+                cover_path = COVER_DIR / f"{slot}.jpg"
+                if not cover_path.exists():
+                    raise HTTPException(400, f"Instagram #{slot}: сначала загрузи обложку на /instagram-covers")
+                cover_token = secrets.token_urlsafe(24)
+                MEDIA_TOKENS[cover_token] = cover_path
+                cover_url = f"{settings.public_base_url}/media/{cover_token}" if settings.public_base_url else ""
+                result = await instagram_upload(
+                    slot, video_url, instagram_caption(caption, video.name, slot),
+                    cover_url=cover_url,
+                )
         else:
             account = store.get("tiktok", slot) or {}
             result = (
@@ -333,9 +348,11 @@ async def _publish_single_target(
         return {"target": target, "ok": True, "result": result}
     finally:
         if platform == "instagram":
-            # Do not cut Meta off immediately: keep the source URL alive for
-            # another five minutes after success/error.
+            # Meta may still fetch both the video and its cover after a
+            # container is processed. Expire both tokens after five minutes.
             asyncio.create_task(_expire_media_token(media_token, 300))
+            if cover_token is not None:
+                asyncio.create_task(_expire_media_token(cover_token, 300))
         else:
             MEDIA_TOKENS.pop(media_token, None)
 
