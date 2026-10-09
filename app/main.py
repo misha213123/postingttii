@@ -157,6 +157,78 @@ async def video_preview(filename: str):
     )
 
 
+@app.post("/api/autotok/import")
+async def autotok_import(body: AutotokAccountRequest):
+    """Attach an existing AutoTok session (e.g. account1) to a UI slot."""
+    _validate_tiktok_slot(body.slot)
+    try:
+        name = autotok_bridge.validate_name(body.name)
+        await autotok_bridge.check_account(name)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    store.save("tiktok", body.slot, {
+        "provider": "autotok",
+        "autotok_account": name,
+        "label": name,
+        "id": name,
+    })
+    return {"ok": True, "slot": body.slot, "name": name}
+
+
+async def _watch_autotok_login(slot: int, name: str, process) -> None:
+    try:
+        output, _ = await process.communicate()
+        if process.returncode:
+            raise RuntimeError(
+                "Не удалось войти в TikTok: "
+                + output.decode("utf-8", errors="replace")[-700:]
+            )
+        await autotok_bridge.check_account(name)
+        store.save("tiktok", slot, {
+            "provider": "autotok",
+            "autotok_account": name,
+            "label": name,
+            "id": name,
+        })
+        AUTOTOK_LOGINS[slot] = {"status": "done", "name": name}
+    except Exception as exc:
+        AUTOTOK_LOGINS[slot] = {"status": "error", "name": name, "error": str(exc)}
+
+
+@app.post("/api/autotok/login")
+async def autotok_login(body: AutotokAccountRequest):
+    """Open AutoTok's own local login browser; do not block the web UI."""
+    _validate_tiktok_slot(body.slot)
+    if AUTOTOK_LOGINS.get(body.slot, {}).get("status") == "running":
+        raise HTTPException(409, "Для этого слота уже открыт вход TikTok")
+    if store.get("tiktok", body.slot):
+        raise HTTPException(409, "Сначала отключи существующий TikTok в этом слоте")
+    try:
+        name = autotok_bridge.validate_name(body.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    binary = autotok_bridge.executable()
+    if not binary:
+        raise HTTPException(503, "AutoTok не установлен: uv tool install autotok")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            binary, "login", "-n", name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except OSError as exc:
+        raise HTTPException(503, f"Не удалось открыть AutoTok: {exc}") from exc
+    AUTOTOK_LOGINS[body.slot] = {"status": "running", "name": name}
+    asyncio.create_task(_watch_autotok_login(body.slot, name, process))
+    return {"ok": True, "status": "running", "name": name}
+
+
+@app.get("/api/autotok/login/{slot}")
+async def autotok_login_status(slot: int):
+    _validate_tiktok_slot(slot)
+    return AUTOTOK_LOGINS.get(slot, {"status": "idle"})
+
+
 @app.get("/api/status")
 async def status():
     return {
