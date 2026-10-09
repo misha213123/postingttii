@@ -398,12 +398,16 @@ function renderJob(job){
   const subtitle=job.status==='waiting'
     ?(job.wait_kind==='between_waves'?'Длинная пауза между парами':'Короткая пауза перед вторым роликом')
     :(labels[job.status]||job.status);
-  document.getElementById('queueSubtitle').textContent=(
-    job.status==='done' && (job.cleanup_pending||[]).length
-      ?subtitle+' · Переношу опубликованные файлы из inbox'
-      :subtitle
-  );
-  document.getElementById('cancelBatch').disabled=['done','cancelled','error'].includes(job.status);
+  document.getElementById('queueSubtitle').textContent=job.cancel_requested
+    ?'Останавливаю очередь: новые публикации не начнутся, жду текущий запрос'
+    :(
+      job.status==='done' && (job.cleanup_pending||[]).length
+        ?subtitle+' · Переношу опубликованные файлы из inbox'
+        :subtitle
+    );
+  const stopBtn=document.getElementById('cancelBatch');
+  stopBtn.disabled=Boolean(job.cancel_requested)||['done','cancelled','error'].includes(job.status);
+  stopBtn.textContent=job.cancel_requested?'Останавливаю...':'Остановить очередь';
   document.getElementById('statDone').title='Перенесено из inbox: '+(job.archived_count||0);
   const root=document.getElementById('jobList');
   const items=job.items||[];
@@ -419,7 +423,31 @@ function renderJob(job){
     return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+completed+' / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(finished?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
   }).join('')+'</div><div class="queue-footnote">Аккаунты и текущие ролики. Подробный список файлов скрыт для компактности.</div>';
 }
-async function cancelBatch(){if(currentJobId)await fetch('/api/batch/'+currentJobId+'/cancel',{method:'POST'});}
+async function cancelBatch(){
+  const button=document.getElementById('cancelBatch');
+  button.disabled=true;
+  button.textContent='Отправляю остановку...';
+  try{
+    let id=currentJobId;
+    const active=await fetch('/api/batch/active',{cache:'no-store'});
+    if(active.ok){
+      const info=await active.json();
+      if(info.job_id)id=info.job_id;
+    }
+    if(!id)throw Error('Активная очередь не найдена');
+    currentJobId=id;
+    localStorage.setItem('postingttii_batch_job',id);
+    const response=await fetch('/api/batch/'+encodeURIComponent(id)+'/cancel',{method:'POST'});
+    const data=await response.json();
+    if(!response.ok)throw Error(data.detail||'Ошибка сервера');
+    button.textContent='Останавливаю...';
+    await resumeJob(id);
+  }catch(error){
+    button.disabled=false;
+    button.textContent='Остановить очередь';
+    alert('Ошибка остановки очереди: '+error.message);
+  }
+}
 async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
 async function openEdge(slot,mode){
   try{
