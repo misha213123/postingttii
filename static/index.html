@@ -228,11 +228,11 @@ function renderPlatforms(){
     const title=platform==='youtube'?'YouTube':'Instagram';
     const card=document.createElement('div');card.className='card platform';
     let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div><div class="account-row">';
-    for(const slot of (platform==='instagram'?[1,2,3,4,5]:[1,2])){
+    for(const slot of (platform==='instagram'?[1,2,3,4,5,6,7,8]:[1,2])){
       const a=connected(platform,slot);
       html+='<div class="account"><b>'+esc(a?(a.label||a.id||'Instagram '+slot):'Слот '+slot)+'</b>';
       if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div><button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
-      else html+='<div class="label muted">Не подключён</div><a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
+      else html+='<div class="label muted">Не подключён</div>'+(platform==='instagram'&&slot>=6&&!state.configured.instagram_second_app?'<div class="warn" style="font-size:10px">Настрой ключи Posting23 в .env</div>':'')+'<a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
       if(platform==='instagram')html+='<div style="margin-top:8px"><small>Обложка: <span id="cover-state-'+slot+'">проверка...</span></small><input type="file" accept="image/png,image/jpeg" style="width:100%;font-size:11px" onchange="saveCover('+slot+',this)"></div>';
       html+='</div>';
     }
@@ -381,7 +381,7 @@ function renderJob(job){
     const percent=assigned.length?Math.round(completed/assigned.length*100):0;
     const status=finished?'Готово':active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео';
     return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+completed+' / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(finished?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
-  }).join('')+'</div><div class="queue-footnote">Пять аккаунтов и текущие ролики. Подробный список файлов скрыт для компактности.</div>';
+  }).join('')+'</div><div class="queue-footnote">Аккаунты и текущие ролики. Подробный список файлов скрыт для компактности.</div>';
 }
 async function cancelBatch(){if(currentJobId)await fetch('/api/batch/'+currentJobId+'/cancel',{method:'POST'});}
 async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
