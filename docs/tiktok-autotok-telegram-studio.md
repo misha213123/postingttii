@@ -64,3 +64,26 @@ This change has been checked for UI JavaScript syntax and integration source
 preservation; live TikTok + Instagram end-to-end testing is required on your
 Windows machine before using a large queue. AutoTok is a third-party
 automation tool and may need adjustments when TikTok changes.
+
+## YouTube Shorts via OpenAI
+
+YouTube title and description are now generated independently by OpenAI at
+publication time through the existing `OPENAI_API_KEY` and `OPENAI_MODEL`.
+The title is capped at 100 characters; the description includes hashtags
+and `#shorts`. YouTube no longer derives the title from an opaque MP4 name.
+The model only sees the filename and any author-supplied context; it does not
+view the clip's pixels or audio. Without contextual input the title/description
+are necessarily general rather than a genuine content summary.
+
+Instagram's prompts and language formatting are unchanged.
+
+## Why YouTube posted but TikTok did not
+
+A batch intentionally assigns **one different file to one account**. If you
+select one video and two accounts, the first recipient can be YouTube while
+TikTok has no assigned file. The dashboard now shows an assignment warning
+and rejects starting a batch with fewer unique files than selected targets.
+If the files are sufficient but TikTok still fails, its card now shows the
+actual error instead of a misleading "Готово" label. An AutoTok session check
+also happens before the batch begins, so an expired session cannot silently
+block TikTok after the YouTube uploads begin.
