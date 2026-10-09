@@ -292,7 +292,7 @@ function syncIntervalMin(){
   const shortMax=document.getElementById('intervalMaxSeconds').value;
   const longMin=document.getElementById('waveMinMinutes').value;
   const longMax=document.getElementById('waveMaxMinutes').value;
-  document.getElementById('cadenceNote').textContent='Каждая волна — 2 ролика на все выбранные аккаунты. Между роликами '+shortMin+'–'+shortMax+' секунд; после каждой пары '+longMin+'–'+longMax+' минут. Ограничения API учитываются.';
+  document.getElementById('cadenceNote').textContent='Каждый аккаунт получает СВОИ два разных ролика: между ними '+shortMin+'–'+shortMax+' секунд, затем пауза '+longMin+'–'+longMax+' минут. Опубликованные файлы через несколько минут перемещаются из inbox в posted. Ограничения API учитываются.';
 }
 
 for(const id of ['intervalSeconds','intervalMaxSeconds','waveMinMinutes','waveMaxMinutes']){
@@ -336,6 +336,9 @@ async function startBatch(){
       return;
     }
     if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
+    if(data.excluded_duplicates){
+      alert('Одинаковые по содержимому видео исключены из очереди: '+data.excluded_duplicates);
+    }
     currentJobId=data.job_id;localStorage.setItem('postingttii_batch_job',currentJobId);
     document.getElementById('queuePanel').classList.remove('hidden');
     await resumeJob(currentJobId);
