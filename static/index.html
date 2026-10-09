@@ -464,7 +464,7 @@ function renderJob(job){
   document.getElementById('statDone').title='Перенесено из inbox: '+(job.archived_count||0);
   const root=document.getElementById('jobList');
   const items=job.items||[];
-  const accounts=(job.targets||[]).filter(t=>t.startsWith('instagram:'));
+  const accounts=(job.targets||[]).filter(t=>['instagram:','tiktok:','youtube:'].some(prefix=>t.startsWith(prefix)));
   root.innerHTML='<div class="account-job-grid">'+accounts.map(target=>{
     const assigned=items.filter(item=>item.targets?.[target]);
     const completed=assigned.filter(item=>['done','already','error'].includes(item.targets?.[target]?.status)).length;
