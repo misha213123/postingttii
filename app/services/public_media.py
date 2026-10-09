@@ -69,13 +69,10 @@ class PersistentMediaRegistry:
         changed = False
         for token, record in list(self.records.items()):
             path = self._path(token, record)
-            if (
-                path is None
-                or not isinstance(record.get("expires_at"), (int, float))
-                or record["expires_at"] <= now
-                or not path.is_file()
-            ):
-                if path is not None and record.get("expires_at", 0) <= now:
+            expiry = record.get("expires_at") if isinstance(record, dict) else None
+            expired = not isinstance(expiry, (int, float)) or expiry <= now
+            if path is None or expired or not path.is_file():
+                if path is not None and expired:
                     try:
                         path.unlink(missing_ok=True)
                     except OSError:
