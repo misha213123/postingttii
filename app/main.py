@@ -357,7 +357,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             video_key = publish_state.video_key(video)
             pending_targets: list[str] = []
 
-            for target in body.targets:
+            for target in item["targets"]:
                 target_state = item["targets"][target]
                 if target in blocked_targets:
                     target_state["status"] = "blocked"
@@ -487,6 +487,16 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             item["finished_at"] = int(time.time())
             job["completed_videos"] = index + 1
 
+            # Remove from inbox only after every assigned target is confirmed.
+            # Archive the successful file in videos/posted (safer than deletion).
+            if item["status"] == "done" and video.exists():
+                destination = settings.posted_dir / video.name
+                if destination.exists():
+                    destination = settings.posted_dir / (
+                        f"{video.stem}_{secrets.token_hex(3)}{video.suffix}"
+                    )
+                shutil.move(str(video), str(destination))
+
             # Wait between clips only when this clip actually produced at
             # least one new publication. Already-uploaded/blocked/failed clips
             # move to the next item immediately.
@@ -496,9 +506,15 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 and not job.get("cancel_requested")
             ):
                 job["status"] = "waiting"
-                job["next_video_at"] = int(
-                    time.time() + body.interval_minutes * 60
-                )
+                if body.unique_per_account:
+                    job["completed_posts"] += 1
+                    if job["completed_posts"] % body.burst_size == 0:
+                        wait_seconds = body.long_pause_minutes * 60
+                    else:
+                        wait_seconds = body.short_interval_seconds
+                else:
+                    wait_seconds = body.interval_minutes * 60
+                job["next_video_at"] = int(time.time() + wait_seconds)
                 while time.time() < job["next_video_at"]:
                     if job.get("cancel_requested"):
                         job["status"] = "cancelled"
