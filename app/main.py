@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.services.openai_text import generate_caption
-from app.services.tiktok_text import generate_tiktok_caption
+from app.services.tiktok_text import generate_tiktok_caption, caption_needs_regeneration
 from app.services.youtube_text import generate_youtube_metadata
 from app.services import autotok_bridge
 from app.services.public_media import PersistentMediaRegistry
@@ -524,15 +524,26 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     _save_batch_job(job)
                 caption = youtube_metadata["description"]
                 item["youtube_title"] = youtube_metadata["title"]
+            elif target.startswith("tiktok:"):
+                # TikTok must see actual frames, not a technical MP4 filename.
+                # Old queued jobs can have a cached AI caption containing the
+                # previous prompt. Replace only automatically generated text.
+                manually_set = bool((body.captions.get(video.name) or "").strip())
+                if manually_set and caption_needs_regeneration(caption, video.name):
+                    raise RuntimeError(
+                        "TikTok: описание содержит имя файла или технический текст. "
+                        "Исправь вручную заданную подпись перед публикацией."
+                    )
+                if not caption or caption_needs_regeneration(caption, video.name):
+                    item["status"] = "caption"
+                    _save_batch_job(job)
+                    caption = await asyncio.to_thread(
+                        generate_tiktok_caption, video, body.hint
+                    )
             elif not caption:
                 item["status"] = "caption"
                 _save_batch_job(job)
-                generator = (
-                    generate_tiktok_caption
-                    if target.startswith("tiktok:")
-                    else generate_caption
-                )
-                caption = await asyncio.to_thread(generator, video.name, body.hint)
+                caption = await asyncio.to_thread(generate_caption, video.name, body.hint)
             item["caption"] = caption
             cooldown = (
                 max(60, body.interval_seconds)
