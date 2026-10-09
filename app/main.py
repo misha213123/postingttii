@@ -21,6 +21,7 @@ from app.services.openai_text import generate_caption
 from app.services.tiktok_text import generate_tiktok_caption, caption_needs_regeneration
 from app.services.youtube_text import generate_youtube_metadata
 from app.services import autotok_bridge
+from app.services.batch_guard import batch_counts, platform_limit_reason, FINISHED_STATES
 from app.services.public_media import PersistentMediaRegistry
 from app.services.autotok_routes import router as autotok_router
 from app.publish_state import publish_state
@@ -491,11 +492,17 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         return True
 
     async def publish_item(item: dict, second_in_pair: bool) -> None:
-        if item.get("status") in {"done", "already", "error"}:
+        if item.get("status") in FINISHED_STATES:
             return
         target = next(iter(item["targets"]))
         state = item["targets"][target]
         try:
+            # Do not generate captions, perform uploads or delete files for a
+            # target that has already received an explicit platform limit.
+            if reason := job.setdefault("blocked_targets", {}).get(target):
+                state.update(status="blocked", message=reason + "; публикация пропущена")
+                item["status"] = "blocked"
+                return
             video = _safe_video(item["filename"])
             key = await asyncio.to_thread(publish_state.video_key, video)
             published_targets = publish_state.completed_targets(key)
@@ -550,6 +557,12 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 if second_in_pair else settings.post_cooldown_minutes * 60
             )
             while not job.get("cancel_requested"):
+                # The API might have refused this account since caption
+                # generation started. Check the persisted batch block again.
+                if reason := job.setdefault("blocked_targets", {}).get(target):
+                    state.update(status="blocked", message=reason + "; публикация пропущена")
+                    item["status"] = "blocked"
+                    return
                 remaining = publish_state.cooldown_remaining(target, cooldown)
                 if remaining > 0:
                     state.update(
@@ -588,11 +601,17 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             state.update(status="cancelled", message="Очередь остановлена")
             item["status"] = "cancelled"
         except Exception as exc:
-            state.update(status="error", message=str(exc)[:450])
+            error_text = str(exc)[:450]
+            state.update(status="error", message=error_text)
             item["status"] = "error"
-            item["error"] = str(exc)[:450]
+            item["error"] = error_text
+            # Respect explicit platform refusals for the remainder of this
+            # batch. Only this target is blocked; other targets are unchanged.
+            if reason := platform_limit_reason(target, str(exc)):
+                job.setdefault("blocked_targets", {})[target] = reason
         finally:
             item["finished_at"] = int(time.time())
+            job.update(batch_counts(job["items"]))
             _save_batch_job(job)
 
     try:
@@ -607,22 +626,32 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             # If the app restarted while waiting, respect the saved deadline.
             if job.get("next_video_at") and not await wait_until(job["next_video_at"]):
                 return
-            if all(item.get("status") in {"done", "already", "error"} for item in group):
+            if all(item.get("status") in FINISHED_STATES for item in group):
                 continue
             job["status"] = "running"
             await asyncio.gather(*(
                 publish_item(item, second_in_pair=(round_index % 2 == 1))
                 for item in group
             ))
-            job["completed_videos"] = sum(
-                item.get("status") in {"done", "already", "error"}
-                for item in job["items"]
-            )
+            job.update(batch_counts(job["items"]))
             _save_batch_job(job)
             if job.get("cancel_requested"):
                 job["status"] = "cancelled"
                 return
             if round_index + 1 < len(rounds):
+                # No reason to wait 10-25 minutes if all remaining destinations
+                # are blocked by explicit provider restrictions. Keep the
+                # originals in inbox and classify those items as blocked.
+                remaining_items = (
+                    item for group_left in rounds[round_index + 1:]
+                    for item in group_left
+                    if item.get("status") not in FINISHED_STATES
+                )
+                if all(
+                    next(iter(item["targets"])) in job.get("blocked_targets", {})
+                    for item in remaining_items
+                ):
+                    continue
                 after_pair = (round_index % 2 == 1)
                 delay = (
                     secrets.SystemRandom().randint(
@@ -758,6 +787,10 @@ async def batch_start(body: BatchPublishRequest):
         "finished_at": None,
         "next_video_at": None,
         "completed_videos": 0,
+        "successful_videos": 0,
+        "already_videos": 0,
+        "failed_videos": 0,
+        "blocked_videos": 0,
         "total_videos": len(filenames),
         "interval_seconds": body.interval_seconds,
         "interval_max_seconds": body.interval_max_seconds,
