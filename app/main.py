@@ -187,6 +187,7 @@ async def status():
             "tiktok_enabled": settings.tiktok_enabled,
             "instagram": bool(settings.instagram_client_id and settings.instagram_client_secret),
             "instagram_public_url": bool(settings.public_base_url),
+            "instagram_second_app": bool(settings.instagram_client_id_2 and settings.instagram_client_secret_2),
         },
     }
 
@@ -241,7 +242,7 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
     except Exception as exc:
         raise HTTPException(400, "Некорректный target") from exc
 
-    if slot not in (range(1, 6) if platform == "instagram" else (1, 2)):
+    if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
         raise HTTPException(400, "Недопустимый номер аккаунта")
     if platform not in {"youtube", "instagram", "tiktok"}:
         raise HTTPException(400, f"Неизвестная платформа: {platform}")
@@ -675,7 +676,7 @@ async def publish(body: PublishRequest):
         try:
             platform, slot_text = target.split(":", 1)
             slot = int(slot_text)
-            if slot not in (1, 2, 3, 4, 5) or (slot > 2 and platform != "instagram"):
+            if slot not in range(1, 9) or (slot > 2 and platform != "instagram"):
                 raise RuntimeError("Недопустимый слот аккаунта")
 
             if platform == "youtube":
@@ -730,13 +731,13 @@ COVER_DIR.mkdir(parents=True, exist_ok=True)
 
 @app.get("/api/instagram/covers")
 async def list_instagram_covers():
-    return {"covers": {str(slot): (COVER_DIR / f"{slot}.jpg").exists() for slot in range(1, 6)}}
+    return {"covers": {str(slot): (COVER_DIR / f"{slot}.jpg").exists() for slot in range(1, 9)}}
 
 
 @app.post("/api/instagram/covers/{slot}")
 async def upload_instagram_cover(slot: int, file: UploadFile = File(...)):
-    if slot not in range(1, 6):
-        raise HTTPException(400, "Номер аккаунта должен быть от 1 до 5")
+    if slot not in range(1, 9):
+        raise HTTPException(400, "Номер аккаунта должен быть от 1 до 8")
     data = await file.read(8 * 1024 * 1024 + 1)
     if len(data) > 8 * 1024 * 1024:
         raise HTTPException(413, "Обложка больше 8 МБ")
@@ -791,15 +792,19 @@ def _require_platform(platform: str) -> None:
         raise HTTPException(400, "Заполни YOUTUBE_CLIENT_ID и YOUTUBE_CLIENT_SECRET в .env")
     if platform == "tiktok" and not (settings.tiktok_client_key and settings.tiktok_client_secret):
         raise HTTPException(400, "Заполни TIKTOK_CLIENT_KEY и TIKTOK_CLIENT_SECRET в .env")
-    if platform == "instagram" and not (settings.instagram_client_id and settings.instagram_client_secret):
-        raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID и INSTAGRAM_CLIENT_SECRET в .env")
+
 
 
 @app.get("/connect/{platform}/{slot}")
 async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
-    if slot not in (range(1, 6) if platform == "instagram" else (1, 2)):
+    if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
         raise HTTPException(400, "Недопустимый слот")
     _require_platform(platform)
+    if platform == "instagram":
+        if slot <= 5 and not (settings.instagram_client_id and settings.instagram_client_secret):
+            raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID и INSTAGRAM_CLIENT_SECRET в .env")
+        if slot >= 6 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
+            raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2 в .env")
     if platform == "tiktok" and not settings.tiktok_enabled:
         raise HTTPException(503, "TikTok временно отключен")
 
@@ -810,7 +815,7 @@ async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int
     elif platform == "tiktok":
         url = tiktok_auth_url(state)
     else:
-        url = instagram_auth_url(state)
+        url = instagram_auth_url(state, slot)
     return RedirectResponse(url)
 
 
@@ -847,7 +852,7 @@ async def tiktok_callback(code: str, state: str):
 async def instagram_callback(code: str, state: str):
     slot = _consume_state(state, "instagram")
     try:
-        account = await instagram_exchange(code)
+        account = await instagram_exchange(code, slot)
         store.save("instagram", slot, account)
     except Exception as exc:
         raise HTTPException(500, f"Instagram OAuth: {exc}") from exc
@@ -856,8 +861,8 @@ async def instagram_callback(code: str, state: str):
 
 @app.delete("/api/account/{platform}/{slot}")
 async def disconnect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
-    if slot not in (1, 2):
-        raise HTTPException(400, "Слот должен быть 1 или 2")
+    if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
+        raise HTTPException(400, "Недопустимый слот")
     store.delete(platform, slot)
     return {"ok": True}
 
