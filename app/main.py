@@ -242,7 +242,10 @@ def instagram_caption(caption: str, filename: str, slot: int = 1) -> str:
     return f"{intro}\\n{body}"
 
 
-async def _publish_single_target(video: Path, caption: str, target: str) -> dict:
+async def _publish_single_target(
+    video: Path, caption: str, target: str, *,
+    cooldown_seconds: int | None = None,
+) -> dict:
     try:
         platform, slot_text = target.split(":", 1)
         slot = int(slot_text)
@@ -265,9 +268,13 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
             "message": "Уже опубликовано на этом аккаунте.",
         }
 
-    remaining = publish_state.cooldown_remaining(
-        target, settings.post_cooldown_minutes * 60
+    # Manual/single publications keep the normal account cooldown.
+    # The second clip in a scheduled pair uses the configured short gap.
+    effective_cooldown = (
+        settings.post_cooldown_minutes * 60
+        if cooldown_seconds is None else max(60, cooldown_seconds)
     )
+    remaining = publish_state.cooldown_remaining(target, effective_cooldown)
     if remaining > 0:
         raise HTTPException(
             status_code=429,
@@ -385,8 +392,16 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     if publish_state.is_completed(key, target):
                         state.update(status="already", message="Уже опубликовано")
                         return
+                    # First video retains the usual account cooldown.
+                    # The second uses the short within-pair gap. API rate
+                    # limits still take precedence.
+                    effective_cooldown = (
+                        max(60, body.interval_seconds)
+                        if index % 2 == 1
+                        else settings.post_cooldown_minutes * 60
+                    )
                     remaining = publish_state.cooldown_remaining(
-                        target, settings.post_cooldown_minutes * 60
+                        target, effective_cooldown
                     )
                     if remaining > 0:
                         state.update(status="cooldown", message="Ожидаю аккаунт",
@@ -397,7 +412,10 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     state.update(status="publishing", message="Публикую")
                     _save_batch_job(job)
                     try:
-                        result = await _publish_single_target(video, caption, target)
+                        result = await _publish_single_target(
+                            video, caption, target,
+                            cooldown_seconds=effective_cooldown,
+                        )
                         state.update(status="already" if result.get("skipped") else "done",
                                      message="Уже было" if result.get("skipped") else "Опубликовано")
                         return
