@@ -14,6 +14,7 @@ import os
 import re
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -132,7 +133,10 @@ def _active_page(context, page, phase: str):
     try:
         candidates = [
             p for p in context.pages
-            if not p.is_closed() and "tiktok.com" in p.url.split("/", 3)[2]
+            if not p.is_closed() and (
+                (urlsplit(p.url).hostname or "").lower() in
+                {"www.tiktok.com", "tiktok.com"}
+            )
         ]
     except Exception as exc:
         raise RuntimeError(
