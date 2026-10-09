@@ -21,6 +21,7 @@ from app.services.openai_text import generate_caption
 from app.services.tiktok_text import generate_tiktok_caption
 from app.services.youtube_text import generate_youtube_metadata
 from app.services import autotok_bridge
+from app.services.public_media import PersistentMediaRegistry
 from app.services.autotok_routes import router as autotok_router
 from app.publish_state import publish_state
 from app.services.platforms import (
@@ -67,7 +68,9 @@ async def telegram_studio_page():
     return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
-MEDIA_TOKENS: dict[str, Path] = {}
+# Meta's /media/ URLs must remain fetchable even after PostingTTII restarts.
+# Videos are linked/copied into git-ignored data/meta_media and expire in 24h.
+MEDIA_TOKENS = PersistentMediaRegistry()
 BATCH_JOBS: dict[str, dict] = {}
 IG_CIRCLE_CLAIMS: dict[str, str] = {}
 
@@ -99,11 +102,12 @@ def _circle_conflict(filename: str, target: str) -> bool:
 
 
 async def _expire_media_token(token: str, delay_seconds: int = 300) -> None:
-    """Keep an Instagram source URL alive briefly after publish/error.
+    """Keep Meta's source URL available for a full day.
 
-    Meta can continue reading the source video while finalizing a Reel.
+    The persistent registry also checks expiry on requests and after restarts;
+    this delayed cleanup is only an optimization while the process stays up.
     """
-    await asyncio.sleep(delay_seconds)
+    await asyncio.sleep(max(delay_seconds, 24 * 60 * 60))
     MEDIA_TOKENS.pop(token, None)
 
 
@@ -908,7 +912,12 @@ async def publish(body: PublishRequest):
             destination = settings.posted_dir / f"{video.stem}_{secrets.token_hex(3)}{video.suffix}"
         shutil.move(str(video), str(destination))
 
-    MEDIA_TOKENS.pop(media_token, None)
+    if any(target.startswith("instagram:") for target in targets):
+        # A successful media_publish does not mean Meta will never request
+        # the MP4 again. Preserve this URL for the same 24-hour window.
+        asyncio.create_task(_expire_media_token(media_token, 300))
+    else:
+        MEDIA_TOKENS.pop(media_token, None)
     return {
         "ok": failures == 0,
         "all_done": all_done,
