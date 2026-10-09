@@ -608,8 +608,20 @@ async def batch_start(body: BatchPublishRequest):
     if not 1 <= body.wave_min_minutes <= body.wave_max_minutes <= 1440:
         raise HTTPException(400, "Некорректная пауза между волнами")
 
+    # The same content can appear under different names; it must never
+    # be assigned to two separate accounts in the same queue.
+    unique_filenames = []
+    duplicate_filenames = []
+    seen_video_keys = set()
     for filename in filenames:
-        _safe_video(filename)
+        video = _safe_video(filename)
+        video_key = publish_state.video_key(video)
+        if video_key in seen_video_keys:
+            duplicate_filenames.append(filename)
+            continue
+        seen_video_keys.add(video_key)
+        unique_filenames.append(filename)
+    filenames = unique_filenames
 
     allowed_targets = {
         f"{platform}:{account['slot']}"
@@ -661,6 +673,7 @@ async def batch_start(body: BatchPublishRequest):
         "targets": targets,
         "cancel_requested": False,
         "assignment_mode": "one_video_one_account",
+        "excluded_duplicate_files": duplicate_filenames,
         "cleanup_pending": [],
         "archived_count": 0,
         "error": "",
@@ -685,7 +698,8 @@ async def batch_start(body: BatchPublishRequest):
     BATCH_JOBS[job_id]["request"] = normalized.model_dump()
     _save_batch_job(BATCH_JOBS[job_id])
     asyncio.create_task(_run_batch_job(job_id, normalized))
-    return {"job_id": job_id, "status": "queued"}
+    return {"job_id": job_id, "status": "queued",
+            "excluded_duplicates": len(duplicate_filenames)}
 
 
 @app.get("/api/batch/{job_id}")
