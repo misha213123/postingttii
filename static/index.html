@@ -231,8 +231,8 @@ function renderPlatforms(){
     for(const slot of (platform==='instagram'?[1,2,3,4,5,6,7,8]:[1,2])){
       const a=connected(platform,slot);
       html+='<div class="account"><b>'+esc(a?(a.label||a.id||'Instagram '+slot):'Слот '+slot)+'</b>';
-      if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div><button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
-      else html+='<div class="label muted">Не подключён</div>'+(platform==='instagram'&&slot>=6&&!state.configured.instagram_second_app?'<div class="warn" style="font-size:10px">Настрой ключи Posting23 в .env</div>':'')+'<a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
+      if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div>'+(platform==='instagram'&&slot>=6?'<button class="btn secondary" onclick="openEdge('+slot+',\'profile\')">Открыть в Edge</button>':'')+'<button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
+      else html+='<div class="label muted">Не подключён</div>'+(platform==='instagram'&&slot>=6?'<button class="btn secondary" onclick="openEdge('+slot+',\'connect\')">Подключить через Edge</button>':'<a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>');
       if(platform==='instagram')html+='<div style="margin-top:8px"><small>Обложка: <span id="cover-state-'+slot+'">проверка...</span></small><input type="file" accept="image/png,image/jpeg" style="width:100%;font-size:11px" onchange="saveCover('+slot+',this)"></div>';
       html+='</div>';
     }
@@ -385,6 +385,14 @@ function renderJob(job){
 }
 async function cancelBatch(){if(currentJobId)await fetch('/api/batch/'+currentJobId+'/cancel',{method:'POST'});}
 async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
+async function openEdge(slot,mode){
+  try{
+    const r=await fetch('/api/instagram/edge/'+slot+'?mode='+encodeURIComponent(mode),{method:'POST'});
+    const d=await r.json();
+    if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Не удалось открыть Edge');
+  }catch(err){alert('Microsoft Edge: '+err.message);}
+}
+
 async function disconnect(platform,slot){await fetch('/api/account/'+platform+'/'+slot,{method:'DELETE'});await load();}
 
 function openPreview(encoded){
