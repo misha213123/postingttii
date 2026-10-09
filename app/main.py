@@ -707,35 +707,93 @@ async def upload_instagram_cover(slot: int, file: UploadFile = File(...)):
     return {"slot": slot, "saved": True}
 
 
+@app.get("/api/instagram/covers/{slot}/preview")
+async def instagram_cover_preview(slot: int):
+    if slot not in range(1, 6):
+        raise HTTPException(400, "Неверный слот")
+    path = COVER_DIR / f"{slot}.jpg"
+    if not path.is_file():
+        raise HTTPException(404, "Обложка отсутствует")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/instagram-covers")
 async def instagram_covers_page():
-    return HTMLResponse("""<!doctype html><html lang="ru"><meta charset="utf-8">
-<title>Instagram — обложки</title><style>
-body{font:16px system-ui;background:#11131a;color:white;max-width:760px;margin:40px auto;padding:20px}
-section{background:#202431;border-radius:14px;padding:18px;margin:14px 0}
-button{padding:10px 18px;border:0;border-radius:8px;background:#7d63f7;color:white;cursor:pointer}
-input{margin:12px 0}img{max-height:180px;display:block;margin-top:10px}
-</style><h1>Обложки Instagram Reels</h1>
-<p>Назначь свою JPG/PNG-обложку каждому слоту. Видео без обложки не публикуется.</p>
-<div id="items"></div><script>
+    return HTMLResponse("""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Instagram — обложки</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% -10%,#17254a 0%,transparent 45%),#090f1b;color:#edf2ff}
+main{max-width:1200px;margin:0 auto;padding:34px 22px 65px}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+h1{font-size:clamp(25px,3vw,36px);margin:0 0 8px;letter-spacing:-.8px}
+p{color:#aab8d2;margin:0}.back{color:#d4dcff;text-decoration:none;border:1px solid #334363;padding:11px 17px;border-radius:11px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:27px 0}
+.stat{background:#101c31;border:1px solid #263a5c;border-radius:16px;padding:18px}.stat strong{display:block;font-size:25px}.stat span{font-size:13px;color:#a9bbd5}
+#items{display:grid;gap:15px}
+.cover-card{display:grid;grid-template-columns:230px 135px minmax(190px,1fr);align-items:center;gap:24px;padding:20px;background:linear-gradient(120deg,#141e34,#10192a);border:1px solid #2b3c5c;border-radius:18px;box-shadow:0 8px 28px #0003}
+.cover-card:nth-child(5n+1){border-left:4px solid #bd65f6}.cover-card:nth-child(5n+2){border-left:4px solid #477efa}.cover-card:nth-child(5n+3){border-left:4px solid #2fd1a0}.cover-card:nth-child(5n+4){border-left:4px solid #ffb449}.cover-card:nth-child(5n){border-left:4px solid #9b68fb}
+.identity{display:flex;gap:14px;align-items:center;min-width:0}.number{background:#6f54d9;padding:9px 12px;border-radius:10px;font-weight:800}.handle{font-size:18px;font-weight:750;overflow-wrap:anywhere}.sub{color:#96abc8;font-size:12px;margin-top:6px}
+.preview{width:124px;height:165px;object-fit:cover;border-radius:12px;border:1px solid #48567c;background:#1b2942}.placeholder{width:124px;height:165px;display:flex;align-items:center;justify-content:center;border-radius:12px;border:1px dashed #50607e;color:#93a5c0;text-align:center;font-size:13px;padding:8px}
+.actions{display:flex;flex-direction:column;align-items:flex-start;gap:10px}.status{font-size:13px;color:#44e2a4}.status.empty{color:#ffbc70}
+button,.upload{background:#6859e7;border:1px solid #8177ff;border-radius:10px;color:white;padding:11px 16px;font-size:14px;font-weight:650;cursor:pointer}
+button:hover,.upload:hover{filter:brightness(1.12)}button:disabled{opacity:.6;cursor:wait}
+.upload input{display:none}.hint{font-size:12px;color:#96abc8}.error{color:#ff8d9c;font-size:12px}
+@media(max-width:700px){.stats{grid-template-columns:1fr}.cover-card{grid-template-columns:1fr 124px;gap:14px}.identity{grid-column:1/-1}.actions{align-self:start}}
+</style></head><body><main>
+<header><div><h1>▣ Обложки Instagram Reels</h1><p>Каждый аккаунт — своя обложка. Здесь видно именно сохранённое изображение.</p></div><a class="back" href="/">← К публикациям</a></header>
+<div class="stats"><div class="stat"><strong id="connected">—</strong><span>Подключено аккаунтов</span></div><div class="stat"><strong id="saved">—</strong><span>Обложек сохранено</span></div><div class="stat"><strong id="ready">—</strong><span>Готовность выбранных слотов</span></div></div>
+<div id="items"></div></main>
+<script>
 const root=document.getElementById('items');
-for(let i=1;i<=5;i++){let el=document.createElement('section');
-el.innerHTML='<h3></h3><input type="file" accept="image/png,image/jpeg"><button>Сохранить</button><span></span>';
-el.querySelector('h3').textContent='Instagram #'+i+' — загрузка аккаунта…';
-let inp=el.querySelector('input'),btn=el.querySelector('button'),out=el.querySelector('span');
-btn.onclick=async()=>{if(!inp.files.length)return;let form=new FormData();form.append('file',inp.files[0]);
-let r=await fetch('/api/instagram/covers/'+i,{method:'POST',body:form});
-out.textContent=r.ok?' ✓ Сохранено':' Ошибка: '+await r.text();};root.append(el);}
-fetch('/api/instagram/covers').then(r=>{if(!r.ok)throw Error('Ошибка API');return r.json()}).then(d=>{
-const accounts=new Map((d.accounts||[]).map(a=>[Number(a.slot),a]));
-[...root.children].forEach((el,i)=>{
-const slot=i+1,account=accounts.get(slot);
-el.querySelector('h3').textContent='Instagram #'+slot+' — '+(account?(account.label||'Подключённый аккаунт'):'Не подключён');
-if(d.covers[String(slot)])el.querySelector('span').textContent=' ✓ Обложка сохранена';
-});
-}).catch(()=>{[...root.children].forEach((el,i)=>{el.querySelector('h3').textContent='Instagram #'+(i+1)+' — ошибка загрузки';});});
-</script></html>""")
-
+function card(slot,account,exists){
+ const el=document.createElement('section');el.className='cover-card';
+ const name=account?(account.label||'Подключённый аккаунт'):'Не подключён';
+ const id=document.createElement('div');id.className='identity';
+ const num=document.createElement('span');num.className='number';num.textContent=slot;
+ const info=document.createElement('div');const title=document.createElement('div');title.className='handle';title.textContent=name;
+ const sub=document.createElement('div');sub.className='sub';sub.textContent='Instagram #'+slot+' · '+(account?'Аккаунт подключён':'Требуется подключение');
+ info.append(title,sub);id.append(num,info);
+ const imageWrap=document.createElement('div');
+ const status=document.createElement('div');status.className='status'+(exists?'':' empty');status.textContent=exists?'✓ Обложка сохранена':'Обложка не загружена';
+ const controls=document.createElement('div');controls.className='actions';
+ const label=document.createElement('label');label.className='upload';label.textContent=exists?'↥ Заменить обложку':'↥ Загрузить обложку';
+ const input=document.createElement('input');input.type='file';input.accept='image/png,image/jpeg';label.append(input);
+ const hint=document.createElement('div');hint.className='hint';hint.textContent='JPG или PNG · до 8 МБ';
+ const message=document.createElement('div');message.className='error';
+ function show(url){imageWrap.replaceChildren();const img=document.createElement('img');img.className='preview';img.alt='Обложка аккаунта '+name;img.src=url;img.onerror=()=>{imageWrap.textContent='Не удалось показать обложку';};imageWrap.append(img);}
+ if(exists)show('/api/instagram/covers/'+slot+'/preview?v='+Date.now());
+ else{const ph=document.createElement('div');ph.className='placeholder';ph.textContent='Нет обложки';imageWrap.append(ph);}
+ input.onchange=async()=>{
+  const file=input.files[0];if(!file)return;
+  message.textContent='';
+  if(file.size>8*1024*1024){message.textContent='Файл больше 8 МБ';return;}
+  label.style.opacity='.6';const data=new FormData();data.append('file',file);
+  try{const response=await fetch('/api/instagram/covers/'+slot,{method:'POST',body:data});
+   if(!response.ok)throw Error(await response.text());
+   show('/api/instagram/covers/'+slot+'/preview?v='+Date.now());
+   status.textContent='✓ Обложка сохранена';status.className='status';
+   label.firstChild.textContent='↥ Заменить обложку';await refreshCounters();
+  }catch(e){message.textContent='Не удалось сохранить: '+e.message;}
+  finally{label.style.opacity='1';input.value='';}
+ };
+ controls.append(status,label,hint,message);el.append(id,imageWrap,controls);root.append(el);
+}
+async function refreshCounters(){
+ const r=await fetch('/api/instagram/covers',{cache:'no-store'});if(!r.ok)throw Error('Ошибка загрузки');
+ const d=await r.json();const accounts=new Map((d.accounts||[]).map(a=>[Number(a.slot),a]));
+ const count=[1,2,3,4,5].filter(x=>accounts.has(x)).length;
+ const saved=[1,2,3,4,5].filter(x=>d.covers[String(x)]).length;
+ document.getElementById('connected').textContent=count+' / 5';
+ document.getElementById('saved').textContent=saved+' / 5';
+ document.getElementById('ready').textContent=[1,2,3,4,5].every(x=>accounts.has(x)&&d.covers[String(x)])?'✓ Готово':'Нужны настройки';
+ return {accounts,d};
+}
+async function init(){try{const {accounts,d}=await refreshCounters();root.replaceChildren();for(let slot=1;slot<=5;slot++)card(slot,accounts.get(slot),!!d.covers[String(slot)]);}
+ catch(e){root.textContent='Не удалось загрузить настройки: '+e.message;}}
+init();
+</script></body></html>""")
 
 
 @app.get("/media/{token}")
