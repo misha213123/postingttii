@@ -460,9 +460,31 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         _save_batch_job(job)
 
 
+def _active_batch_jobs() -> list[dict]:
+    """Find server-side jobs even when their id is missing from browser storage."""
+    return [
+        job for job in BATCH_JOBS.values()
+        if job.get("status") in {"queued", "running", "waiting"}
+    ]
+
+
+@app.get("/api/batch/active")
+async def batch_active():
+    jobs = _active_batch_jobs()
+    return {
+        "job_id": jobs[0]["id"] if jobs else None,
+        "jobs": [
+            {"id": job["id"], "status": job.get("status"),
+             "completed_videos": job.get("completed_videos", 0),
+             "total_videos": job.get("total_videos", 0)}
+            for job in jobs
+        ],
+    }
+
+
 @app.post("/api/batch/start")
 async def batch_start(body: BatchPublishRequest):
-    if any(j.get("status") in {"queued", "running", "waiting"} for j in BATCH_JOBS.values()):
+    if _active_batch_jobs():
         raise HTTPException(409, "Сначала останови или заверши текущую очередь")
     filenames = list(dict.fromkeys(Path(x).name for x in body.filenames))
     if body.shuffle_videos:
