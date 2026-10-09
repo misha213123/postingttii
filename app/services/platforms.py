@@ -397,10 +397,17 @@ async def tiktok_upload(slot: int, video_path: Path, caption: str) -> dict:
     return {"id": publish_id, "platform": "tiktok", "slot": slot}
 
 
-def instagram_auth_url(state: str) -> str:
+def _instagram_app(slot: int) -> tuple[str, str, str]:
+    if slot >= 6:
+        return settings.instagram_client_id_2, settings.instagram_client_secret_2, settings.instagram_redirect_uri_2
+    return settings.instagram_client_id, settings.instagram_client_secret, settings.instagram_redirect_uri
+
+
+def instagram_auth_url(state: str, slot: int = 1) -> str:
+    client_id, _, redirect_uri = _instagram_app(slot)
     params = {
-        "client_id": settings.instagram_client_id,
-        "redirect_uri": settings.instagram_redirect_uri,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "instagram_business_basic,instagram_business_content_publish",
         "state": state,
@@ -410,16 +417,17 @@ def instagram_auth_url(state: str) -> str:
     return "https://www.instagram.com/oauth/authorize?" + urlencode(params)
 
 
-async def instagram_exchange(code: str) -> dict:
+async def instagram_exchange(code: str, slot: int = 1) -> dict:
+    client_id, client_secret, redirect_uri = _instagram_app(slot)
     code = code.replace("#_", "")
     async with httpx.AsyncClient(timeout=30) as client:
         short = await client.post(
             "https://api.instagram.com/oauth/access_token",
             data={
-                "client_id": settings.instagram_client_id,
-                "client_secret": settings.instagram_client_secret,
+                "client_id": client_id,
+                "client_secret": client_secret,
                 "grant_type": "authorization_code",
-                "redirect_uri": settings.instagram_redirect_uri,
+                "redirect_uri": redirect_uri,
                 "code": code,
             },
         )
@@ -431,7 +439,7 @@ async def instagram_exchange(code: str) -> dict:
             "https://graph.instagram.com/access_token",
             params={
                 "grant_type": "ig_exchange_token",
-                "client_secret": settings.instagram_client_secret,
+                "client_secret": client_secret,
                 "access_token": short_token["access_token"],
             },
         )
