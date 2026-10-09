@@ -115,6 +115,8 @@ class BatchPublishRequest(BaseModel):
     targets: list[str]
     interval_seconds: int = 60
     interval_max_seconds: int = 160
+    wave_min_minutes: int = 22
+    wave_max_minutes: int = 28
     shuffle_videos: bool = True
     hint: str = ""
     captions: dict[str, str] = Field(default_factory=dict)
@@ -424,7 +426,19 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             job["completed_videos"] = index + 1
             _save_batch_job(job)
             if index < len(body.filenames) - 1:
-                wait = secrets.SystemRandom().randint(body.interval_seconds, body.interval_max_seconds)
+                # Two clips per wave. Pause 22–28 minutes after each pair;
+                # inside each pair use the shorter 60–160 second gap.
+                after_pair = (index + 1) % 2 == 0
+                wait = (
+                    secrets.SystemRandom().randint(
+                        body.wave_min_minutes * 60, body.wave_max_minutes * 60
+                    )
+                    if after_pair
+                    else secrets.SystemRandom().randint(
+                        body.interval_seconds, body.interval_max_seconds
+                    )
+                )
+                job["wait_kind"] = "between_waves" if after_pair else "within_wave"
                 job["next_video_at"] = int(time.time() + wait)
                 job["status"] = "waiting"
                 _save_batch_job(job)
@@ -459,6 +473,8 @@ async def batch_start(body: BatchPublishRequest):
         raise HTTPException(400, "Выбери хотя бы один аккаунт")
     if not 60 <= body.interval_seconds <= body.interval_max_seconds <= 86400:
         raise HTTPException(400, "Пауза должна быть от 60 секунд")
+    if not 1 <= body.wave_min_minutes <= body.wave_max_minutes <= 1440:
+        raise HTTPException(400, "Некорректная пауза между волнами")
 
     for filename in filenames:
         _safe_video(filename)
@@ -482,6 +498,8 @@ async def batch_start(body: BatchPublishRequest):
         targets=targets,
         interval_seconds=body.interval_seconds,
         interval_max_seconds=body.interval_max_seconds,
+        wave_min_minutes=body.wave_min_minutes,
+        wave_max_minutes=body.wave_max_minutes,
         shuffle_videos=body.shuffle_videos,
         hint=body.hint,
         captions={
@@ -501,6 +519,8 @@ async def batch_start(body: BatchPublishRequest):
         "total_videos": len(filenames),
         "interval_seconds": body.interval_seconds,
         "interval_max_seconds": body.interval_max_seconds,
+        "wave_min_minutes": body.wave_min_minutes,
+        "wave_max_minutes": body.wave_max_minutes,
         "targets": targets,
         "cancel_requested": False,
         "error": "",
