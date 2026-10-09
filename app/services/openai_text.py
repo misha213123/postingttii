@@ -2,8 +2,6 @@
 from __future__ import annotations
 import hashlib
 import re
-from openai import OpenAI
-from app.config import settings
 
 SHORT_JA = (
     "突然の出来事に注目！",
@@ -51,47 +49,28 @@ LONG_ZH = (
     "世界上有许多值得记录的奇妙时刻。从轻松有趣的反应到令人意外的发展，这些画面让人发现生活中不同寻常的一面。",
     "一个瞬间也能带来许多惊喜！日常中的特别画面与有趣变化，让普通的故事呈现出不一样的魅力。",
 )
-CAPTION_BANK = SHORT_JA + LONG_JA + LONG_ZH
-
-def _clean_caption(value: str) -> str:
-    value = re.sub(r"#[^\s#]+", "", value)
-    value = re.sub(r"[A-Za-zＡ-Ｚａ-ｚ]+", "", value)
-    value = re.sub(r"[\U00010000-\U0010ffff\u2600-\u27bf]", "", value)
-    value = re.sub(r"[ \t]+", " ", value)
-    return re.sub(r"\n{3,}", "\n\n", value).strip(" \n\t#")
+EXTRA_JA = (
+    "◆注目のワンシーン\nいつもの風景に突然現れた意外な展開。思いがけない動きと絶妙なタイミングが重なり、目が離せない瞬間になりました！\n◆見どころ\n・予想外の展開\n・自然なリアクション\n・最後の一瞬まで注目！",
+    "話題のユニークな瞬間をお届け！\n何気ない場面で生まれた思いがけない出来事に、思わず二度見してしまうかもしれません。細かな表情や周囲の反応にもぜひ注目してください！\n◆今回のポイント：意外性と絶妙なタイミング",
+    "◆新しい発見\n日常の一場面にも、想像を超える面白さが隠れています。ちょっとした偶然が生んだユニークな展開と、忘れられないワンシーンを紹介します！\n◆注目ポイント\n・意外な動き\n・印象的な反応\n・何度も見たくなる瞬間",
+    "今回ご紹介するのは、思わず見入ってしまう印象的なワンシーン！\n予想とは違う展開が続き、何気ない出来事が特別な瞬間に変わっていきます。あなたはこの展開を予想できましたか？",
+    "◆話題の瞬間をチェック！\n見慣れた景色の中に現れたちょっと不思議な出来事。意外なタイミングで変わる展開とユニークなリアクションに注目です！\n次の瞬間に何が起こるのか、最後までお楽しみください。",
+    "世界の面白い瞬間をピックアップ！\n何気ない日常の中で起こる予想外の出来事や、思わず笑ってしまう反応をお届けします。今回も印象に残るワンシーンをお楽しみください！",
+    "◆今回の見どころ\n普通の一日が思いがけない出来事で一変！ちょっと変わった展開と自然なリアクションが重なり、忘れられない瞬間になりました。\n・注目のシーン\n・予想外の反応\n・最後の展開にも注目",
+    "新しいワンシーンを公開！\n身近な場所で生まれた不思議な出来事と、思わず目を奪われる意外な展開を紹介します。映像の細かな部分にも注目すると、新たな発見があるかもしれません。",
+)
+EXTRA_ZH = (
+    "◆精彩瞬间\n原本平静的画面突然迎来意想不到的变化！独特的反应与巧妙的时机交织在一起，让这一幕格外令人难忘。\n◆本期看点：意外的发展、真实的反应、精彩的瞬间。",
+    "这一次带来一个令人印象深刻的特别片段！看似普通的日常，却在转眼之间出现了意想不到的转折。细节之中藏着惊喜，值得再看一遍！",
+    "◆最新片段分享\n日常生活中的有趣画面总能带来新的发现。从出人意料的变化到自然生动的反应，每一秒都有值得关注的小细节！",
+    "精彩画面持续分享中！独特的场景、意想不到的发展和让人会心一笑的瞬间，让这个普通的片段有了不一样的魅力。",
+)
+CAPTION_BANK = LONG_JA + EXTRA_JA + LONG_ZH + EXTRA_ZH
 
 def _choice(filename: str, target: str = "", salt: str = "") -> int:
-    seed = (filename + "\0" + target + "\0" + salt).encode("utf-8")
+    seed = (filename + "\\0" + target + "\\0" + salt).encode("utf-8")
     return int.from_bytes(hashlib.sha256(seed).digest()[:8], "big")
 
 def generate_caption(filename: str, hint: str = "", target: str = "") -> str:
-    """Different target/video pairs get stable, varied captions without tags."""
-    index = _choice(filename, target) % len(CAPTION_BANK)
-    fallback = CAPTION_BANK[index]
-    if not settings.openai_api_key:
-        return fallback
-    style = ("short_ja", "long_ja", "long_zh")[_choice(filename, target, "style") % 3]
-    style_prompt = {
-        "short_ja": "Одна короткая подпись на японском, до 40 символов.",
-        "long_ja": "Три предложения на японском, в стиле развлекательной заметки.",
-        "long_zh": "Три предложения на упрощённом китайском, в стиле развлекательной заметки.",
-    }[style]
-    prompt = f"""Напиши подпись для короткого развлекательного ролика.
-Стиль как у японских и китайских развлекательных страниц: выразительно,
-но без утверждений о конкретных событиях, которых ты не видел.
-{style_prompt}
-Подсказка пользователя: {hint or 'нет'}.
-Имя файла (не подтверждение содержания): {filename}.
-Сохрани стиль и структуру, но придумай собственный текст.
-Не упоминай чужие бренды, персонажей, новости и факты без контекста.
-Без хештегов, эмодзи, латинских букв и английских слов.
-Верни только подпись."""
-    try:
-        response = OpenAI(api_key=settings.openai_api_key).responses.create(
-            model=settings.openai_model, input=prompt,
-            reasoning={"effort": "minimal"}, max_output_tokens=450, store=False,
-        )
-        result = _clean_caption(response.output_text or "")
-        return result if len(result) >= 12 else fallback
-    except Exception:
-        return fallback
+    """Offline, deterministic original Japanese/Chinese entertainment captions."""
+    return CAPTION_BANK[_choice(filename, target) % len(CAPTION_BANK)]
