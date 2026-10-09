@@ -6,6 +6,7 @@ store the CLI alias in PostingTTII, never a copy of TikTok cookies or tokens.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 from pathlib import Path
@@ -69,6 +70,14 @@ async def publish(slot: int, video_path: Path, caption: str) -> dict:
     alias = validate_name(str(account.get("autotok_account", "")))
     if not video_path.is_file():
         raise RuntimeError("Видео не найдено: " + str(video_path))
+
+    # Only the second account takes the separate UI path, with the existing
+    # AutoTok session. Never try both uploaders for the same video: a failed
+    # publication acknowledgment must not trigger a duplicate post.
+    browser_mode = os.getenv("TIKTOK_ACCOUNT2_BROWSER", "1").strip().lower()
+    if slot == 2 and alias == "account2" and browser_mode in {"1", "true", "yes", "on"}:
+        from app.services.tiktok_browser_upload import publish_browser_account2
+        return await asyncio.to_thread(publish_browser_account2, video_path, caption, alias)
 
     # -vi 0 = public.  AutoTok is called as a child process, not as a shell.
     # Never retry automatically on an ambiguous result: that could duplicate posts.
