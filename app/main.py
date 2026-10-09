@@ -424,9 +424,11 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             for position, (index, filename) in enumerate(pair):
                 if job.get("cancel_requested"):
                     break
-                # The second clip in the same wave skips only our own cooldown.
+                # The batch scheduler owns the pause between waves. Its local
+                # per-account cooldown must not reject either clip in a pair,
+                # including the first clip after a previous batch run.
                 ok = await publish_one(
-                    target, index, filename, cycle_second=(position == 1)
+                    target, index, filename, cycle_second=True
                 )
                 succeeded = succeeded or ok
             return succeeded
