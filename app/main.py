@@ -404,6 +404,12 @@ async def restore_batch_jobs():
                 asyncio.create_task(_archive_after_publish(job["id"], entry))
             if job["status"] in {"done", "cancelled", "error"}:
                 continue
+            # A stop request must survive an application restart.
+            if job.get("cancel_requested"):
+                job["status"] = "cancelled"
+                job["finished_at"] = int(time.time())
+                _save_batch_job(job)
+                continue
             if job.get("assignment_mode") != "one_video_one_account":
                 # An older job sent each file to every account. Do not replay it.
                 job["status"] = "cancelled"
@@ -716,9 +722,12 @@ async def batch_cancel(job_id: str):
     if not job:
         raise HTTPException(404, "Очередь не найдена")
     if job["status"] in {"done", "cancelled", "error"}:
-        return job
+        return {"ok": True, "status": job["status"], "cancel_requested": False}
     job["cancel_requested"] = True
-    return {"ok": True}
+    # Persist immediately. The worker finishes its in-flight API request,
+    # but will not start another video or restart on the next app launch.
+    _save_batch_job(job)
+    return {"ok": True, "status": job["status"], "cancel_requested": True}
 
 
 @app.post("/api/publish-target")
