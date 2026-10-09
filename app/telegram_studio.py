@@ -359,7 +359,9 @@ def render(source: Path, bg: Path, target: Path):
         raise ValueError("Некорректная длительность")
     offset = random.uniform(0, max(0, bg_seconds - seconds))
     # Enlarge circular videos to 980px within the 1080px-wide frame.
-    # Keep the circular clip near the top (150px margin) so the background\n    # artwork/cover remains visible in the lower part of the final Reel.\n    # Overlay square with transparent corners, preserving the original audio.
+    # Keep the circular clip near the top (150px margin) so the background
+    # artwork/cover remains visible in the lower part of the final Reel.
+    # Overlay square with transparent corners, preserving the original audio.
     filt = ("[0:v]scale=980:980:force_original_aspect_ratio=increase:flags=lanczos,"
             "crop=980:980,format=rgba,"
             "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
