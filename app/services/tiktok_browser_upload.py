@@ -122,15 +122,48 @@ def _public_selected(page) -> bool:
     return False
 
 
-def _diagnostic_screenshot(page) -> str:
+def _active_page(context, page, phase: str):
+    """Follow an existing TikTok Studio tab if the site replaces its window.
+
+    Never launch a fresh browser here: that might retry a submitted post.
+    """
+    if not page.is_closed():
+        return page
+    try:
+        candidates = [
+            p for p in context.pages
+            if not p.is_closed() and "tiktok.com" in p.url.split("/", 3)[2]
+        ]
+    except Exception as exc:
+        raise RuntimeError(
+            f"Браузер Chrome отключился на этапе {phase}; публикация не подтверждена"
+        ) from exc
+    if candidates:
+        return candidates[-1]
+    raise RuntimeError(
+        f"Вкладка TikTok Studio закрылась на этапе {phase}; "
+        "других открытых вкладок TikTok не найдено"
+    )
+
+
+def _diagnostic_screenshot(page, context=None) -> str:
     destination = settings.data_dir / "tiktok_browser_errors"
     destination.mkdir(parents=True, exist_ok=True)
     path = destination / f"account2_{int(time.time())}.png"
-    try:
-        page.screenshot(path=str(path), full_page=False, timeout=10000)
-        return str(path)
-    except Exception:
-        return "не удалось сохранить скриншот"
+    pages = [page]
+    if context is not None:
+        try:
+            pages += [p for p in context.pages if p != page]
+        except Exception:
+            pass
+    for candidate in pages:
+        try:
+            if not candidate.is_closed():
+                candidate.screenshot(path=str(path), full_page=False, timeout=10000)
+                return str(path)
+        except Exception:
+            continue
+    return "браузер уже закрылся — скриншот недоступен"
 
 
 def publish_browser_account2(video: Path, caption: str, alias: str = "account2") -> dict:
@@ -152,74 +185,96 @@ def publish_browser_account2(video: Path, caption: str, alias: str = "account2")
         context.add_cookies(cookies)
         page = context.new_page()
         posted = False
+        phase = "открытие TikTok Studio"
+        events: list[str] = []
+        page.on("close", lambda _: events.append("исходная вкладка закрыта"))
+        browser.on("disconnected", lambda _: events.append("Chrome отключился"))
+        context.on("page", lambda _: events.append("открылась новая вкладка"))
         try:
             page.goto(STUDIO_UPLOAD_URL, wait_until="domcontentloaded", timeout=90000)
             if "login" in page.url.lower():
                 raise RuntimeError("TikTok перенаправил на вход; проверь сохранённую сессию account2")
 
+            phase = "поиск поля загрузки"
             file_input = None
             for _ in range(90):
+                page = _active_page(context, page, phase)
                 _dismiss_onboarding(page)
                 file_input = _find_file_input(page)
                 if file_input:
                     break
                 if "login" in page.url.lower():
                     raise RuntimeError("Вход в TikTok Studio не подтверждён")
-                page.wait_for_timeout(1000)
+                time.sleep(1)
             if file_input is None:
                 raise RuntimeError("TikTok Studio не показал поле загрузки MP4")
 
+            phase = "передача видео TikTok Studio"
             file_input.set_input_files(str(video), timeout=30000)
+            phase = "ожидание редактора описания"
             editor = None
             for _ in range(120):
+                page = _active_page(context, page, phase)
                 editor = _find_editor(page)
                 if editor:
                     break
-                page.wait_for_timeout(1000)
+                time.sleep(1)
             if editor is None:
                 raise RuntimeError("TikTok Studio не показал редактор описания")
+            phase = "ввод описания"
             editor.fill(caption[:2200], timeout=15000)
 
             # Do not override an account's privacy/age-related restrictions.
             # Abort before clicking Post if the UI does not show a public option.
+            phase = "проверка аудитории Public"
+            page = _active_page(context, page, phase)
             if not _public_selected(page):
                 raise RuntimeError("Не вижу в TikTok Studio настройки Public/Everyone; публикация отменена")
 
+            phase = "ожидание готовности кнопки Post"
             button = None
             for _ in range(240):
+                page = _active_page(context, page, phase)
                 _dismiss_onboarding(page)
                 button = _find_post_button(page)
                 if button and button.is_enabled():
                     break
-                page.wait_for_timeout(1000)
+                time.sleep(1)
             if button is None or not button.is_enabled():
                 raise RuntimeError("TikTok Studio не разрешил публикацию (обработка или ограничение)")
+            phase = "нажатие кнопки Post"
             button.click(timeout=15000)
             posted = True
+            phase = "подтверждение публикации"
 
             # Do not retry a submitted Post even if confirmation times out.
             for _ in range(80):
+                page = _active_page(context, page, phase)
                 if "/tiktokstudio/content" in page.url:
                     return {
                         "id": None, "platform": "tiktok", "provider": "browser",
                         "slot": 2, "confirmation": "TikTok Studio content page",
                         "visibility": "public",
                     }
-                page.wait_for_timeout(1000)
+                time.sleep(1)
             raise RuntimeError(
                 "Кнопка Post нажата, но подтверждения от TikTok Studio нет. "
                 "Возможно, публикация прошла — проверь account2 перед повтором."
             )
         except Exception as exc:
-            screenshot = _diagnostic_screenshot(page)
-            phase = "после нажатия Post" if posted else "до нажатия Post"
+            screenshot = _diagnostic_screenshot(page, context)
+            click_state = "после нажатия Post" if posted else "до нажатия Post"
+            event_summary = ", ".join(events[-4:]) if events else "событий закрытия нет"
             raise RuntimeError(
-                f"Браузер TikTok account2 ({phase}): {exc}. "
-                f"Скриншот ошибки: {screenshot}"
+                f"Браузер TikTok account2 ({click_state}; этап: {phase}): {exc}. "
+                f"События: {event_summary}. Скриншот ошибки: {screenshot}"
             ) from exc
         finally:
-            context.close()
-            browser.close()
+            for resource in (context, browser):
+                try:
+                    resource.close()
+                except Exception:
+                    pass
 
 
 
