@@ -46,6 +46,13 @@ class Settings:
         "INSTAGRAM_REDIRECT_URI",
         "http://127.0.0.1:8765/auth/instagram/callback",
     )
+    # Posting23: separate credentials for Instagram accounts 6-8.
+    instagram_client_id_2: str = os.getenv("INSTAGRAM_CLIENT_ID_2", "")
+    instagram_client_secret_2: str = os.getenv("INSTAGRAM_CLIENT_SECRET_2", "")
+    instagram_redirect_uri_2: str = os.getenv(
+        "INSTAGRAM_REDIRECT_URI_2",
+        os.getenv("INSTAGRAM_REDIRECT_URI", "http://127.0.0.1:8765/auth/instagram/callback"),
+    )
     instagram_graph_version: str = os.getenv("INSTAGRAM_GRAPH_VERSION", "v25.0")
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
