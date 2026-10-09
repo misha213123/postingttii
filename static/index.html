@@ -286,7 +286,15 @@ function renderBatchTargets(){
 }
 
 function syncIntervalMin(){
-  document.getElementById('cadenceNote').textContent='Каждая волна — 2 ролика на все выбранные аккаунты. Между роликами 60–160 секунд, между волнами 22–28 минут. Ограничения аккаунтов учитываются.';
+  const shortMin=document.getElementById('intervalSeconds').value;
+  const shortMax=document.getElementById('intervalMaxSeconds').value;
+  const longMin=document.getElementById('waveMinMinutes').value;
+  const longMax=document.getElementById('waveMaxMinutes').value;
+  document.getElementById('cadenceNote').textContent='Каждая волна — 2 ролика на все выбранные аккаунты. Между роликами '+shortMin+'–'+shortMax+' секунд; после каждой пары '+longMin+'–'+longMax+' минут. Ограничения API учитываются.';
+}
+
+for(const id of ['intervalSeconds','intervalMaxSeconds','waveMinMinutes','waveMaxMinutes']){
+  document.getElementById(id)?.addEventListener('input',syncIntervalMin);
 }
 
 async function discoverActiveJob(){
@@ -371,7 +379,10 @@ function renderJob(job){
   else if(job.status==='running')next='сейчас';
   document.getElementById('statNext').textContent=next;
   const labels={queued:'Очередь создана',running:'Публикую',waiting:'Ожидание между публикациями',waiting_account:'Жду паузу аккаунта',done:'Очередь завершена',cancelled:'Очередь остановлена',error:'Ошибка очереди'};
-  document.getElementById('queueSubtitle').textContent=labels[job.status]||job.status;
+  const subtitle=job.status==='waiting'
+    ?(job.wait_kind==='between_waves'?'Длинная пауза между парами':'Короткая пауза перед вторым роликом')
+    :(labels[job.status]||job.status);
+  document.getElementById('queueSubtitle').textContent=subtitle;
   document.getElementById('cancelBatch').disabled=['done','cancelled','error'].includes(job.status);
   const root=document.getElementById('jobList');
   const items=job.items||[];
