@@ -148,12 +148,13 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 
       <div class="muted" style="font-size:12px">Куда публиковать</div>
       <div class="target-list" id="batchTargets"></div>
+      <div class="note" id="assignmentPreview"></div>
 
       <div class="field"><label for="intervalSeconds">Пауза между волнами, от (сек)</label><input id="intervalSeconds" type="number" min="60" max="86400" value="60" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
       <div class="field"><label for="intervalMaxSeconds">До (сек)</label><input id="intervalMaxSeconds" type="number" min="60" max="86400" value="160" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
       <div class="field"><label>Пауза между волнами (мин)</label><div style="display:flex;gap:8px"><input id="waveMinMinutes" type="number" min="1" max="1440" value="22" style="width:50%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"><input id="waveMaxMinutes" type="number" min="1" max="1440" value="28" style="width:50%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div></div>
       <label class="muted" style="display:flex;gap:8px;align-items:center;margin:10px 0"><input type="checkbox" id="shuffleVideos" checked> Перемешивать видео перед запуском</label>
-      <div class="ai-note">✨ Японское описание без хештегов OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
+      <div class="ai-note">✨ Для Instagram сохраняются японские описания и шаблоны. Для TikTok OpenAI отдельно создаёт описание с хештегами. AI вызывается только при публикации.</div>
       <div class="note" id="cadenceNote"></div>
       <button class="primary start" id="startBatch" onclick="startBatch()">Запустить очередь</button>
     </aside>
@@ -233,8 +234,61 @@ function renderPlatforms(){
   }
   refreshCoverStates();
   const t=document.createElement('div');t.className='card platform';
-  t.innerHTML='<div class="platform-head"><h3>TikTok</h3><span class="bad" style="font-size:11px">Отключён</span></div><div class="muted" style="font-size:12px">Не участвует в очереди, пока приложение проходит проверку.</div>';
-  root.appendChild(t);
+  const ready=!!state.configured.autotok;
+  t.innerHTML='<div class="platform-head"><h3>TikTok</h3><span class="'+(ready?'good':'bad')+'" style="font-size:11px">'+(ready?'AutoTok готов':'AutoTok не найден')+'</span></div>';
+  const accounts=document.createElement('div');accounts.className='account-row';
+  for(const slot of [1,2]){
+    const a=connected('tiktok',slot);
+    const section=document.createElement('div');section.className='account';
+    const heading=document.createElement('b');heading.textContent='TikTok #'+slot;section.append(heading);
+    const label=document.createElement('div');label.className='label '+(a?'good':'muted');
+    label.textContent=a?(a.label||'Подключён'):'Не подключён';section.append(label);
+    if(a){
+      const button=document.createElement('button');button.className='danger';
+      button.textContent='Отключить';button.onclick=()=>disconnect('tiktok',slot);
+      section.append(button);
+    }else{
+      for(const [mode,title] of [['import','Импорт'],['login','Войти']]){
+        const button=document.createElement('button');button.className='secondary';
+        button.textContent=title;button.style.marginRight='5px';
+        button.onclick=()=>connectTikTok(slot,mode);
+        section.append(button);
+      }
+    }
+    accounts.append(section);
+  }
+  t.append(accounts);
+  const note=document.createElement('p');note.className='note';
+  note.textContent='Импорт — подключить существующий account1. Войти — открыть новый вход AutoTok. TikTok-описания генерируются OpenAI отдельно от Instagram.';
+  t.append(note);root.appendChild(t);
+}
+
+async function connectTikTok(slot,mode){
+  if(!state.configured.autotok){alert('Установи AutoTok: uv tool install autotok');return;}
+  const name=prompt(mode==='import'?'Имя уже подключённого AutoTok аккаунта':'Имя новой сессии AutoTok','account'+slot);
+  if(!name)return;
+  try{
+    const r=await fetch('/api/autotok/'+mode,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({slot,name:name.trim()})
+    });
+    const data=await r.json();
+    if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
+    if(mode==='import'){await load();return;}
+    alert('AutoTok откроет браузер для входа. После авторизации дождись подтверждения в панели.');
+    const timer=setInterval(async()=>{
+      try{
+        const res=await fetch('/api/autotok/login/'+slot);
+        const status=await res.json();
+        if(status.status==='done'){
+          clearInterval(timer);await load();
+        }else if(status.status==='error'){
+          clearInterval(timer);alert('TikTok: '+status.error);
+        }
+      }catch(err){console.warn('Проверка входа AutoTok:',err);}
+    },3000);
+    setTimeout(()=>clearInterval(timer),10*60*1000);
+  }catch(err){alert('TikTok: '+err.message);}
 }
 
 async function refreshCoverStates(){
@@ -274,17 +328,34 @@ function toggleVideo(encoded){
 }
 function selectAllVideos(){for(const v of state.videos||[])selectedVideos.add(v.name);updateSelectedCount();renderVideos();}
 function clearVideos(){selectedVideos.clear();updateSelectedCount();renderVideos();}
-function updateSelectedCount(){document.getElementById('selectedCount').textContent=selectedVideos.size;}
+function updateSelectedCount(){
+  document.getElementById('selectedCount').textContent=selectedVideos.size;
+  updateAssignmentPreview();
+}
+
+function updateAssignmentPreview(){
+  const el=document.getElementById('assignmentPreview');
+  if(!el)return;
+  const accounts=[...document.querySelectorAll('.batch-target:checked')].map(x=>x.value);
+  const count=selectedVideos.size;
+  if(!accounts.length){el.textContent='Выбери аккаунты для публикации.';return;}
+  const missing=Math.max(0,accounts.length-count);
+  el.textContent=missing?
+    'Внимание: '+count+' видео на '+accounts.length+' аккаунтов. '+missing+' аккаунт(а) останутся без публикации. Выбери дополнительные ролики или отключи лишние аккаунты.':
+    'Выбрано '+count+' уникальных видео на '+accounts.length+' аккаунтов. Каждый файл получит только один аккаунт; YouTube и TikTok получат разные ролики.';
+}
 
 function renderBatchTargets(){
   const root=document.getElementById('batchTargets');let html='';
-  for(const platform of ['youtube','instagram']){
+  for(const platform of ['youtube','instagram','tiktok']){
     for(const a of (state.accounts[platform]||[])){
       const target=platform+':'+a.slot,cooldown=Number((state.cooldowns||{})[target]||0);
       html+='<label class="target"><input type="checkbox" class="batch-target" value="'+esc(target)+'" checked><span><b>'+prettyTarget(target)+'</b><br><small>'+esc(a.label||'')+'</small>'+(cooldown>0?'<br><span class="warn" style="font-size:10px">пауза '+fmtTime(cooldown)+'</span>':'')+'</span></label>';
     }
   }
   root.innerHTML=html||'<div class="muted">Нет подключённых аккаунтов.</div>';
+  root.querySelectorAll('.batch-target').forEach(input=>input.addEventListener('change',updateAssignmentPreview));
+  updateAssignmentPreview();
 }
 
 function syncIntervalMin(){
@@ -411,7 +482,7 @@ function renderJob(job){
   document.getElementById('statDone').title='Перенесено из inbox: '+(job.archived_count||0);
   const root=document.getElementById('jobList');
   const items=job.items||[];
-  const accounts=(job.targets||[]).filter(t=>t.startsWith('instagram:'));
+  const accounts=(job.targets||[]).filter(t=>['instagram:','tiktok:','youtube:'].some(prefix=>t.startsWith(prefix)));
   root.innerHTML='<div class="account-job-grid">'+accounts.map(target=>{
     const assigned=items.filter(item=>item.targets?.[target]);
     const completed=assigned.filter(item=>['done','already','error'].includes(item.targets?.[target]?.status)).length;
@@ -419,7 +490,10 @@ function renderJob(job){
     const t=active?.targets?.[target]||{};
     const finished=assigned.length>0&&completed===assigned.length;
     const percent=assigned.length?Math.round(completed/assigned.length*100):0;
-    const status=finished?'Готово':active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео';
+    const failed=assigned.find(item=>item.targets?.[target]?.status==='error');
+    const failureText=failed?.targets?.[target]?.message||'';
+    const status=failed?'Ошибка: '+failureText:
+      (finished?'Готово':active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео — выбери больше роликов');
     return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+completed+' / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(finished?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
   }).join('')+'</div><div class="queue-footnote">Аккаунты и текущие ролики. Подробный список файлов скрыт для компактности.</div>';
 }
