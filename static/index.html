@@ -232,10 +232,10 @@ function renderPlatforms(){
     const title=platform==='youtube'?'YouTube':'Instagram';
     const card=document.createElement('div');card.className='card platform';
     let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div><div class="account-row">';
-    for(const slot of [1,2]){
+    for(const slot of (platform==='instagram'?[1,2,3,4,5]:[1,2])){
       const a=connected(platform,slot);
       html+='<div class="account"><b>Аккаунт #'+slot+'</b>';
-      if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div><button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
+      if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div><a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Переподключить</a>';
       else html+='<div class="label muted">Не подключён</div><a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
       html+='</div>';
     }
