@@ -446,6 +446,8 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
 
 @app.post("/api/batch/start")
 async def batch_start(body: BatchPublishRequest):
+    if any(j.get("status") in {"queued", "running", "waiting"} for j in BATCH_JOBS.values()):
+        raise HTTPException(409, "Сначала останови или заверши текущую очередь")
     filenames = list(dict.fromkeys(Path(x).name for x in body.filenames))
     if body.shuffle_videos:
         secrets.SystemRandom().shuffle(filenames)
