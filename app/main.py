@@ -100,6 +100,18 @@ def _validate_tiktok_slot(slot: int) -> None:
         raise HTTPException(400, "Разрешены слоты TikTok 1 и 2")
 
 
+def _ensure_distinct_autotok_account(slot: int, name: str) -> None:
+    for other_slot in (1, 2):
+        if other_slot == slot:
+            continue
+        account = store.get("tiktok", other_slot) or {}
+        if account.get("provider") == "autotok" and account.get("autotok_account") == name:
+            raise HTTPException(409, "Этот AutoTok-аккаунт уже подключён к другому слоту")
+        pending = AUTOTOK_LOGINS.get(other_slot, {})
+        if pending.get("status") == "running" and pending.get("name") == name:
+            raise HTTPException(409, "Этот AutoTok-аккаунт уже подключается")
+
+
 async def _publish_tiktok(slot: int, video: Path, caption: str) -> dict:
     account = store.get("tiktok", slot)
     if account and account.get("provider") == "autotok":
@@ -163,6 +175,7 @@ async def autotok_import(body: AutotokAccountRequest):
     _validate_tiktok_slot(body.slot)
     try:
         name = autotok_bridge.validate_name(body.name)
+        _ensure_distinct_autotok_account(body.slot, name)
         await autotok_bridge.check_account(name)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -207,6 +220,7 @@ async def autotok_login(body: AutotokAccountRequest):
         name = autotok_bridge.validate_name(body.name)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    _ensure_distinct_autotok_account(body.slot, name)
     binary = autotok_bridge.executable()
     if not binary:
         raise HTTPException(503, "AutoTok не установлен: uv tool install autotok")
@@ -572,6 +586,8 @@ async def batch_start(body: BatchPublishRequest):
             active_files = {item["filename"] for item in other_job.get("items", [])}
             if any(name in active_files for name in filenames):
                 raise HTTPException(409, "Эти видео уже участвуют в другой очереди")
+            # Run one queue at a time: two queues must not race on account slots.
+            raise HTTPException(409, "Сначала останови или дождись завершения предыдущей очереди")
 
     allowed_targets = {
         f"{platform}:{account['slot']}"
