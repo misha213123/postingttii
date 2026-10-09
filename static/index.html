@@ -136,7 +136,30 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
       <div class="target-list" id="batchTargets"></div>
 
       <div class="field">
-        <label for="intervalMinutes">Интервал между роликами</label>
+        <label><input type="checkbox" id="uniquePerAccount" checked onchange="syncIntervalMin()"> Одно уникальное видео на один аккаунт</label>
+      </div>
+      <div id="burstSchedule">
+        <div class="field">
+          <label for="shortInterval">Между видео в серии</label>
+          <select id="shortInterval">
+            <option value="60">60 секунд</option>
+            <option value="90" selected>90 секунд</option>
+            <option value="120">120 секунд</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="longPause">Длинная пауза после 2 видео</label>
+          <select id="longPause">
+            <option value="15">15 минут</option>
+            <option value="20" selected>20 минут</option>
+            <option value="30">30 минут</option>
+            <option value="60">1 час</option>
+            <option value="120">2 часа</option>
+          </select>
+        </div>
+      </div>
+      <div class="field hidden" id="legacySchedule">
+        <label for="intervalMinutes">Интервал между роликами (общий файл на аккаунты)</label>
         <select id="intervalMinutes">
           <option value="15">15 минут</option>
           <option value="20" selected>20 минут</option>
@@ -256,7 +279,7 @@ function updateSelectedCount(){document.getElementById('selectedCount').textCont
 
 function renderBatchTargets(){
   const root=document.getElementById('batchTargets');let html='';
-  for(const platform of ['youtube','instagram']){
+  for(const platform of ['youtube','instagram','tiktok']){
     for(const a of (state.accounts[platform]||[])){
       const target=platform+':'+a.slot,cooldown=Number((state.cooldowns||{})[target]||0);
       html+='<label class="target"><input type="checkbox" class="batch-target" value="'+esc(target)+'" checked><span><b>'+prettyTarget(target)+'</b><br><small>'+esc(a.label||'')+'</small>'+(cooldown>0?'<br><span class="warn" style="font-size:10px">пауза '+fmtTime(cooldown)+'</span>':'')+'</span></label>';
@@ -269,7 +292,12 @@ function syncIntervalMin(){
   const select=document.getElementById('intervalMinutes'),min=Math.max(1,Number(state.post_cooldown_minutes||15));
   for(const o of [...select.options])o.disabled=Number(o.value)<min;
   if(Number(select.value)<min){const first=[...select.options].find(o=>!o.disabled);if(first)select.value=first.value;}
-  document.getElementById('cadenceNote').textContent='Минимальная пауза проекта: '+min+' мин. Очередь сама ждёт паузу аккаунта.';
+  const unique=document.getElementById('uniquePerAccount').checked;
+  document.getElementById('burstSchedule').classList.toggle('hidden',!unique);
+  document.getElementById('legacySchedule').classList.toggle('hidden',unique);
+  document.getElementById('cadenceNote').textContent=unique?
+    'Видео назначаются аккаунтам по кругу без повторов. После двух публикаций — длинная пауза. Если снова наступит очередь того же аккаунта, действует индивидуальная пауза '+min+' мин.':
+    'Минимальная пауза проекта: '+min+' мин. Один файл публикуется на все выбранные аккаунты.';
 }
 
 async function startBatch(){
@@ -282,11 +310,16 @@ async function startBatch(){
       filenames:[...selectedVideos],
       targets,
       interval_minutes:Number(document.getElementById('intervalMinutes').value),
+      unique_per_account:document.getElementById('uniquePerAccount').checked,
+      short_interval_seconds:Number(document.getElementById('shortInterval').value),
+      burst_size:2,
+      long_pause_minutes:Number(document.getElementById('longPause').value),
       hint:'',
       captions:{}
     })});
     const data=await r.json();
     if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
+    if(data.skipped_existing?.length)alert('Пропущено ранее опубликованных видео: '+data.skipped_existing.length);
     currentJobId=data.job_id;localStorage.setItem('postingttii_batch_job',currentJobId);
     document.getElementById('queuePanel').classList.remove('hidden');
     await resumeJob(currentJobId);
@@ -324,7 +357,9 @@ function targetText(t){
 function renderJob(job){
   document.getElementById('statTotal').textContent=job.total_videos||0;
   document.getElementById('statDone').textContent=job.completed_videos||0;
-  document.getElementById('statInterval').textContent=(job.interval_minutes||0)+' мин';
+  document.getElementById('statInterval').textContent=job.unique_per_account ?
+    (job.short_interval_seconds||90)+' с / '+(job.long_pause_minutes||20)+' мин' :
+    (job.interval_minutes||0)+' мин';
   let next='—';
   if(job.next_video_at)next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
   else if(job.status==='waiting_account')next='пауза аккаунта';
