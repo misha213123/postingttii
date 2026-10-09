@@ -116,7 +116,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
       <h1>PostingTTII</h1>
       <div class="muted">Массовая очередь публикаций</div>
     </div>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><a href="/telegram-studio" class="btn primary">◉ Telegram Studio</a><div class="muted" id="folder"></div></div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><a href="/instagram-covers" class="btn secondary">🖼 Обложки Instagram</a><a href="/telegram-studio" class="btn primary">◉ Telegram Studio</a><div class="muted" id="folder"></div></div>
   </div>
 
   <section class="accounts-strip" id="platforms"></section>
@@ -248,7 +248,7 @@ function renderPlatforms(){
 
 async function refreshCoverStates(){
  try{const r=await fetch('/api/instagram/covers');const d=await r.json();
- for(let i=1;i<=5;i++){const el=document.getElementById('cover-state-'+i);
+ for(let i=1;i<=8;i++){const el=document.getElementById('cover-state-'+i);
  if(el)el.textContent=d.covers?.[String(i)]?'✓ Сохранена':'Не выбрана';}}catch(e){}
 }
 async function saveCover(slot,input){
