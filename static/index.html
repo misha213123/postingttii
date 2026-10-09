@@ -151,6 +151,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 
       <div class="field"><label for="intervalSeconds">Пауза между волнами, от (сек)</label><input id="intervalSeconds" type="number" min="60" max="86400" value="60" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
       <div class="field"><label for="intervalMaxSeconds">До (сек)</label><input id="intervalMaxSeconds" type="number" min="60" max="86400" value="160" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
+      <div class="field"><label>Пауза между волнами (мин)</label><div style="display:flex;gap:8px"><input id="waveMinMinutes" type="number" min="1" max="1440" value="22" style="width:50%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"><input id="waveMaxMinutes" type="number" min="1" max="1440" value="28" style="width:50%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div></div>
       <label class="muted" style="display:flex;gap:8px;align-items:center;margin:10px 0"><input type="checkbox" id="shuffleVideos" checked> Перемешивать видео перед запуском</label>
       <div class="ai-note">✨ Японское описание без хештегов OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
       <div class="note" id="cadenceNote"></div>
@@ -285,7 +286,7 @@ function renderBatchTargets(){
 }
 
 function syncIntervalMin(){
-  document.getElementById('cadenceNote').textContent='Один ролик на все выбранные аккаунты параллельно. Между волнами 60–160 секунд; лимиты каждого аккаунта соблюдаются отдельно.';
+  document.getElementById('cadenceNote').textContent='Каждая волна — 2 ролика на все выбранные аккаунты. Между роликами 60–160 секунд, между волнами 22–28 минут. Ограничения аккаунтов учитываются.';
 }
 
 async function startBatch(){
@@ -299,6 +300,8 @@ async function startBatch(){
       targets,
       interval_seconds:Number(document.getElementById('intervalSeconds').value),
       interval_max_seconds:Number(document.getElementById('intervalMaxSeconds').value),
+      wave_min_minutes:Number(document.getElementById('waveMinMinutes').value),
+      wave_max_minutes:Number(document.getElementById('waveMaxMinutes').value),
       shuffle_videos:document.getElementById('shuffleVideos').checked,
       hint:'',
       captions:{}
@@ -342,13 +345,13 @@ function targetText(t){
 function renderJob(job){
   document.getElementById('statTotal').textContent=job.total_videos||0;
   document.getElementById('statDone').textContent=job.completed_videos||0;
-  document.getElementById('statInterval').textContent=(job.interval_seconds||60)+'–'+(job.interval_max_seconds||160)+' сек';
+  document.getElementById('statInterval').textContent=job.wait_kind==='between_waves'?(job.wave_min_minutes||22)+'–'+(job.wave_max_minutes||28)+' мин':(job.interval_seconds||60)+'–'+(job.interval_max_seconds||160)+' сек';
   let next='—';
   if(job.next_video_at)next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
   else if(job.status==='waiting_account')next='пауза аккаунта';
   else if(job.status==='running')next='сейчас';
   document.getElementById('statNext').textContent=next;
-  const labels={queued:'Очередь создана',running:'Публикую',waiting:'Жду следующий ролик',waiting_account:'Жду паузу аккаунта',done:'Очередь завершена',cancelled:'Очередь остановлена',error:'Ошибка очереди'};
+  const labels={queued:'Очередь создана',running:'Публикую',waiting:'Ожидание между публикациями',waiting_account:'Жду паузу аккаунта',done:'Очередь завершена',cancelled:'Очередь остановлена',error:'Ошибка очереди'};
   document.getElementById('queueSubtitle').textContent=labels[job.status]||job.status;
   document.getElementById('cancelBatch').disabled=['done','cancelled','error'].includes(job.status);
   const root=document.getElementById('jobList');
