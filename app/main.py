@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import secrets
 import random
 import shutil
@@ -235,7 +236,12 @@ async def _publish_single_target(video: Path, caption: str, target: str, *, cycl
             cover_token = secrets.token_urlsafe(24)
             MEDIA_TOKENS[cover_token] = cover_path
             cover_url = f"{settings.public_base_url}/media/{cover_token}" if settings.public_base_url else ""
+            if not cover_url:
+                raise HTTPException(400, f"Instagram #{slot}: PUBLIC_BASE_URL не настроен, обложка недоступна Meta")
+            cover_sha256 = hashlib.sha256(cover_path.read_bytes()).hexdigest()
             result = await instagram_upload(slot, video_url, caption, cover_url=cover_url)
+            result["cover_slot"] = slot
+            result["cover_sha256"] = cover_sha256
         else:
             result = await tiktok_upload(slot, video, caption)
 
