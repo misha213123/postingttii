@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.services.openai_text import generate_caption
+from app.services import autotok_bridge
 from app.publish_state import publish_state
 from app.services.platforms import (
     instagram_auth_url,
@@ -48,6 +49,7 @@ app.include_router(account_instagram_router)
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
+AUTOTOK_LOGINS: dict[int, dict] = {}
 
 
 async def _expire_media_token(token: str, delay_seconds: int = 300) -> None:
@@ -79,9 +81,32 @@ class PublishTargetRequest(BaseModel):
 class BatchPublishRequest(BaseModel):
     filenames: list[str]
     targets: list[str]
-    interval_minutes: int = 20
+    interval_minutes: int = 20  # legacy one-file-to-all schedule
+    unique_per_account: bool = True
+    short_interval_seconds: int = Field(default=90, ge=60, le=120)
+    burst_size: int = Field(default=2, ge=1, le=10)
+    long_pause_minutes: int = Field(default=20, ge=1, le=1440)
     hint: str = ""
     captions: dict[str, str] = Field(default_factory=dict)
+
+
+class AutotokAccountRequest(BaseModel):
+    slot: int
+    name: str
+
+
+def _validate_tiktok_slot(slot: int) -> None:
+    if slot not in (1, 2):
+        raise HTTPException(400, "Разрешены слоты TikTok 1 и 2")
+
+
+async def _publish_tiktok(slot: int, video: Path, caption: str) -> dict:
+    account = store.get("tiktok", slot)
+    if account and account.get("provider") == "autotok":
+        return await autotok_bridge.publish(slot, video, caption)
+    if not settings.tiktok_enabled:
+        raise RuntimeError("TikTok API отключён. Подключи этот аккаунт через AutoTok.")
+    return await tiktok_upload(slot, video, caption)
 
 
 def _safe_video(filename: str) -> Path:
