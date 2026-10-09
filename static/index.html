@@ -231,24 +231,57 @@ async function load(){
 
 function renderPlatforms(){
   const root=document.getElementById('platforms');root.innerHTML='';
-  for(const platform of ['youtube','instagram']){
-    const title=platform==='youtube'?'YouTube':'Instagram';
+  for(const platform of ['youtube','instagram','tiktok']){
+    const title=({youtube:'YouTube',instagram:'Instagram',tiktok:'TikTok'})[platform];
     const card=document.createElement('div');card.className='card platform';
-    let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div><div class="account-row">';
+    const hasApi=!!state.configured[platform];
+    const status=platform==='tiktok'?(state.configured.autotok?'AutoTok готов':'AutoTok не найден'):(hasApi?'API готов':'Нет ключей');
+    let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(hasApi?'good':'bad')+'" style="font-size:11px">'+status+'</span></div><div class="account-row">';
     for(const slot of [1,2]){
       const a=connected(platform,slot);
       html+='<div class="account"><b>Аккаунт #'+slot+'</b>';
-      if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div><button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
-      else html+='<div class="label muted">Не подключён</div><a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
+      if(a){
+        html+='<div class="label good">'+esc(a.label||'Подключён')+'</div><button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(&quot;'+platform+'&quot;,'+slot+')">Отключить</button>';
+      }else if(platform==='tiktok'){
+        html+='<div class="label muted">Не подключён</div><button class="secondary" style="padding:5px 8px;font-size:10px" onclick="connectTikTok('+slot+',&quot;login&quot;)">Войти</button> ';
+        html+='<button class="secondary" style="padding:5px 8px;font-size:10px" onclick="connectTikTok('+slot+',&quot;import&quot;)">Импорт</button>';
+      }else{
+        html+='<div class="label muted">Не подключён</div><a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>';
+      }
       html+='</div>';
     }
     html+='</div>';
     if(platform==='instagram'&&!state.configured.instagram_public_url)html+='<div class="warn" style="font-size:10px;margin-top:6px">Нет PUBLIC_BASE_URL</div>';
+    if(platform==='tiktok')html+='<div class="muted" style="font-size:10px;margin-top:6px">Импорт — для ранее подключённого AutoTok account1. Войти — открыть браузер AutoTok для нового аккаунта.</div>';
     card.innerHTML=html;root.appendChild(card);
   }
-  const t=document.createElement('div');t.className='card platform';
-  t.innerHTML='<div class="platform-head"><h3>TikTok</h3><span class="bad" style="font-size:11px">Отключён</span></div><div class="muted" style="font-size:12px">Не участвует в очереди, пока приложение проходит проверку.</div>';
-  root.appendChild(t);
+}
+
+async function connectTikTok(slot,method){
+  const suggested='account'+slot;
+  const name=prompt(method==='import'?'Имя существующей сессии AutoTok:':'Название новой сессии AutoTok:',suggested);
+  if(!name)return;
+  try{
+    const response=await fetch('/api/autotok/'+method,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({slot,name:name.trim()})
+    });
+    const data=await response.json();
+    if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
+    if(method==='import'){await load();return;}
+    alert('Войди в TikTok в открывшемся окне AutoTok. После входа аккаунт появится в PostingTTII.');
+    let attempts=0;
+    const timer=setInterval(async()=>{
+      attempts++;
+      try{
+        const r=await fetch('/api/autotok/login/'+slot);
+        const job=await r.json();
+        if(job.status==='done'){clearInterval(timer);await load();}
+        else if(job.status==='error'){clearInterval(timer);alert('TikTok: '+job.error);}
+      }catch(err){}
+      if(attempts>=120){clearInterval(timer);alert('Время ожидания истекло. Обнови страницу и проверь аккаунт.');}
+    },3000);
+  }catch(err){alert('TikTok: '+err.message);}
 }
 
 function renderVideos(){
