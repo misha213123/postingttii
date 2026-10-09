@@ -334,147 +334,237 @@ def _save_batch_job(job: dict) -> None:
     tmp.replace(path)
 
 
+# Instagram continues requesting the media URL briefly after publication.
+# Remove confirmed videos from inbox only when that window has elapsed.
+ARCHIVE_GRACE_SECONDS = 330
+
+
+async def _archive_after_publish(job_id: str, entry: dict) -> None:
+    job = BATCH_JOBS[job_id]
+    filename = entry["filename"]
+    try:
+        await asyncio.sleep(max(0, entry["due_at"] - time.time()))
+        if Path(filename).name != filename:
+            raise ValueError("Некорректное имя видео для архивации")
+        path = (settings.upload_dir / filename).resolve()
+        if path.parent != settings.upload_dir:
+            raise ValueError("Файл вне папки inbox")
+        if not publish_state.completed_targets(entry["video_key"]):
+            raise ValueError("Нет подтверждения публикации — исходник сохранён")
+        # The previous file at the same path might have been replaced.
+        if path.exists():
+            actual_key = await asyncio.to_thread(publish_state.video_key, path)
+            if actual_key != entry["video_key"]:
+                raise ValueError("Файл изменился после публикации — исходник сохранён")
+            for _ in range(20):
+                if not any(p == path for p in MEDIA_TOKENS.values()):
+                    break
+                await asyncio.sleep(30)
+            else:
+                raise ValueError("Источник ещё используется API — исходник сохранён")
+            destination = settings.posted_dir / filename
+            if destination.exists():
+                destination = settings.posted_dir / (
+                    path.stem + "_" + secrets.token_hex(4) + path.suffix
+                )
+            await asyncio.to_thread(shutil.move, str(path), str(destination))
+            job["archived_count"] = job.get("archived_count", 0) + 1
+        job["cleanup_pending"] = [
+            pending for pending in job.get("cleanup_pending", [])
+            if pending is not entry
+        ]
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        entry["error"] = str(exc)[:300]
+        job.setdefault("cleanup_errors", []).append(
+            f"{filename}: {str(exc)[:250]}"
+        )
+    finally:
+        _save_batch_job(job)
+
+
+def _queue_archive(job: dict, video: Path, video_key: str) -> None:
+    if any(p["filename"] == video.name for p in job.get("cleanup_pending", [])):
+        return
+    due_at = int(time.time()) + ARCHIVE_GRACE_SECONDS
+    entry = {"filename": video.name, "video_key": video_key, "due_at": due_at}
+    job.setdefault("cleanup_pending", []).append(entry)
+    _save_batch_job(job)
+    asyncio.create_task(_archive_after_publish(job["id"], entry))
+
+
 @app.on_event("startup")
 async def restore_batch_jobs():
     for path in BATCH_STATE_DIR.glob("*.json"):
         try:
             job = json.loads(path.read_text(encoding="utf-8"))
             BATCH_JOBS[job["id"]] = job
-            if job["status"] not in {"done", "cancelled", "error"}:
-                job["status"] = "queued"
-                body = BatchPublishRequest(**job["request"])
-                asyncio.create_task(_run_batch_job(job["id"], body))
+            for entry in job.get("cleanup_pending", []):
+                asyncio.create_task(_archive_after_publish(job["id"], entry))
+            if job["status"] in {"done", "cancelled", "error"}:
+                continue
+            if job.get("assignment_mode") != "one_video_one_account":
+                # An older job sent each file to every account. Do not replay it.
+                job["status"] = "cancelled"
+                job["error"] = (
+                    "Остановлена очередь старого формата (один ролик на все аккаунты). "
+                    "Создай новую очередь с уникальными роликами."
+                )
+                job["finished_at"] = int(time.time())
+                _save_batch_job(job)
+                continue
+            job["status"] = "queued"
+            body = BatchPublishRequest(**job["request"])
+            asyncio.create_task(_run_batch_job(job["id"], body))
         except Exception:
             continue
 
 
 async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
-    """Publish each wave to all selected accounts concurrently, respecting cooldowns."""
+    """One distinct video per account; two rounds form a wave."""
     job = BATCH_JOBS[job_id]
+    if job.get("assignment_mode") != "one_video_one_account":
+        job["status"] = "cancelled"
+        job["error"] = "Очередь старого формата. Создай новую."
+        _save_batch_job(job)
+        return
     job["status"] = "running"
     job["started_at"] = job.get("started_at") or int(time.time())
-    try:
-        for index, filename in enumerate(body.filenames):
+    per_round = len(body.targets)
+
+    async def wait_until(timestamp: float) -> bool:
+        job["status"] = "waiting"
+        job["next_video_at"] = int(timestamp)
+        _save_batch_job(job)
+        while time.time() < timestamp:
             if job.get("cancel_requested"):
                 job["status"] = "cancelled"
+                return False
+            await asyncio.sleep(min(3, max(0.1, timestamp - time.time())))
+        job["next_video_at"] = None
+        job["status"] = "running"
+        return True
+
+    async def publish_item(item: dict, second_in_pair: bool) -> None:
+        if item.get("status") in {"done", "already", "error"}:
+            return
+        target = next(iter(item["targets"]))
+        state = item["targets"][target]
+        try:
+            video = _safe_video(item["filename"])
+            key = await asyncio.to_thread(publish_state.video_key, video)
+            published_targets = publish_state.completed_targets(key)
+            if published_targets:
+                state.update(
+                    status="already",
+                    message=("Уже опубликовано: " + ", ".join(published_targets)),
+                )
+                item["status"] = "already"
+                _queue_archive(job, video, key)
                 return
-            video = _safe_video(filename)
-            item = job["items"][index]
-            key = publish_state.video_key(video)
-            pending = []
-            for target in body.targets:
-                state = item["targets"][target]
-                if state["status"] in {"done", "already"} or publish_state.is_completed(key, target):
-                    state.update(status="already", message="Уже опубликовано")
-                else:
-                    pending.append(target)
-            if not pending:
-                item["status"] = "done"
-                job["completed_videos"] = index + 1
-                _save_batch_job(job)
-                continue
-            caption = (body.captions.get(filename) or item.get("caption") or "").strip()
+            caption = (body.captions.get(video.name) or item.get("caption") or "").strip()
             if not caption:
                 item["status"] = "caption"
                 _save_batch_job(job)
-                try:
-                    caption = await asyncio.to_thread(generate_caption, video.name, body.hint)
-                except Exception as exc:
-                    item.update(status="error", error=f"Описание: {exc}", finished_at=int(time.time()))
-                    job["completed_videos"] = index + 1
-                    _save_batch_job(job)
-                    continue
+                caption = await asyncio.to_thread(generate_caption, video.name, body.hint)
             item["caption"] = caption
-
-            async def publish_one(target: str) -> None:
-                state = item["targets"][target]
-                while not job.get("cancel_requested"):
-                    if publish_state.is_completed(key, target):
-                        state.update(status="already", message="Уже опубликовано")
-                        return
-                    # First video retains the usual account cooldown.
-                    # The second uses the short within-pair gap. API rate
-                    # limits still take precedence.
-                    effective_cooldown = (
-                        max(60, body.interval_seconds)
-                        if index % 2 == 1
-                        else settings.post_cooldown_minutes * 60
+            cooldown = (
+                max(60, body.interval_seconds)
+                if second_in_pair else settings.post_cooldown_minutes * 60
+            )
+            while not job.get("cancel_requested"):
+                remaining = publish_state.cooldown_remaining(target, cooldown)
+                if remaining > 0:
+                    state.update(
+                        status="cooldown", message="Ожидаю аккаунт",
+                        retry_after_seconds=int(remaining),
                     )
-                    remaining = publish_state.cooldown_remaining(
-                        target, effective_cooldown
-                    )
-                    if remaining > 0:
-                        state.update(status="cooldown", message="Ожидаю аккаунт",
-                                     retry_after_seconds=int(remaining))
-                        _save_batch_job(job)
-                        await asyncio.sleep(min(5, max(0.2, remaining)))
-                        continue
-                    state.update(status="publishing", message="Публикую")
                     _save_batch_job(job)
-                    try:
-                        result = await _publish_single_target(
-                            video, caption, target,
-                            cooldown_seconds=effective_cooldown,
-                        )
-                        state.update(status="already" if result.get("skipped") else "done",
-                                     message="Уже было" if result.get("skipped") else "Опубликовано")
-                        return
-                    except HTTPException as exc:
-                        if exc.status_code == 429:
-                            detail = exc.detail if isinstance(exc.detail, dict) else {}
-                            remaining = int(detail.get("retry_after_seconds", 60))
-                            state.update(status="cooldown", message="Лимит API, жду",
-                                         retry_after_seconds=remaining)
-                            _save_batch_job(job)
-                            await asyncio.sleep(min(60, max(1, remaining)))
-                            continue
-                        state.update(status="error", message=str(exc.detail))
-                        return
-                    except Exception as exc:
-                        state.update(status="error", message=str(exc))
-                        return
-
-            item["status"] = "publishing"
+                    await asyncio.sleep(min(5, max(0.2, remaining)))
+                    continue
+                state.update(status="publishing", message="Публикую")
+                _save_batch_job(job)
+                try:
+                    result = await _publish_single_target(
+                        video, caption, target, cooldown_seconds=cooldown
+                    )
+                except HTTPException as exc:
+                    if exc.status_code != 429:
+                        raise
+                    detail = exc.detail if isinstance(exc.detail, dict) else {}
+                    remaining = int(detail.get("retry_after_seconds", 60))
+                    state.update(
+                        status="cooldown", message="Лимит API, жду",
+                        retry_after_seconds=remaining,
+                    )
+                    _save_batch_job(job)
+                    await asyncio.sleep(min(60, max(1, remaining)))
+                    continue
+                state.update(
+                    status="already" if result.get("skipped") else "done",
+                    message="Уже было" if result.get("skipped") else "Опубликовано",
+                )
+                item["status"] = state["status"]
+                _queue_archive(job, video, key)
+                return
+            state.update(status="cancelled", message="Очередь остановлена")
+            item["status"] = "cancelled"
+        except Exception as exc:
+            state.update(status="error", message=str(exc)[:450])
+            item["status"] = "error"
+            item["error"] = str(exc)[:450]
+        finally:
+            item["finished_at"] = int(time.time())
             _save_batch_job(job)
-            await asyncio.gather(*(publish_one(t) for t in pending))
+
+    try:
+        rounds = [
+            job["items"][i:i + per_round]
+            for i in range(0, len(job["items"]), per_round)
+        ]
+        for round_index, group in enumerate(rounds):
             if job.get("cancel_requested"):
                 job["status"] = "cancelled"
                 return
-            statuses = [t["status"] for t in item["targets"].values()]
-            item["status"] = "done" if all(t in {"done", "already"} for t in statuses) else "partial"
-            item["finished_at"] = int(time.time())
-            job["completed_videos"] = index + 1
+            # If the app restarted while waiting, respect the saved deadline.
+            if job.get("next_video_at") and not await wait_until(job["next_video_at"]):
+                return
+            if all(item.get("status") in {"done", "already", "error"} for item in group):
+                continue
+            job["status"] = "running"
+            await asyncio.gather(*(
+                publish_item(item, second_in_pair=(round_index % 2 == 1))
+                for item in group
+            ))
+            job["completed_videos"] = sum(
+                item.get("status") in {"done", "already", "error"}
+                for item in job["items"]
+            )
             _save_batch_job(job)
-            if index < len(body.filenames) - 1:
-                # Two clips per wave. Pause 22–28 minutes after each pair;
-                # inside each pair use the shorter 60–160 second gap.
-                after_pair = (index + 1) % 2 == 0
-                wait = (
+            if job.get("cancel_requested"):
+                job["status"] = "cancelled"
+                return
+            if round_index + 1 < len(rounds):
+                after_pair = (round_index % 2 == 1)
+                delay = (
                     secrets.SystemRandom().randint(
                         body.wave_min_minutes * 60, body.wave_max_minutes * 60
                     )
-                    if after_pair
-                    else secrets.SystemRandom().randint(
+                    if after_pair else secrets.SystemRandom().randint(
                         body.interval_seconds, body.interval_max_seconds
                     )
                 )
                 job["wait_kind"] = "between_waves" if after_pair else "within_wave"
-                job["next_video_at"] = int(time.time() + wait)
-                job["status"] = "waiting"
-                _save_batch_job(job)
-                while time.time() < job["next_video_at"]:
-                    if job.get("cancel_requested"):
-                        job["status"] = "cancelled"
-                        return
-                    await asyncio.sleep(min(3, max(0.1, job["next_video_at"] - time.time())))
-                job["next_video_at"] = None
-                job["status"] = "running"
+                if not await wait_until(time.time() + delay):
+                    return
         job["status"] = "done"
     except Exception as exc:
         job["status"] = "error"
-        job["error"] = str(exc)
+        job["error"] = str(exc)[:400]
     finally:
-        job["finished_at"] = int(time.time())
+        if job["status"] in {"done", "cancelled", "error"}:
+            job["finished_at"] = int(time.time())
         _save_batch_job(job)
 
 
@@ -534,7 +624,12 @@ async def batch_start(body: BatchPublishRequest):
         )
 
     job_id = secrets.token_urlsafe(12)
-    assignments = {filename: list(targets) for filename in filenames}
+    # Round-robin: each video is assigned to exactly one account.
+    # Consecutive rounds give each account a different second video.
+    assignments = {
+        filename: [targets[index % len(targets)]]
+        for index, filename in enumerate(filenames)
+    }
     normalized = BatchPublishRequest(
         filenames=filenames,
         targets=targets,
@@ -565,6 +660,9 @@ async def batch_start(body: BatchPublishRequest):
         "wave_max_minutes": body.wave_max_minutes,
         "targets": targets,
         "cancel_requested": False,
+        "assignment_mode": "one_video_one_account",
+        "cleanup_pending": [],
+        "archived_count": 0,
         "error": "",
         "blocked_targets": {},
         "assignments": assignments,
@@ -577,7 +675,7 @@ async def batch_start(body: BatchPublishRequest):
                 "error": "",
                 "targets": {
                     target: {"status": "queued", "message": ""}
-                    for target in targets
+                    for target in assignments[filename]
                 },
             }
             for filename in filenames
