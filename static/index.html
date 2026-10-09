@@ -171,10 +171,11 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 
     <div class="queue-stats">
       <div class="stat"><span>Всего</span><b id="statTotal">0</b></div>
-      <div class="stat"><span>Готово</span><b id="statDone">0</b></div>
+      <div class="stat"><span>Опубликовано</span><b id="statDone">0</b></div>
       <div class="stat"><span>Следующее</span><b id="statNext">—</b></div>
       <div class="stat"><span>Интервал</span><b id="statInterval">—</b></div>
     </div>
+    <div class="muted" id="queueBreakdown" style="font-size:11px;margin:0 2px 10px"></div>
     <div class="job-list" id="jobList"></div>
   </section>
 </div>
@@ -458,7 +459,18 @@ function targetText(t){
 }
 function renderJob(job){
   document.getElementById('statTotal').textContent=job.total_videos||0;
-  document.getElementById('statDone').textContent=job.completed_videos||0;
+  // Read the actual item statuses, including for older saved batches whose
+  // completed_videos field counted failures as successes.
+  const items=job.items||[];
+  const countStatus=(name)=>items.filter(item=>item.status===name).length;
+  const successCount=countStatus('done');
+  const failedCount=countStatus('error');
+  const blockedCount=countStatus('blocked');
+  const alreadyCount=countStatus('already');
+  document.getElementById('statDone').textContent=successCount;
+  document.getElementById('queueBreakdown').textContent=
+    'Ошибки: '+failedCount+' · Остановлено из-за ограничений: '+blockedCount+
+    ' · Уже опубликовано ранее: '+alreadyCount;
   document.getElementById('statInterval').textContent=job.wait_kind==='between_waves'?(job.wave_min_minutes||22)+'–'+(job.wave_max_minutes||28)+' мин':(job.interval_seconds||60)+'–'+(job.interval_max_seconds||160)+' сек';
   let next='—';
   if(job.next_video_at)next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
@@ -469,7 +481,8 @@ function renderJob(job){
   const subtitle=job.status==='waiting'
     ?(job.wait_kind==='between_waves'?'Длинная пауза между парами':'Короткая пауза перед вторым роликом')
     :(labels[job.status]||job.status);
-  document.getElementById('queueSubtitle').textContent=job.cancel_requested
+  document.getElementById('queueSubtitle').textContent=
+    (job.cancel_requested && !['done','cancelled','error'].includes(job.status))
     ?'Останавливаю очередь: новые публикации не начнутся, жду текущий запрос'
     :(
       job.status==='done' && (job.cleanup_pending||[]).length
@@ -478,23 +491,24 @@ function renderJob(job){
     );
   const stopBtn=document.getElementById('cancelBatch');
   stopBtn.disabled=Boolean(job.cancel_requested)||['done','cancelled','error'].includes(job.status);
-  stopBtn.textContent=job.cancel_requested?'Останавливаю...':'Остановить очередь';
-  document.getElementById('statDone').title='Перенесено из inbox: '+(job.archived_count||0);
+  stopBtn.textContent=job.status==='cancelled'?'Очередь остановлена':job.cancel_requested?'Останавливаю...':'Остановить очередь';
+  document.getElementById('statDone').title='Опубликовано: '+successCount+' · Перенесено из inbox: '+(job.archived_count||0);
   const root=document.getElementById('jobList');
-  const items=job.items||[];
   const accounts=(job.targets||[]).filter(t=>['instagram:','tiktok:','youtube:'].some(prefix=>t.startsWith(prefix)));
   root.innerHTML='<div class="account-job-grid">'+accounts.map(target=>{
     const assigned=items.filter(item=>item.targets?.[target]);
-    const completed=assigned.filter(item=>['done','already','error'].includes(item.targets?.[target]?.status)).length;
-    const active=assigned.find(item=>!['done','already','error'].includes(item.targets?.[target]?.status));
+    const done=assigned.filter(item=>item.targets?.[target]?.status==='done').length;
+    const completed=assigned.filter(item=>['done','already','error','blocked'].includes(item.targets?.[target]?.status)).length;
+    const active=assigned.find(item=>!['done','already','error','blocked'].includes(item.targets?.[target]?.status));
     const t=active?.targets?.[target]||{};
+    const failed=assigned.find(item=>item.targets?.[target]?.status==='error');
+    const blocked=assigned.find(item=>item.targets?.[target]?.status==='blocked');
     const finished=assigned.length>0&&completed===assigned.length;
     const percent=assigned.length?Math.round(completed/assigned.length*100):0;
-    const failed=assigned.find(item=>item.targets?.[target]?.status==='error');
-    const failureText=failed?.targets?.[target]?.message||'';
-    const status=failed?'Ошибка: '+failureText:
+    const status=blocked?'Приостановлено: '+(blocked.targets[target].message||'Ограничение платформы'):
+      failed?'Ошибка: '+(failed.targets[target].message||'Нет подробностей'):
       (finished?'Готово':active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео — выбери больше роликов');
-    return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+completed+' / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(finished?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
+    return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+done+' опубликовано / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(finished&&!failed&&!blocked?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
   }).join('')+'</div><div class="queue-footnote">Аккаунты и текущие ролики. Подробный список файлов скрыт для компактности.</div>';
 }
 async function cancelBatch(){
