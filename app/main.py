@@ -240,14 +240,15 @@ async def status():
             target: publish_state.cooldown_remaining(
                 target, settings.post_cooldown_minutes * 60
             )
-            for platform in ("youtube", "instagram")
+            for platform in ("youtube", "instagram", "tiktok")
             for account in store.list_accounts().get(platform, [])
             for target in [f"{platform}:{account['slot']}"]
         },
         "configured": {
             "openai": bool(settings.openai_api_key),
             "youtube": bool(settings.youtube_client_id and settings.youtube_client_secret),
-            "tiktok": bool(settings.tiktok_client_key and settings.tiktok_client_secret),
+            "tiktok": bool(settings.tiktok_client_key and settings.tiktok_client_secret) or bool(autotok_bridge.executable()),
+            "autotok": bool(autotok_bridge.executable()),
             "tiktok_enabled": settings.tiktok_enabled,
             "instagram": bool(settings.instagram_client_id and settings.instagram_client_secret),
             "instagram_public_url": bool(settings.public_base_url),
@@ -276,8 +277,8 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
         raise HTTPException(400, "Разрешены только слоты 1 и 2")
     if platform not in {"youtube", "instagram", "tiktok"}:
         raise HTTPException(400, f"Неизвестная платформа: {platform}")
-    if platform == "tiktok" and not settings.tiktok_enabled:
-        raise HTTPException(503, "TikTok временно отключен")
+    if platform == "tiktok" and not settings.tiktok_enabled and (store.get("tiktok", slot) or {}).get("provider") != "autotok":
+        raise HTTPException(503, "TikTok API отключён; подключи аккаунт через AutoTok")
 
     video_key = publish_state.video_key(video)
     if publish_state.is_completed(video_key, target):
@@ -315,7 +316,7 @@ async def _publish_single_target(video: Path, caption: str, target: str) -> dict
         elif platform == "instagram":
             result = await instagram_upload(slot, video_url, caption)
         else:
-            result = await tiktok_upload(slot, video, caption)
+            result = await _publish_tiktok(slot, video, caption)
 
         publish_state.mark_completed(
             video_key=video_key,
@@ -539,7 +540,7 @@ async def batch_start(body: BatchPublishRequest):
 
     allowed_targets = {
         f"{platform}:{account['slot']}"
-        for platform in ("youtube", "instagram")
+        for platform in ("youtube", "instagram", "tiktok")
         for account in store.list_accounts().get(platform, [])
     }
     invalid = [target for target in targets if target not in allowed_targets]
@@ -638,7 +639,7 @@ async def publish(body: PublishRequest):
     else:
         targets = []
         default_platforms = ["youtube", "instagram"]
-        if settings.tiktok_enabled:
+        if settings.tiktok_enabled or accounts.get("tiktok"):
             default_platforms.append("tiktok")
         for platform in default_platforms:
             for account in accounts.get(platform, []):
@@ -676,9 +677,7 @@ async def publish(body: PublishRequest):
             if platform == "youtube":
                 result = await youtube_upload(slot, video, body.caption)
             elif platform == "tiktok":
-                if not settings.tiktok_enabled:
-                    raise RuntimeError("TikTok временно отключен")
-                result = await tiktok_upload(slot, video, body.caption)
+                result = await _publish_tiktok(slot, video, body.caption)
             elif platform == "instagram":
                 result = await instagram_upload(slot, video_url, body.caption)
             else:
