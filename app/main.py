@@ -681,7 +681,7 @@ COVER_DIR.mkdir(parents=True, exist_ok=True)
 
 @app.get("/api/instagram/covers")
 async def list_instagram_covers():
-    return {"covers": {str(slot): (COVER_DIR / f"{slot}.jpg").exists() for slot in range(1, 6)}}
+    return {"covers": {str(slot): (COVER_DIR / f"{slot}.jpg").exists() for slot in range(1, 6)}, "accounts": store.list_accounts().get("instagram", [])}
 
 
 @app.post("/api/instagram/covers/{slot}")
@@ -716,16 +716,22 @@ input{margin:12px 0}img{max-height:180px;display:block;margin-top:10px}
 </style><h1>Обложки Instagram Reels</h1>
 <p>Назначь свою JPG/PNG-обложку каждому слоту. Видео без обложки не публикуется.</p>
 <div id="items"></div><script>
-const names=['Аккаунт 1','Аккаунт 2','Аккаунт 3','Аккаунт 4','Аккаунт 5'];
 const root=document.getElementById('items');
 for(let i=1;i<=5;i++){let el=document.createElement('section');
-el.innerHTML='<h3>Instagram #'+i+' — '+names[i-1]+'</h3><input type="file" accept="image/png,image/jpeg"><button>Сохранить</button><span></span>';
+el.innerHTML='<h3></h3><input type="file" accept="image/png,image/jpeg"><button>Сохранить</button><span></span>';
+el.querySelector('h3').textContent='Instagram #'+i+' — загрузка аккаунта…';
 let inp=el.querySelector('input'),btn=el.querySelector('button'),out=el.querySelector('span');
 btn.onclick=async()=>{if(!inp.files.length)return;let form=new FormData();form.append('file',inp.files[0]);
 let r=await fetch('/api/instagram/covers/'+i,{method:'POST',body:form});
 out.textContent=r.ok?' ✓ Сохранено':' Ошибка: '+await r.text();};root.append(el);}
-fetch('/api/instagram/covers').then(r=>r.json()).then(d=>{[...root.children].forEach((el,i)=>{
-if(d.covers[String(i+1)])el.querySelector('span').textContent=' ✓ Обложка сохранена';});});
+fetch('/api/instagram/covers').then(r=>{if(!r.ok)throw Error('Ошибка API');return r.json()}).then(d=>{
+const accounts=new Map((d.accounts||[]).map(a=>[Number(a.slot),a]));
+[...root.children].forEach((el,i)=>{
+const slot=i+1,account=accounts.get(slot);
+el.querySelector('h3').textContent='Instagram #'+slot+' — '+(account?(account.label||'Подключённый аккаунт'):'Не подключён');
+if(d.covers[String(slot)])el.querySelector('span').textContent=' ✓ Обложка сохранена';
+});
+}).catch(()=>{[...root.children].forEach((el,i)=>{el.querySelector('h3').textContent='Instagram #'+(i+1)+' — ошибка загрузки';});});
 </script></html>""")
 
 
