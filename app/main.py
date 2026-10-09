@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import secrets
 import shutil
+import subprocess
+import os
 import time
 from pathlib import Path
 from typing import Literal
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -793,6 +795,50 @@ def _require_platform(platform: str) -> None:
     if platform == "tiktok" and not (settings.tiktok_client_key and settings.tiktok_client_secret):
         raise HTTPException(400, "Заполни TIKTOK_CLIENT_KEY и TIKTOK_CLIENT_SECRET в .env")
 
+
+
+def _edge_executable() -> str:
+    candidates = [
+        Path(os.environ.get("PROGRAMFILES(X86)", r"C:\\Program Files (x86)")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        Path(os.environ.get("PROGRAMFILES", r"C:\\Program Files")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    executable = shutil.which("msedge")
+    if executable:
+        return executable
+    raise HTTPException(503, "Microsoft Edge не найден на этом компьютере")
+
+
+@app.post("/api/instagram/edge/{slot}")
+def open_instagram_edge(slot: int, request: Request, mode: Literal["connect", "profile"] = "connect"):
+    # Launching local applications must never be possible through a public tunnel.
+    if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
+        raise HTTPException(403, "Открывать Edge можно только из локального приложения")
+    if slot not in (6, 7, 8):
+        raise HTTPException(400, "Edge-профили доступны для слотов 6–8")
+    if mode == "connect":
+        if not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
+            raise HTTPException(400, "Настрой INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2")
+        url = f"http://127.0.0.1:{settings.port}/connect/instagram/{slot}"
+    else:
+        account = store.get("instagram", slot)
+        if not account:
+            raise HTTPException(404, "Сначала подключи Instagram-аккаунт")
+        username = account.get("username", "").strip().lstrip("@")
+        url = f"https://www.instagram.com/{username}/" if username else "https://www.instagram.com/"
+    profile_dir = (settings.data_dir / "edge_instagram_profiles" / f"slot_{slot}").resolve()
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.Popen(
+            [_edge_executable(), f"--user-data-dir={profile_dir}", "--no-first-run", url],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise HTTPException(503, f"Не удалось запустить Microsoft Edge: {exc}") from exc
+    return {"ok": True, "slot": slot, "mode": mode}
 
 
 @app.get("/connect/{platform}/{slot}")
