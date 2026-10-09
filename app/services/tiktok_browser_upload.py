@@ -220,3 +220,32 @@ def publish_browser_account2(video: Path, caption: str, alias: str = "account2")
         finally:
             context.close()
             browser.close()
+
+
+
+def probe_account2_browser() -> dict:
+    """Read-only check: is account2's TikTok Studio upload form accessible?
+
+    Does not attach a video, type a caption, click Post, or modify sessions.
+    """
+    cookies, user_agent = _session("account2")
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=False)
+        options = {"locale": "en-US", "viewport": {"width": 1440, "height": 900}}
+        if user_agent:
+            options["user_agent"] = user_agent
+        context = browser.new_context(**options)
+        context.add_cookies(cookies)
+        try:
+            page = context.new_page()
+            page.goto(STUDIO_UPLOAD_URL, wait_until="domcontentloaded", timeout=90000)
+            for _ in range(45):
+                if "login" in page.url.lower():
+                    return {"ready": False, "reason": "login_required"}
+                if _find_file_input(page) is not None:
+                    return {"ready": True, "url": page.url}
+                page.wait_for_timeout(1000)
+            return {"ready": False, "reason": "upload_form_not_found", "url": page.url}
+        finally:
+            context.close()
+            browser.close()
