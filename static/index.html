@@ -149,20 +149,8 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
       <div class="muted" style="font-size:12px">Куда публиковать</div>
       <div class="target-list" id="batchTargets"></div>
 
-      <div class="field">
-        <label for="intervalMinutes">Минимальная пауза</label>
-        <select id="intervalMinutes">
-          <option value="15">15 минут</option>
-          <option value="20" selected>20 минут</option>
-          <option value="30">30 минут</option>
-          <option value="45">45 минут</option>
-          <option value="60">1 час</option>
-          <option value="90">1.5 часа</option>
-          <option value="120">2 часа</option>
-        </select>
-      </div>
-
-      <div class="field"><label for="intervalMaxMinutes">Максимальная пауза</label><select id="intervalMaxMinutes"><option value="20">20 минут</option><option value="30">30 минут</option><option value="35" selected>35 минут</option><option value="45">45 минут</option><option value="60">1 час</option><option value="90">1,5 часа</option><option value="120">2 часа</option></select></div>
+      <div class="field"><label for="intervalSeconds">Пауза между волнами, от (сек)</label><input id="intervalSeconds" type="number" min="60" max="86400" value="60" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
+      <div class="field"><label for="intervalMaxSeconds">До (сек)</label><input id="intervalMaxSeconds" type="number" min="60" max="86400" value="160" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
       <label class="muted" style="display:flex;gap:8px;align-items:center;margin:10px 0"><input type="checkbox" id="shuffleVideos" checked> Перемешивать видео перед запуском</label>
       <div class="ai-note">✨ Японское описание без хештегов OpenAI создаст автоматически только тогда, когда конкретный ролик дойдёт до публикации. При выборе файлов запросов к AI нет.</div>
       <div class="note" id="cadenceNote"></div>
@@ -297,13 +285,7 @@ function renderBatchTargets(){
 }
 
 function syncIntervalMin(){
-  const select=document.getElementById('intervalMinutes'),maxSelect=document.getElementById('intervalMaxMinutes'),min=Math.max(1,Number(state.post_cooldown_minutes||15));
-  for(const o of [...select.options])o.disabled=Number(o.value)<min;
-  if(Number(select.value)<min){const first=[...select.options].find(o=>!o.disabled);if(first)select.value=first.value;}
-  for(const o of [...maxSelect.options])o.disabled=Number(o.value)<Number(select.value);
-  if(Number(maxSelect.value)<Number(select.value)){const first=[...maxSelect.options].find(o=>!o.disabled);if(first)maxSelect.value=first.value;}
-  select.onchange=syncIntervalMin;
-  document.getElementById('cadenceNote').textContent='Пауза случайная, с точностью до секунд. Минимум проекта: '+min+' мин. Лимиты API продолжают действовать.';
+  document.getElementById('cadenceNote').textContent='Один ролик на все выбранные аккаунты параллельно. Между волнами 60–160 секунд; лимиты каждого аккаунта соблюдаются отдельно.';
 }
 
 async function startBatch(){
@@ -315,8 +297,8 @@ async function startBatch(){
     const r=await fetch('/api/batch/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       filenames:[...selectedVideos],
       targets,
-      interval_minutes:Number(document.getElementById('intervalMinutes').value),
-      interval_max_minutes:Number(document.getElementById('intervalMaxMinutes').value),
+      interval_seconds:Number(document.getElementById('intervalSeconds').value),
+      interval_max_seconds:Number(document.getElementById('intervalMaxSeconds').value),
       shuffle_videos:document.getElementById('shuffleVideos').checked,
       hint:'',
       captions:{}
@@ -360,7 +342,7 @@ function targetText(t){
 function renderJob(job){
   document.getElementById('statTotal').textContent=job.total_videos||0;
   document.getElementById('statDone').textContent=job.completed_videos||0;
-  document.getElementById('statInterval').textContent=(job.interval_minutes||0)+'–'+(job.interval_max_minutes||job.interval_minutes||0)+' мин';
+  document.getElementById('statInterval').textContent=(job.interval_seconds||60)+'–'+(job.interval_max_seconds||160)+' сек';
   let next='—';
   if(job.next_video_at)next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
   else if(job.status==='waiting_account')next='пауза аккаунта';
@@ -373,9 +355,9 @@ function renderJob(job){
   const items=job.items||[];
   const accounts=(job.targets||[]).filter(t=>t.startsWith('instagram:'));
   root.innerHTML='<div class="account-job-grid">'+accounts.map(target=>{
-    const assigned=items.filter(item=>job.assignments?.[item.filename]===target);
-    const completed=assigned.filter(item=>['done','partial','error'].includes(item.status)).length;
-    const active=assigned.find(item=>['caption','publishing'].includes(item.status))||assigned.find(item=>item.status==='queued');
+    const assigned=items.filter(item=>item.targets?.[target]);
+    const completed=assigned.filter(item=>['done','already','error'].includes(item.targets?.[target]?.status)).length;
+    const active=assigned.find(item=>!['done','already','error'].includes(item.targets?.[target]?.status));
     const t=active?.targets?.[target]||{};
     const finished=assigned.length>0&&completed===assigned.length;
     const percent=assigned.length?Math.round(completed/assigned.length*100):0;
