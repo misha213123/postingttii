@@ -299,12 +299,16 @@ def probe_account2_browser() -> dict:
             page = context.new_page()
             page.goto(STUDIO_UPLOAD_URL, wait_until="domcontentloaded", timeout=90000)
             for _ in range(45):
+                page = _active_page(context, page, "проверка формы загрузки")
                 if "login" in page.url.lower():
                     return {"ready": False, "reason": "login_required"}
                 if _find_file_input(page) is not None:
                     return {"ready": True, "url": page.url}
-                page.wait_for_timeout(1000)
+                time.sleep(1)
             return {"ready": False, "reason": "upload_form_not_found", "url": page.url}
         finally:
-            context.close()
-            browser.close()
+            for resource in (context, browser):
+                try:
+                    resource.close()
+                except Exception:
+                    pass
