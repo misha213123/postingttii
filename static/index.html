@@ -208,7 +208,7 @@ async function load(){
   const names=new Set((state.videos||[]).map(v=>v.name));
   selectedVideos=new Set([...selectedVideos].filter(x=>names.has(x)));
   renderPlatforms();renderVideos();renderBatchTargets();syncIntervalMin();updateSelectedCount();
-  if(currentJobId)resumeJob(currentJobId);
+  if(!(await discoverActiveJob()) && currentJobId)await resumeJob(currentJobId);
 }
 
 function renderPlatforms(){
@@ -289,6 +289,20 @@ function syncIntervalMin(){
   document.getElementById('cadenceNote').textContent='Каждая волна — 2 ролика на все выбранные аккаунты. Между роликами 60–160 секунд, между волнами 22–28 минут. Ограничения аккаунтов учитываются.';
 }
 
+async function discoverActiveJob(){
+  try{
+    const r=await fetch('/api/batch/active',{cache:'no-store'});
+    if(!r.ok)return false;
+    const info=await r.json();
+    if(!info.job_id)return false;
+    currentJobId=info.job_id;
+    localStorage.setItem('postingttii_batch_job',currentJobId);
+    document.getElementById('queuePanel').classList.remove('hidden');
+    await resumeJob(currentJobId);
+    return true;
+  }catch(err){console.warn('Не удалось восстановить очередь:',err);return false;}
+}
+
 async function startBatch(){
   if(!selectedVideos.size){alert('Выбери хотя бы одно видео.');return;}
   const targets=[...document.querySelectorAll('.batch-target:checked')].map(x=>x.value);
@@ -307,6 +321,10 @@ async function startBatch(){
       captions:{}
     })});
     const data=await r.json();
+    if(r.status===409 && await discoverActiveJob()){
+      document.getElementById('queuePanel').scrollIntoView({behavior:'smooth',block:'start'});
+      return;
+    }
     if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
     currentJobId=data.job_id;localStorage.setItem('postingttii_batch_job',currentJobId);
     document.getElementById('queuePanel').classList.remove('hidden');
@@ -322,12 +340,13 @@ async function resumeJob(jobId){
   const tick=async()=>{
     try{
       const r=await fetch('/api/batch/'+jobId);
-      if(r.status===404){localStorage.removeItem('postingttii_batch_job');currentJobId='';if(pollTimer)clearInterval(pollTimer);return;}
+      if(r.status===404){localStorage.removeItem('postingttii_batch_job');currentJobId='';if(pollTimer)clearInterval(pollTimer);pollTimer=null;return false;}
       const job=await r.json();renderJob(job);
-      if(['done','cancelled','error'].includes(job.status)){if(pollTimer)clearInterval(pollTimer);pollTimer=null;await refreshAfterJob();}
-    }catch(e){}
+      if(['done','cancelled','error'].includes(job.status)){if(pollTimer)clearInterval(pollTimer);pollTimer=null;await refreshAfterJob();return false;}
+    }catch(e){console.warn('Ошибка обновления очереди:',e);}
+    return true;
   };
-  await tick();pollTimer=setInterval(tick,2000);
+  if(await tick())pollTimer=setInterval(tick,2000);
 }
 
 function targetPercent(status){return {queued:0,waiting:12,publishing:62,done:100,already:100,cooldown:12,blocked:100,error:100}[status]??0;}
