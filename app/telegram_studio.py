@@ -359,14 +359,14 @@ def render(source: Path, bg: Path, target: Path):
         raise ValueError("Некорректная длительность")
     offset = random.uniform(0, max(0, bg_seconds - seconds))
     # Enlarge circular videos to 980px within the 1080px-wide frame.
-    # Overlay square with transparent corners, preserving the original audio.
+    # Keep the circular clip near the top (150px margin) so the background\n    # artwork/cover remains visible in the lower part of the final Reel.\n    # Overlay square with transparent corners, preserving the original audio.
     filt = ("[0:v]scale=980:980:force_original_aspect_ratio=increase:flags=lanczos,"
             "crop=980:980,format=rgba,"
             "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
             "a='if(lte((X-490)*(X-490)+(Y-490)*(Y-490),240100),255,0)'[circle];"
             "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
             "crop=1080:1920,setsar=1[bg];"
-            "[bg][circle]overlay=(W-w)/2:(H-h)/2:shortest=1,"
+            "[bg][circle]overlay=(W-w)/2:150:shortest=1,"
             "fps=30,format=yuv420p[v]")
     cmd = ["ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
            "-ss", str(offset), "-i", str(bg), "-filter_complex", filt,
