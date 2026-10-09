@@ -148,6 +148,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 
       <div class="muted" style="font-size:12px">Куда публиковать</div>
       <div class="target-list" id="batchTargets"></div>
+      <div class="note" id="assignmentPreview"></div>
 
       <div class="field"><label for="intervalSeconds">Пауза между волнами, от (сек)</label><input id="intervalSeconds" type="number" min="60" max="86400" value="60" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
       <div class="field"><label for="intervalMaxSeconds">До (сек)</label><input id="intervalMaxSeconds" type="number" min="60" max="86400" value="160" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
@@ -327,7 +328,22 @@ function toggleVideo(encoded){
 }
 function selectAllVideos(){for(const v of state.videos||[])selectedVideos.add(v.name);updateSelectedCount();renderVideos();}
 function clearVideos(){selectedVideos.clear();updateSelectedCount();renderVideos();}
-function updateSelectedCount(){document.getElementById('selectedCount').textContent=selectedVideos.size;}
+function updateSelectedCount(){
+  document.getElementById('selectedCount').textContent=selectedVideos.size;
+  updateAssignmentPreview();
+}
+
+function updateAssignmentPreview(){
+  const el=document.getElementById('assignmentPreview');
+  if(!el)return;
+  const accounts=[...document.querySelectorAll('.batch-target:checked')].map(x=>x.value);
+  const count=selectedVideos.size;
+  if(!accounts.length){el.textContent='Выбери аккаунты для публикации.';return;}
+  const missing=Math.max(0,accounts.length-count);
+  el.textContent=missing?
+    'Внимание: '+count+' видео на '+accounts.length+' аккаунтов. '+missing+' аккаунт(а) останутся без публикации. Выбери дополнительные ролики или отключи лишние аккаунты.':
+    'Выбрано '+count+' уникальных видео на '+accounts.length+' аккаунтов. Каждый файл получит только один аккаунт; YouTube и TikTok получат разные ролики.';
+}
 
 function renderBatchTargets(){
   const root=document.getElementById('batchTargets');let html='';
@@ -338,6 +354,8 @@ function renderBatchTargets(){
     }
   }
   root.innerHTML=html||'<div class="muted">Нет подключённых аккаунтов.</div>';
+  root.querySelectorAll('.batch-target').forEach(input=>input.addEventListener('change',updateAssignmentPreview));
+  updateAssignmentPreview();
 }
 
 function syncIntervalMin(){
@@ -472,7 +490,10 @@ function renderJob(job){
     const t=active?.targets?.[target]||{};
     const finished=assigned.length>0&&completed===assigned.length;
     const percent=assigned.length?Math.round(completed/assigned.length*100):0;
-    const status=finished?'Готово':active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео';
+    const failed=assigned.find(item=>item.targets?.[target]?.status==='error');
+    const failureText=failed?.targets?.[target]?.message||'';
+    const status=failed?'Ошибка: '+failureText:
+      (finished?'Готово':active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео — выбери больше роликов');
     return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+completed+' / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(finished?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
   }).join('')+'</div><div class="queue-footnote">Аккаунты и текущие ролики. Подробный список файлов скрыт для компактности.</div>';
 }
