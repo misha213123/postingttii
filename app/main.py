@@ -39,7 +39,7 @@ from app.account_creator.api.tiktok import router as account_tiktok_router
 from app.account_creator.api.instagram import router as account_instagram_router
 
 from app.telegram_studio import router as telegram_studio_router, shutdown_telegram_studio
-from app.instagram_reels_studio import router as instagram_reels_router
+from app.instagram_studio import router as instagram_reels_router
 
 app = FastAPI(title="PostingTTII", version="0.1.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
