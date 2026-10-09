@@ -757,27 +757,65 @@ async def upload_instagram_cover(slot: int, file: UploadFile = File(...)):
     return {"slot": slot, "saved": True}
 
 
+@app.get("/api/instagram/covers/{slot}/preview")
+async def instagram_cover_preview(slot: int):
+    if slot not in range(1, 9):
+        raise HTTPException(400, "Недопустимый слот")
+    path = COVER_DIR / f"{slot}.jpg"
+    if not path.is_file():
+        raise HTTPException(404, "Обложка не выбрана")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/instagram-covers")
 async def instagram_covers_page():
     return HTMLResponse("""<!doctype html><html lang="ru"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Instagram — обложки</title><style>
-body{font:16px system-ui;background:#11131a;color:white;max-width:760px;margin:40px auto;padding:20px}
-section{background:#202431;border-radius:14px;padding:18px;margin:14px 0}
-button{padding:10px 18px;border:0;border-radius:8px;background:#7d63f7;color:white;cursor:pointer}
-input{margin:12px 0}img{max-height:180px;display:block;margin-top:10px}
-</style><h1>Обложки Instagram Reels</h1>
-<p>Назначь свою JPG/PNG-обложку каждому слоту. Видео без обложки не публикуется.</p>
+*{box-sizing:border-box}body{font:15px system-ui;background:#10131b;color:#f4f5ff;max-width:1100px;margin:0 auto;padding:28px 18px}
+header{display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap;margin-bottom:24px}
+h1{font-size:26px;margin:0}a{color:#b9abff;text-decoration:none}.muted{color:#a4a8b8}
+#items{display:grid;grid-template-columns:repeat(auto-fill,minmax(225px,1fr));gap:16px}
+section{background:#1d2230;border:1px solid #353b4b;border-radius:16px;padding:16px}
+section h3{margin:0 0 12px;font-size:16px}
+.preview{height:260px;background:#121722;border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#a4a8b8;margin-bottom:14px}
+.preview img{width:100%;height:100%;object-fit:cover}input{width:100%;font-size:12px;margin-bottom:12px}
+button{padding:10px 14px;border:0;border-radius:9px;background:#7965e8;color:white;cursor:pointer;width:100%}
+.status{display:block;min-height:22px;margin-top:10px;font-size:12px}
+</style><header><div><h1>Обложки Instagram Reels</h1>
+<p class="muted">Текущие обложки и загрузка новых для 8 аккаунтов</p></div><a href="/">← Назад к публикациям</a></header>
 <div id="items"></div><script>
-const names=['Аккаунт 1','Аккаунт 2','Аккаунт 3','Аккаунт 4','Аккаунт 5'];
 const root=document.getElementById('items');
-for(let i=1;i<=5;i++){let el=document.createElement('section');
-el.innerHTML='<h3>Instagram #'+i+' — '+names[i-1]+'</h3><input type="file" accept="image/png,image/jpeg"><button>Сохранить</button><span></span>';
-let inp=el.querySelector('input'),btn=el.querySelector('button'),out=el.querySelector('span');
-btn.onclick=async()=>{if(!inp.files.length)return;let form=new FormData();form.append('file',inp.files[0]);
-let r=await fetch('/api/instagram/covers/'+i,{method:'POST',body:form});
-out.textContent=r.ok?' ✓ Сохранено':' Ошибка: '+await r.text();};root.append(el);}
-fetch('/api/instagram/covers').then(r=>r.json()).then(d=>{[...root.children].forEach((el,i)=>{
-if(d.covers[String(i+1)])el.querySelector('span').textContent=' ✓ Обложка сохранена';});});
+async function load(){
+  const r=await fetch('/api/instagram/covers');const d=await r.json();
+  root.replaceChildren();
+  for(let i=1;i<=8;i++){
+    const el=document.createElement('section');
+    const h=document.createElement('h3');h.textContent='Instagram #'+i;el.append(h);
+    const preview=document.createElement('div');preview.className='preview';el.append(preview);
+    function show(hasCover){
+      preview.replaceChildren();
+      if(hasCover){const img=document.createElement('img');img.alt='Обложка аккаунта '+i;img.src='/api/instagram/covers/'+i+'/preview?t='+Date.now();preview.append(img);}
+      else preview.textContent='Обложка не выбрана';
+    }
+    show(Boolean(d.covers[String(i)]));
+    const inp=document.createElement('input');inp.type='file';inp.accept='image/png,image/jpeg';el.append(inp);
+    const btn=document.createElement('button');btn.textContent='Сохранить обложку';el.append(btn);
+    const status=document.createElement('span');status.className='status';el.append(status);
+    btn.onclick=async()=>{
+      if(!inp.files.length){status.textContent='Выбери JPG или PNG';return;}
+      btn.disabled=true;status.textContent='Загрузка...';
+      try{const form=new FormData();form.append('file',inp.files[0]);
+        const response=await fetch('/api/instagram/covers/'+i,{method:'POST',body:form});
+        if(!response.ok)throw new Error(await response.text());
+        show(true);status.textContent='✓ Обложка сохранена';inp.value='';
+      }catch(err){status.textContent='Ошибка: '+err.message;}
+      finally{btn.disabled=false;}
+    };
+    root.append(el);
+  }
+}
+load().catch(err=>{root.textContent='Не удалось загрузить обложки: '+err.message;});
 </script></html>""")
 
 
