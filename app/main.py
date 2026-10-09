@@ -527,7 +527,7 @@ async def batch_start(body: BatchPublishRequest):
     if not targets:
         raise HTTPException(400, "Выбери хотя бы один аккаунт")
     minimum = max(1, settings.post_cooldown_minutes)
-    if body.interval_minutes < minimum:
+    if not body.unique_per_account and body.interval_minutes < minimum:
         raise HTTPException(
             400,
             f"Интервал должен быть не меньше {minimum} минут",
@@ -537,6 +537,25 @@ async def batch_start(body: BatchPublishRequest):
 
     for filename in filenames:
         _safe_video(filename)
+
+    skipped_existing = []
+    if body.unique_per_account:
+        # Exclude hashes already posted to any account, not just to this slot.
+        available = []
+        for filename in filenames:
+            if publish_state.summary(publish_state.video_key(_safe_video(filename))):
+                skipped_existing.append(filename)
+            else:
+                available.append(filename)
+        filenames = available
+        if not filenames:
+            raise HTTPException(409, "Все выбранные видео уже публиковались")
+
+    for other_job in BATCH_JOBS.values():
+        if other_job.get("status") in {"queued", "running", "waiting", "waiting_account"}:
+            active_files = {item["filename"] for item in other_job.get("items", [])}
+            if any(name in active_files for name in filenames):
+                raise HTTPException(409, "Эти видео уже участвуют в другой очереди")
 
     allowed_targets = {
         f"{platform}:{account['slot']}"
@@ -555,6 +574,10 @@ async def batch_start(body: BatchPublishRequest):
         filenames=filenames,
         targets=targets,
         interval_minutes=body.interval_minutes,
+        unique_per_account=body.unique_per_account,
+        short_interval_seconds=body.short_interval_seconds,
+        burst_size=body.burst_size,
+        long_pause_minutes=body.long_pause_minutes,
         hint=body.hint,
         captions={
             filename: (body.captions.get(filename) or "").strip()
@@ -572,6 +595,11 @@ async def batch_start(body: BatchPublishRequest):
         "completed_videos": 0,
         "total_videos": len(filenames),
         "interval_minutes": body.interval_minutes,
+        "unique_per_account": body.unique_per_account,
+        "short_interval_seconds": body.short_interval_seconds,
+        "long_pause_minutes": body.long_pause_minutes,
+        "burst_size": body.burst_size,
+        "completed_posts": 0,
         "targets": targets,
         "cancel_requested": False,
         "error": "",
@@ -584,15 +612,18 @@ async def batch_start(body: BatchPublishRequest):
                 "error": "",
                 "targets": {
                     target: {"status": "queued", "message": ""}
-                    for target in targets
+                    for target in (
+                        [targets[i % len(targets)]]
+                        if normalized.unique_per_account else targets
+                    )
                 },
             }
-            for filename in filenames
+            for i, filename in enumerate(filenames)
         ],
     }
 
     asyncio.create_task(_run_batch_job(job_id, normalized))
-    return {"job_id": job_id, "status": "queued"}
+    return {"job_id": job_id, "status": "queued", "skipped_existing": skipped_existing}
 
 
 @app.get("/api/batch/{job_id}")
