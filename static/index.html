@@ -217,50 +217,89 @@ async function load(){
 function renderPlatforms(){
   const root=document.getElementById('platforms');root.innerHTML='';
   for(const platform of ['youtube','instagram']){
-    const title=platform==='youtube'?'YouTube':'Instagram';
+    const isInstagram=platform==='instagram';
+    const title=isInstagram?'Instagram':'YouTube';
     const card=document.createElement('div');card.className='card platform';
-    let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div><div class="account-row">';
-    for(const slot of (platform==='instagram'?[1,2,3,4,5,6,7,8]:[1,2])){
-      const a=connected(platform,slot);
-      html+='<div class="account"><b>'+esc(a?(a.label||a.id||'Instagram '+slot):'Слот '+slot)+'</b>';
-      if(a) html+='<div class="label good">'+esc(a.label||'Подключён')+'</div>'+(platform==='instagram'&&slot>=6?'<button class="btn secondary" onclick="openEdge('+slot+',\'profile\')">Открыть в Edge</button>':'')+'<button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
-      else html+='<div class="label muted">Не подключён</div>'+(platform==='instagram'&&slot>=6?'<button class="btn secondary" onclick="openEdge('+slot+',\'connect\')">Подключить через Edge</button>':'<a class="btn secondary" style="padding:5px 8px;font-size:10px" href="/connect/'+platform+'/'+slot+'">Подключить</a>');
-      if(platform==='instagram')html+='<div style="margin-top:8px"><small>Обложка: <span id="cover-state-'+slot+'">проверка...</span></small><input type="file" accept="image/png,image/jpeg" style="width:100%;font-size:11px" onchange="saveCover('+slot+',this)"></div>';
+    const slots=isInstagram?[1,2,3,4,5,6,7,8]:[1,2];
+    const active=slots.map(slot=>connected(platform,slot)).filter(Boolean);
+    const available=isInstagram?[1,2,3,4,5].some(slot=>!connected(platform,slot)):[1,2].some(slot=>!connected(platform,slot));
+    let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div>';
+    if(isInstagram){
+      html+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">';
+      if(available)html+='<button class="secondary" style="font-size:11px;padding:7px 9px" onclick="connectInstagramAccount(\'meta\')">+ Подключить Meta</button>';
+      if([5,6,7,8].some(slot=>!connected('instagram',slot)))html+='<button class="btn primary" style="font-size:11px;padding:7px 9px" onclick="connectInstagramAccount(\'tor\')">+ Подключить Tor аккаунт</button>';
+      html+='</div>';
+    }else if(available){
+      html+='<button class="secondary" style="font-size:11px;margin-bottom:9px;padding:7px 9px" onclick="connectYouTubeFirst()">+ Подключить YouTube</button>';
+    }
+    if(active.length)html+='<div class="account-row">';
+    else html+='<div class="label muted">Нет подключённых аккаунтов.</div>';
+    for(const a of active){
+      const slot=Number(a.slot);
+      const tor=isInstagram&&a.auth_browser==='tor';
+      html+='<div class="account"><b>'+esc(a.label||a.id||title+' '+slot)+(tor?' · Tor':'')+'</b>';
+      html+='<div class="label good">'+esc(a.label||'Подключён')+'</div>';
+      if(isInstagram&&slot>=6&&!tor)html+='<button class="btn secondary" onclick="openEdge('+slot+',\'profile\')">Открыть в Edge</button>';
+      html+='<button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
+      if(isInstagram)html+='<div style="margin-top:8px"><small>Обложка: <span id="cover-state-'+slot+'">проверка...</span></small><input type="file" accept="image/png,image/jpeg" style="width:100%;font-size:11px" onchange="saveCover('+slot+',this)"></div>';
       html+='</div>';
     }
-    html+='</div>';
-    if(platform==='instagram'&&!state.configured.instagram_public_url)html+='<div class="warn" style="font-size:10px;margin-top:6px">Нет PUBLIC_BASE_URL</div>';
+    if(active.length)html+='</div>';
+    const pending=Number(new URLSearchParams(window.location.search).get('tor_connecting'));
+    if(isInstagram&&[5,6,7,8].includes(pending)&&!connected('instagram',pending))
+      html+='<div class="note" style="margin-top:8px">Tor Browser запущен для слота '+pending+'. Заверши авторизацию Instagram; аккаунт появится здесь после успешного OAuth.</div>';
+    if(isInstagram&&!state.configured.instagram_public_url)html+='<div class="warn" style="font-size:10px;margin-top:6px">Нет PUBLIC_BASE_URL</div>';
     card.innerHTML=html;root.appendChild(card);
   }
   refreshCoverStates();
   const t=document.createElement('div');t.className='card platform';
   const ready=!!state.configured.autotok;
+  const availableSlot=[1,2].find(slot=>!connected('tiktok',slot));
   t.innerHTML='<div class="platform-head"><h3>TikTok</h3><span class="'+(ready?'good':'bad')+'" style="font-size:11px">'+(ready?'AutoTok готов':'AutoTok не найден')+'</span></div>';
+  if(availableSlot){
+    const buttons=document.createElement('div');buttons.style.marginBottom='9px';
+    for(const [mode,label] of [['import','+ Импорт TikTok'],['login','+ Войти TikTok']]){
+      const button=document.createElement('button');button.className='secondary';
+      button.style.marginRight='6px';button.textContent=label;
+      button.onclick=()=>connectTikTok(availableSlot,mode);buttons.append(button);
+    }
+    t.append(buttons);
+  }
   const accounts=document.createElement('div');accounts.className='account-row';
+  let count=0;
   for(const slot of [1,2]){
     const a=connected('tiktok',slot);
+    if(!a)continue;
+    count++;
     const section=document.createElement('div');section.className='account';
-    const heading=document.createElement('b');heading.textContent='TikTok #'+slot;section.append(heading);
-    const label=document.createElement('div');label.className='label '+(a?'good':'muted');
-    label.textContent=a?(a.label||'Подключён'):'Не подключён';section.append(label);
-    if(a){
-      const button=document.createElement('button');button.className='danger';
-      button.textContent='Отключить';button.onclick=()=>disconnect('tiktok',slot);
-      section.append(button);
-    }else{
-      for(const [mode,title] of [['import','Импорт'],['login','Войти']]){
-        const button=document.createElement('button');button.className='secondary';
-        button.textContent=title;button.style.marginRight='5px';
-        button.onclick=()=>connectTikTok(slot,mode);
-        section.append(button);
-      }
-    }
-    accounts.append(section);
+    const heading=document.createElement('b');heading.textContent=a.label||'TikTok #'+slot;section.append(heading);
+    const label=document.createElement('div');label.className='label good';
+    label.textContent=a.label||'Подключён';section.append(label);
+    const button=document.createElement('button');button.className='danger';
+    button.textContent='Отключить';button.onclick=()=>disconnect('tiktok',slot);
+    section.append(button);accounts.append(section);
   }
-  t.append(accounts);
+  if(count)t.append(accounts);
+  else{const empty=document.createElement('div');empty.className='label muted';empty.textContent='Нет подключённых аккаунтов.';t.append(empty);}
   const note=document.createElement('p');note.className='note';
-  note.textContent='Импорт — подключить существующий account1. Войти — открыть новый вход AutoTok. TikTok-описания генерируются OpenAI отдельно от Instagram.';
+  note.textContent='Импорт — подключить существующий AutoTok аккаунт. Войти — открыть новый вход AutoTok.';
   t.append(note);root.appendChild(t);
+}
+
+function connectInstagramAccount(kind){
+  const possible=(kind==='tor'?[5,6,7,8]:[1,2,3,4,5]).filter(slot=>!connected('instagram',slot));
+  if(!possible.length){alert('Нет свободных слотов для подключения.');return;}
+  const title=kind==='tor'?'Tor Browser':'Meta';
+  const answer=prompt('Выбери свободный слот для '+title+': '+possible.join(', '),String(possible[0]));
+  if(answer===null)return;
+  const slot=Number(answer.trim());
+  if(!possible.includes(slot)){alert('Выбери один из свободных слотов: '+possible.join(', '));return;}
+  window.location.assign('/connect/instagram/'+slot+'?browser='+(kind==='tor'?'tor':'default'));
+}
+function connectYouTubeFirst(){
+  const slot=[1,2].find(n=>!connected('youtube',n));
+  if(!slot){alert('Все YouTube слоты заняты.');return;}
+  window.location.assign('/connect/youtube/'+slot);
 }
 
 async function connectTikTok(slot,mode){
@@ -541,6 +580,23 @@ function closePreview(){const modal=document.getElementById('previewModal'),play
 function previewBackdrop(e){if(e.target.id==='previewModal')closePreview();}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closePreview();});
 load();
+const torPendingSlot=Number(new URLSearchParams(window.location.search).get('tor_connecting'));
+if([5,6,7,8].includes(torPendingSlot)){
+  const torPoll=setInterval(async()=>{
+    try{
+      const r=await fetch('/api/status',{cache:'no-store'});
+      if(!r.ok)return;
+      state=await r.json();
+      renderPlatforms();renderBatchTargets();
+      if(connected('instagram',torPendingSlot)){
+        clearInterval(torPoll);
+        window.history.replaceState(null,'',window.location.pathname);
+        renderPlatforms();
+      }
+    }catch(error){console.warn('Instagram Tor OAuth pending:',error);}
+  },4000);
+  setTimeout(()=>clearInterval(torPoll),10*60*1000);
+}
 </script>
 </body>
 </html>
