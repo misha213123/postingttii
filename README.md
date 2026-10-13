@@ -18,14 +18,13 @@ Instagram в Tor Browser, задай в локальном `.env`:
 
 ```dotenv
 INSTAGRAM_OAUTH_BROWSER=tor
-INSTAGRAM_TOR_BROWSER_1=C:\\Tor-Instagram-1
-INSTAGRAM_TOR_BROWSER_2=C:\\Tor-Instagram-2
+INSTAGRAM_TOR_BROWSER_1=C:\Tor-Instagram-1
+INSTAGRAM_TOR_BROWSER_2=C:\Tor-Instagram-2
 ```
 
 Пути — примеры. Каждый путь должен указывать на **отдельную полную установку
 Tor Browser** с `Browser/firefox.exe` и собственным `TorBrowser/Data/Browser/profile.default`.
-Нельзя указывать одну и ту же установку двум слотам. Если настройка отсутствует
-или неверна, приложение выдаст ошибку и не откроет другой браузер незаметно.
+Нельзя указывать одну и ту же установку двум слотам. Если выбран режим Tor, но указан неверный путь, приложение выдаст ошибку.
 
 Нажимай те же кнопки подключения Instagram в панели. Авторизация открывается
 в выбранном Tor Browser, callback возвращается к локальному приложению.
