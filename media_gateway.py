@@ -1,4 +1,4 @@
-"""Media-only public relay for Instagram Reels ingestion.
+"""Restricted public relay for Instagram Reels media and OAuth callback.
 
 Start the main PostingTTII app on localhost:8765, then run:
     python -m uvicorn media_gateway:app --host 127.0.0.1 --port 8766
@@ -14,7 +14,7 @@ import re
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 app = FastAPI(
@@ -37,18 +37,63 @@ _ALLOWED_RESPONSE_HEADERS = (
 )
 
 
+
+def _local_upstream() -> str:
+    """Return the strictly-local upstream; never proxy arbitrary destinations."""
+    main_host = os.getenv("HOST", "127.0.0.1").strip()
+    main_port = os.getenv("PORT", "8765").strip()
+    if main_host not in {"127.0.0.1", "localhost"} or not main_port.isdigit():
+        raise HTTPException(status_code=503, detail="Local app configuration error")
+    port = int(main_port)
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=503, detail="Invalid local port")
+    return f"http://127.0.0.1:{port}"
+
+
+@app.get("/auth/instagram/callback")
+async def instagram_oauth_callback(code: str, state: str):
+    """Pass Meta's one-time authorization code to the local application's callback.
+
+    The public endpoint has no ability to manage accounts, fetch OAuth tokens,
+    upload content, or browse the dashboard. The local app checks OAuth state.
+    """
+    if not code or not state or len(code) > 4096 or len(state) > 1024:
+        raise HTTPException(status_code=400, detail="Invalid Instagram OAuth callback")
+
+    base = _local_upstream()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            result = await client.get(
+                f"{base}/auth/instagram/callback",
+                params={"code": code, "state": state},
+            )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Local OAuth callback unavailable")
+
+    # The main app returns /?connected=instagram after saving the OAuth token.
+    # Navigate back to the local dashboard, never to a publicly exposed panel.
+    if 300 <= result.status_code < 400 and result.headers.get("location") == "/?connected=instagram":
+        return RedirectResponse(f"{base}/?connected=instagram", status_code=303)
+
+    if result.status_code in (400, 422):
+        raise HTTPException(status_code=400, detail="Instagram OAuth state invalid or expired")
+
+    raise HTTPException(
+        status_code=502,
+        detail="Instagram OAuth callback failed; check local PostingTTII logs",
+    )
+
+
 @app.api_route("/media/{token}", methods=["GET", "HEAD"])
 async def media(token: str, request: Request):
     if not _TOKEN.fullmatch(token):
         raise HTTPException(status_code=404, detail="Not found")
 
-    main_host = os.getenv("HOST", "127.0.0.1").strip()
-    main_port = os.getenv("PORT", "8765").strip()
-    if main_host not in {"127.0.0.1", "localhost"} or not main_port.isdigit():
-        # Deliberately do not accept external upstream destinations.
-        raise HTTPException(status_code=503, detail="Local app configuration error")
-
-    upstream_url = f"http://127.0.0.1:{main_port}/media/{token}"
+    upstream_url = f"{_local_upstream()}/media/{token}"
     headers = {}
     if request.headers.get("range"):
         headers["Range"] = request.headers["range"]
