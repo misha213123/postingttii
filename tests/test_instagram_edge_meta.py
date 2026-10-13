@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 from fastapi import HTTPException
 from starlette.requests import Request
 
@@ -103,6 +104,33 @@ class InstagramEdgeMetaTests(unittest.TestCase):
 
 
 class InstagramMetaOAuthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_http_query_meta_app_number_is_accepted_for_edge_and_oauth(self):
+        # A browser always serializes query params as strings. Literal[1, 2]
+        # was rejected as HTTP 422 before Edge could even launch.
+        with tempfile.TemporaryDirectory() as folder:
+            config = SimpleNamespace(
+                data_dir=Path(folder), port=8765,
+                instagram_client_id="first", instagram_client_secret="first-secret",
+                instagram_redirect_uri="https://first.example/auth/instagram/callback",
+                instagram_client_id_2="", instagram_client_secret_2="",
+            )
+            transport = httpx.ASGITransport(app=main.app, client=("127.0.0.1", 49999))
+            with (
+                patch.object(main, "settings", config),
+                patch.object(main, "_edge_executable", return_value="msedge.exe"),
+                patch.object(main.subprocess, "Popen") as launch,
+            ):
+                async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8765") as client:
+                    edge = await client.post("/api/instagram/edge/6?mode=connect&meta_app=1")
+                    self.assertEqual(edge.status_code, 200, edge.text)
+                    self.assertEqual(edge.json()["meta_app"], 1)
+                    self.assertTrue(launch.called)
+                    oauth = await client.get("/connect/instagram/6?meta_app=1")
+                    self.assertEqual(oauth.status_code, 307, oauth.text)
+                    self.assertIn("client_id=first", oauth.headers["location"])
+                    invalid = await client.post("/api/instagram/edge/6?meta_app=3")
+                    self.assertEqual(invalid.status_code, 400)
+
     async def test_slot_6_oauth_uses_first_app_and_saves_correct_app(self):
         config = SimpleNamespace(
             instagram_client_id="first-app", instagram_client_secret="first-secret",
