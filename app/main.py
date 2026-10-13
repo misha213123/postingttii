@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.services.openai_text import generate_caption
+from app.services.instagram_tor_oauth import TorOAuthBrowserError, open_tor_oauth, tor_enabled_for_slot
 from app.services.tiktok_text import generate_tiktok_caption
 from app.services.youtube_text import generate_youtube_metadata
 from app.services import autotok_bridge
@@ -1090,6 +1091,14 @@ async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int
         url = tiktok_auth_url(state)
     else:
         url = instagram_auth_url(state, slot)
+        try:
+            if tor_enabled_for_slot(slot):
+                # Tor Browser is only for login. Publishing still uses the Meta API.
+                open_tor_oauth(slot, url)
+                return RedirectResponse("/", status_code=303)
+        except TorOAuthBrowserError as exc:
+            OAUTH_STATES.pop(state, None)
+            raise HTTPException(503, str(exc)) from exc
     return RedirectResponse(url)
 
 
