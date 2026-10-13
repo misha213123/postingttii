@@ -68,6 +68,7 @@ async def telegram_studio_page():
     return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
+OAUTH_BROWSERS: dict[str, str] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
 IG_CIRCLE_CLAIMS: dict[str, str] = {}
@@ -1071,7 +1072,7 @@ def open_instagram_edge(slot: int, request: Request, mode: Literal["connect", "p
 
 
 @app.get("/connect/{platform}/{slot}")
-async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
+async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int, browser: Literal["default", "tor"] | None = None):
     if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
         raise HTTPException(400, "Недопустимый слот")
     _require_platform(platform)
@@ -1092,12 +1093,15 @@ async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int
     else:
         url = instagram_auth_url(state, slot)
         try:
-            if tor_enabled_for_slot(slot):
-                # Tor Browser is only for login. Publishing still uses the Meta API.
+            chosen_browser = browser or ("tor" if tor_enabled_for_slot(slot) else "default")
+            OAUTH_BROWSERS[state] = chosen_browser
+            if chosen_browser == "tor":
+                # Tor is used only for official OAuth. Posting still uses Meta API.
                 open_tor_oauth(slot, url)
-                return RedirectResponse("/", status_code=303)
+                return RedirectResponse(f"/?tor_connecting={slot}", status_code=303)
         except TorOAuthBrowserError as exc:
             OAUTH_STATES.pop(state, None)
+            OAUTH_BROWSERS.pop(state, None)
             raise HTTPException(503, str(exc)) from exc
     return RedirectResponse(url)
 
@@ -1134,8 +1138,10 @@ async def tiktok_callback(code: str, state: str):
 @app.get("/auth/instagram/callback")
 async def instagram_callback(code: str, state: str):
     slot = _consume_state(state, "instagram")
+    auth_browser = OAUTH_BROWSERS.pop(state, "default")
     try:
         account = await instagram_exchange(code, slot)
+        account["auth_browser"] = auth_browser
         store.save("instagram", slot, account)
     except Exception as exc:
         raise HTTPException(500, f"Instagram OAuth: {exc}") from exc
