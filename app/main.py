@@ -15,6 +15,11 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.services.openai_text import generate_caption
+from app.services.instagram_tor_oauth import (
+    TorOAuthBrowserError,
+    open_tor_oauth,
+    tor_oauth_enabled,
+)
 from app.publish_state import publish_state
 from app.services.platforms import (
     instagram_auth_url,
@@ -647,7 +652,29 @@ async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int
         url = tiktok_auth_url(state)
     else:
         url = instagram_auth_url(state)
+
+    if platform == "instagram" and tor_oauth_enabled():
+        # The original dashboard stays in the user's regular browser.
+        # Tor opens the per-slot interactive OAuth flow on this same PC.
+        local_oauth_url = (
+            f"http://127.0.0.1:{settings.port}/auth/instagram/tor/{state}"
+        )
+        try:
+            open_tor_oauth(slot, local_oauth_url)
+        except TorOAuthBrowserError as exc:
+            OAUTH_STATES.pop(state, None)
+            raise HTTPException(503, str(exc)) from exc
+        return RedirectResponse("/", status_code=303)
+
     return RedirectResponse(url)
+
+
+@app.get("/auth/instagram/tor/{state}")
+async def instagram_tor_oauth_bridge(state: str):
+    saved = OAUTH_STATES.get(state)
+    if not saved or saved[0] != "instagram":
+        raise HTTPException(400, "OAuth state устарел. Подключи Instagram ещё раз.")
+    return RedirectResponse(instagram_auth_url(state))
 
 
 def _consume_state(state: str, expected_platform: str) -> int:
