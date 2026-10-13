@@ -51,6 +51,7 @@ class TokenStore:
                     "slot": a.get("slot"),
                     "label": a.get("label", f"{platform} #{a.get('slot')}"),
                     "id": a.get("id", ""),
+                    "auth_browser": a.get("auth_browser", "default"),
                     "connected": True,
                 }
                 for a in sorted(accounts, key=lambda x: int(x.get("slot", 0)))
