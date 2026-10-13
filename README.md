@@ -72,28 +72,28 @@ API Account Manager. Задайте HTTPS-туннель в `PUBLIC_BASE_URL`,
 ## Instagram — шаблоны описаний из локального TXT
 
 Автоматические Instagram-описания теперь берутся **только** из файла
-\`data/instagram_caption_templates.txt\`, а не из OpenAI или старых встроенных
+`data/instagram_caption_templates.txt`, а не из OpenAI или старых встроенных
 текстов. Файл содержит 13 записей из предоставленного пользователем TXT;
-каждая запись отделяется строкой \`---\`. Тексты (включая хештеги и эмодзи)
+каждая запись отделяется строкой `---`. Тексты (включая хештеги и эмодзи)
 не редактируются. Для сочетания «название видео + слот аккаунта» выбирается
 стабильный шаблон.
 
-Сам TXT не выкладывается в публичный GitHub: папка \`data/\` исключена из
+Сам TXT не выкладывается в публичный GitHub: папка `data/` исключена из
 индекса Git. Чтобы установить шаблоны на своём ПК:
 
-1. Скачайте \`instagram_caption_templates.txt\` из текущего чата.
+1. Скачайте `instagram_caption_templates.txt` из текущего чата.
 2. Поместите файл по адресу
-   \`C:\Users\blackpansel\Desktop\postingttii\data\instagram_caption_templates.txt\`.
+   `C:\Users\blackpansel\Desktop\postingttii\data\instagram_caption_templates.txt`.
 3. Или, если исходный файл лежит в папке Downloads, выполните:
 
-\`\`\`powershell
+```powershell
 cd "C:\Users\blackpansel\Desktop\postingttii"
 New-Item -ItemType Directory -Force ".\data" | Out-Null
 Copy-Item -LiteralPath "$env:USERPROFILE\Downloads\instagram_caption_templates (1).txt" -Destination ".\data\instagram_caption_templates.txt"
-\`\`\`
+```
 
-Путь можно переопределить переменной \`INSTAGRAM_CAPTION_TEMPLATES_FILE\`
-в \`.env\`. Если путь относительный, он считается от корня репозитория.
+Путь можно переопределить переменной `INSTAGRAM_CAPTION_TEMPLATES_FILE`
+в `.env`. Если путь относительный, он считается от корня репозитория.
 
 Только Instagram использует шаблоны; генерация описаний для TikTok и YouTube
 не меняется. В пакетной публикации тексты Instagram больше не создаются
