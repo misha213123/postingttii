@@ -52,6 +52,10 @@ class TokenStore:
                     "label": a.get("label", f"{platform} #{a.get('slot')}"),
                     "id": a.get("id", ""),
                     "connected": True,
+                    **(
+                        {"meta_app": a.get("meta_app", 1 if int(a.get("slot", 0)) <= 5 else 2)}
+                        if platform == "instagram" else {}
+                    ),
                 }
                 for a in sorted(accounts, key=lambda x: int(x.get("slot", 0)))
             ]
