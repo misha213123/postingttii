@@ -1034,13 +1034,15 @@ def open_instagram_edge(
     slot: int,
     request: Request,
     mode: Literal["connect", "profile"] = "connect",
-    meta_app: Literal[1, 2] = 1,
+    meta_app: int = 1,
 ):
     # Launching local applications must never be possible through a public tunnel.
     if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
         raise HTTPException(403, "Открывать Edge можно только из локального приложения")
     if slot not in range(1, 9):
         raise HTTPException(400, "Instagram поддерживает слоты 1–8")
+    if meta_app not in (1, 2):
+        raise HTTPException(400, "Meta App должна быть 1 или 2")
     if mode == "connect":
         # New accounts may use the first Meta app in any of the eight slots.
         # The second Meta app remains optional for legacy 6–8 accounts.
@@ -1080,12 +1082,14 @@ def open_instagram_edge(
 async def connect(
     platform: Literal["youtube", "tiktok", "instagram"],
     slot: int,
-    meta_app: Literal[1, 2] = 1,
+    meta_app: int = 1,
 ):
     if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
         raise HTTPException(400, "Недопустимый слот")
     _require_platform(platform)
     if platform == "instagram":
+        if meta_app not in (1, 2):
+            raise HTTPException(400, "Meta App должна быть 1 или 2")
         if meta_app == 2 and slot <= 5:
             raise HTTPException(400, "Meta 2 поддерживает слоты 6–8")
         if meta_app == 1 and not (settings.instagram_client_id and settings.instagram_client_secret):
