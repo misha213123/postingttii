@@ -71,6 +71,7 @@ async def telegram_studio_page():
     return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
+OAUTH_INSTAGRAM_META_APPS: dict[str, int] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
 IG_CIRCLE_CLAIMS: dict[str, str] = {}
@@ -1029,19 +1030,27 @@ def _edge_executable() -> str:
 
 
 @app.post("/api/instagram/edge/{slot}")
-def open_instagram_edge(slot: int, request: Request, mode: Literal["connect", "profile"] = "connect"):
+def open_instagram_edge(
+    slot: int,
+    request: Request,
+    mode: Literal["connect", "profile"] = "connect",
+    meta_app: Literal[1, 2] = 1,
+):
     # Launching local applications must never be possible through a public tunnel.
     if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
         raise HTTPException(403, "Открывать Edge можно только из локального приложения")
     if slot not in range(1, 9):
         raise HTTPException(400, "Instagram поддерживает слоты 1–8")
     if mode == "connect":
-        # Separate Meta apps: 1–5 use the first credentials, 6–8 the second.
-        if slot <= 5 and not (settings.instagram_client_id and settings.instagram_client_secret):
+        # New accounts may use the first Meta app in any of the eight slots.
+        # The second Meta app remains optional for legacy 6–8 accounts.
+        if meta_app == 2 and slot <= 5:
+            raise HTTPException(400, "Meta 2 поддерживает слоты 6–8")
+        if meta_app == 1 and not (settings.instagram_client_id and settings.instagram_client_secret):
             raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID и INSTAGRAM_CLIENT_SECRET")
-        if slot >= 6 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
+        if meta_app == 2 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
             raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2")
-        url = f"http://127.0.0.1:{settings.port}/connect/instagram/{slot}"
+        url = f"http://127.0.0.1:{settings.port}/connect/instagram/{slot}?meta_app={meta_app}"
     else:
         account = store.get("instagram", slot)
         if not account:
@@ -1064,18 +1073,24 @@ def open_instagram_edge(slot: int, request: Request, mode: Literal["connect", "p
         )
     except OSError as exc:
         raise HTTPException(503, f"Не удалось запустить Microsoft Edge: {exc}") from exc
-    return {"ok": True, "slot": slot, "mode": mode, "meta_app": 1 if slot <= 5 else 2}
+    return {"ok": True, "slot": slot, "mode": mode, "meta_app": meta_app if mode == "connect" else (store.get("instagram", slot) or {}).get("meta_app", 1 if slot <= 5 else 2)}
 
 
 @app.get("/connect/{platform}/{slot}")
-async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
+async def connect(
+    platform: Literal["youtube", "tiktok", "instagram"],
+    slot: int,
+    meta_app: Literal[1, 2] = 1,
+):
     if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
         raise HTTPException(400, "Недопустимый слот")
     _require_platform(platform)
     if platform == "instagram":
-        if slot <= 5 and not (settings.instagram_client_id and settings.instagram_client_secret):
+        if meta_app == 2 and slot <= 5:
+            raise HTTPException(400, "Meta 2 поддерживает слоты 6–8")
+        if meta_app == 1 and not (settings.instagram_client_id and settings.instagram_client_secret):
             raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID и INSTAGRAM_CLIENT_SECRET в .env")
-        if slot >= 6 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
+        if meta_app == 2 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
             raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2 в .env")
     if platform == "tiktok" and not settings.tiktok_enabled:
         raise HTTPException(503, "TikTok временно отключен")
@@ -1087,7 +1102,8 @@ async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int
     elif platform == "tiktok":
         url = tiktok_auth_url(state)
     else:
-        url = instagram_auth_url(state, slot)
+        OAUTH_INSTAGRAM_META_APPS[state] = meta_app
+        url = instagram_auth_url(state, slot, meta_app=meta_app)
     return RedirectResponse(url)
 
 
@@ -1123,8 +1139,10 @@ async def tiktok_callback(code: str, state: str):
 @app.get("/auth/instagram/callback")
 async def instagram_callback(code: str, state: str):
     slot = _consume_state(state, "instagram")
+    meta_app = OAUTH_INSTAGRAM_META_APPS.pop(state, 1 if slot <= 5 else 2)
     try:
-        account = await instagram_exchange(code, slot)
+        account = await instagram_exchange(code, slot, meta_app=meta_app)
+        account["meta_app"] = meta_app
         store.save("instagram", slot, account)
     except Exception as exc:
         raise HTTPException(500, f"Instagram OAuth: {exc}") from exc
