@@ -17,7 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.services.openai_text import generate_caption
+from app.services.instagram_caption_templates import (
+    CaptionTemplatesError,
+    instagram_caption_from_file,
+    load_instagram_caption_templates,
+)
 from app.services.tiktok_text import generate_tiktok_caption
 from app.services.youtube_text import generate_youtube_metadata
 from app.services import autotok_bridge
@@ -216,43 +220,18 @@ async def status():
 async def caption(body: CaptionRequest):
     _safe_video(body.filename)
     try:
-        text = generate_caption(body.filename, body.hint)
-    except Exception as exc:
-        raise HTTPException(500, str(exc)) from exc
+        text = instagram_caption_from_file(body.filename)
+    except CaptionTemplatesError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {"caption": text}
 
 
-JAPANESE_ACCOUNT_STYLES = (
-    ("今日の注目シーンをチェック！🎬", "#おすすめ #リール #切り抜き #配信 #話題"),
-    ("思わずもう一度見たくなる瞬間 ✨", "#動画 #おすすめ #面白い #ハイライト #リール"),
-    ("このシーン、どう思う？ 👀", "#おすすめ #リアクション #エンタメ #動画 #注目"),
-    ("印象に残るワンシーンをお届け 🎧", "#リール #動画 #クリップ #瞬間 #おすすめ"),
-    ("今日のベストシーンはこちら！ 🎮", "#ゲーム #配信 #切り抜き #おすすめ #リール"),
-)
-
-
 def instagram_caption(caption: str, filename: str, slot: int = 1) -> str:
-    """Japanese-only Reel caption, with a distinct stable style per Instagram account."""
-    import hashlib
-    import re
+    """Select only a user-provided TXT template for Instagram.
 
-    intro, _ = JAPANESE_ACCOUNT_STYLES[(slot - 1) % len(JAPANESE_ACCOUNT_STYLES)]
-    raw = (caption or "").strip()
-    # Legacy Russian/English captions must not leak into Japanese-only Reels.
-    if re.search(r"[\\u0400-\\u04ff]", raw) or re.search(r"[A-Za-z]{3,}", raw):
-        raw = ""
-    # Remove previous hashtag blocks; keep account-specific Japanese tags.
-    body = re.sub(r"#[^\\s#]+", "", raw).strip()
-    if not body:
-        variants = (
-            "気になるシーンをまとめました。ぜひ最後まで見てね！",
-            "何度でも見たくなるワンシーン。お気に入りの瞬間を見つけよう！",
-            "今回のハイライトをお届け。楽しんでもらえたら嬉しいです！",
-            "注目の瞬間をシェアします。感想をコメントで教えてね！",
-        )
-        digest = hashlib.sha256((filename + str(slot)).encode("utf-8")).digest()
-        body = variants[int.from_bytes(digest[:2], "big") % len(variants)]
-    return f"{intro}\\n{body}"
+    Legacy AI captions and built-in Japanese phrases are intentionally ignored.
+    """
+    return instagram_caption_from_file(filename, slot)
 
 
 async def _publish_single_target(
@@ -520,15 +499,14 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     _save_batch_job(job)
                 caption = youtube_metadata["description"]
                 item["youtube_title"] = youtube_metadata["title"]
+            elif target.startswith("instagram:"):
+                # One source of truth: the user's local TXT templates.
+                slot = int(target.split(":", 1)[1])
+                caption = instagram_caption_from_file(video.name, slot)
             elif not caption:
                 item["status"] = "caption"
                 _save_batch_job(job)
-                generator = (
-                    generate_tiktok_caption
-                    if target.startswith("tiktok:")
-                    else generate_caption
-                )
-                caption = await asyncio.to_thread(generator, video.name, body.hint)
+                caption = await asyncio.to_thread(generate_tiktok_caption, video.name, body.hint)
             item["caption"] = caption
             cooldown = (
                 max(60, body.interval_seconds)
@@ -665,6 +643,11 @@ async def batch_start(body: BatchPublishRequest):
         raise HTTPException(400, "Выбери хотя бы одно видео")
     if not targets:
         raise HTTPException(400, "Выбери хотя бы один аккаунт")
+    if any(target.startswith("instagram:") for target in targets):
+        try:
+            load_instagram_caption_templates()
+        except CaptionTemplatesError as exc:
+            raise HTTPException(400, str(exc)) from exc
     if not 60 <= body.interval_seconds <= body.interval_max_seconds <= 86400:
         raise HTTPException(400, "Пауза должна быть от 60 секунд")
     if not 1 <= body.wave_min_minutes <= body.wave_max_minutes <= 1440:
@@ -835,6 +818,11 @@ async def publish(body: PublishRequest):
 
     if not targets:
         raise HTTPException(400, "Нет подключенных аккаунтов")
+    if any(target.startswith("instagram:") for target in targets):
+        try:
+            load_instagram_caption_templates()
+        except CaptionTemplatesError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     video_key = publish_state.video_key(video)
 
