@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -98,6 +99,58 @@ class InstagramEdgeMetaTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 main.open_instagram_edge(6, request(), "connect", meta_app=2)
         self.assertEqual(error.exception.status_code, 400)
+
+
+
+class InstagramMetaOAuthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_slot_6_oauth_uses_first_app_and_saves_correct_app(self):
+        config = SimpleNamespace(
+            instagram_client_id="first-app", instagram_client_secret="first-secret",
+            instagram_redirect_uri="https://example.com/auth/instagram/callback",
+            instagram_client_id_2="second-app", instagram_client_secret_2="second-secret",
+            instagram_redirect_uri_2="https://elsewhere.example/auth/instagram/callback",
+        )
+        from app.services import platforms
+        with patch.object(main, "settings", config), patch.object(platforms, "settings", config):
+            response = await main.connect("instagram", 6, meta_app=1)
+            oauth_query = parse_qs(urlparse(response.headers["location"]).query)
+            self.assertEqual(oauth_query["client_id"], ["first-app"])
+            self.assertEqual(
+                oauth_query["redirect_uri"],
+                ["https://example.com/auth/instagram/callback"],
+            )
+            state = oauth_query["state"][0]
+            with (
+                patch.object(main, "instagram_exchange", new_callable=AsyncMock) as exchange,
+                patch.object(main.store, "save") as save,
+            ):
+                exchange.return_value = {"id": "123", "label": "new-user", "access_token": "token"}
+                await main.instagram_callback("code", state)
+                exchange.assert_awaited_once_with("code", 6, meta_app=1)
+                saved = save.call_args.args
+                self.assertEqual(saved[:2], ("instagram", 6))
+                self.assertEqual(saved[2]["meta_app"], 1)
+
+    async def test_optional_meta_2_keeps_old_slot_mapping(self):
+        config = SimpleNamespace(
+            instagram_client_id="first-app", instagram_client_secret="first-secret",
+            instagram_redirect_uri="https://example.com/auth/instagram/callback",
+            instagram_client_id_2="second-app", instagram_client_secret_2="second-secret",
+            instagram_redirect_uri_2="https://elsewhere.example/auth/instagram/callback",
+        )
+        from app.services import platforms
+        with patch.object(main, "settings", config), patch.object(platforms, "settings", config):
+            response = await main.connect("instagram", 7, meta_app=2)
+            oauth_query = parse_qs(urlparse(response.headers["location"]).query)
+            self.assertEqual(oauth_query["client_id"], ["second-app"])
+            self.assertEqual(
+                oauth_query["redirect_uri"],
+                ["https://elsewhere.example/auth/instagram/callback"],
+            )
+            # Consume the test state, as a real callback would do.
+            state = oauth_query["state"][0]
+            main._consume_state(state, "instagram")
+            main.OAUTH_INSTAGRAM_META_APPS.pop(state, None)
 
 
 if __name__ == "__main__":
