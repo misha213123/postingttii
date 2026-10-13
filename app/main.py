@@ -1045,11 +1045,14 @@ def open_instagram_edge(slot: int, request: Request, mode: Literal["connect", "p
     # Launching local applications must never be possible through a public tunnel.
     if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
         raise HTTPException(403, "Открывать Edge можно только из локального приложения")
-    if slot not in (6, 7, 8):
-        raise HTTPException(400, "Edge-профили доступны для слотов 6–8")
+    if slot not in range(1, 9):
+        raise HTTPException(400, "Instagram поддерживает слоты 1–8")
     if mode == "connect":
-        if not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
-            raise HTTPException(400, "Настрой INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2")
+        # Separate Meta apps: 1–5 use the first credentials, 6–8 the second.
+        if slot <= 5 and not (settings.instagram_client_id and settings.instagram_client_secret):
+            raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID и INSTAGRAM_CLIENT_SECRET")
+        if slot >= 6 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
+            raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2")
         url = f"http://127.0.0.1:{settings.port}/connect/instagram/{slot}"
     else:
         account = store.get("instagram", slot)
@@ -1061,12 +1064,19 @@ def open_instagram_edge(slot: int, request: Request, mode: Literal["connect", "p
     profile_dir.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.Popen(
-            [_edge_executable(), f"--user-data-dir={profile_dir}", "--no-first-run", url],
+            [
+                _edge_executable(),
+                f"--user-data-dir={profile_dir}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--new-window",
+                url,
+            ],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except OSError as exc:
         raise HTTPException(503, f"Не удалось запустить Microsoft Edge: {exc}") from exc
-    return {"ok": True, "slot": slot, "mode": mode}
+    return {"ok": True, "slot": slot, "mode": mode, "meta_app": 1 if slot <= 5 else 2}
 
 
 @app.get("/connect/{platform}/{slot}")
