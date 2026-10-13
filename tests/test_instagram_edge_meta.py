@@ -47,9 +47,9 @@ class InstagramEdgeMetaTests(unittest.TestCase):
                 seen_profiles = set()
                 for slot in range(1, 9):
                     result = main.open_instagram_edge(slot, request(), "connect")
-                    self.assertEqual(result["meta_app"], 1 if slot <= 5 else 2)
+                    self.assertEqual(result["meta_app"], 1)
                     command = launch.call_args.args[0]
-                    self.assertEqual(command[-1], f"http://127.0.0.1:8765/connect/instagram/{slot}")
+                    self.assertEqual(command[-1], f"http://127.0.0.1:8765/connect/instagram/{slot}?meta_app=1")
                     self.assertIn("--new-window", command)
                     profile = f"--user-data-dir={Path(folder) / 'edge_instagram_profiles' / f'slot_{slot}'}"
                     self.assertIn(profile, command)
@@ -67,7 +67,24 @@ class InstagramEdgeMetaTests(unittest.TestCase):
             main.open_instagram_edge(6, request("203.0.113.25"), "connect")
         self.assertEqual(error.exception.status_code, 403)
 
-    def test_second_app_must_be_configured_for_slots_6_to_8(self):
+    def test_first_app_is_sufficient_for_slots_6_to_8(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config = SimpleNamespace(
+                data_dir=Path(folder), port=8765,
+                instagram_client_id="first", instagram_client_secret="first-secret",
+                instagram_client_id_2="", instagram_client_secret_2="",
+            )
+            with (
+                patch.object(main, "settings", config),
+                patch.object(main, "_edge_executable", return_value="msedge.exe"),
+                patch.object(main.subprocess, "Popen") as launch,
+            ):
+                for slot in (6, 7, 8):
+                    result = main.open_instagram_edge(slot, request(), "connect")
+                    self.assertEqual(result["meta_app"], 1)
+                    self.assertTrue(launch.called)
+
+    def test_second_app_must_be_configured_when_explicitly_selected(self):
         with patch.object(
             main,
             "settings",
@@ -79,7 +96,7 @@ class InstagramEdgeMetaTests(unittest.TestCase):
             ),
         ):
             with self.assertRaises(HTTPException) as error:
-                main.open_instagram_edge(6, request(), "connect")
+                main.open_instagram_edge(6, request(), "connect", meta_app=2)
         self.assertEqual(error.exception.status_code, 400)
 
 
