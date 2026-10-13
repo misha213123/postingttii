@@ -17,7 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.services.openai_text import generate_caption
+from app.services.instagram_caption_templates import (
+    CaptionTemplatesError,
+    instagram_caption_from_file,
+    load_instagram_caption_templates,
+)
 from app.services.tiktok_text import generate_tiktok_caption
 from app.services.youtube_text import generate_youtube_metadata
 from app.services import autotok_bridge
@@ -67,6 +71,7 @@ async def telegram_studio_page():
     return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
+OAUTH_INSTAGRAM_META_APPS: dict[str, int] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
 IG_CIRCLE_CLAIMS: dict[str, str] = {}
@@ -216,43 +221,18 @@ async def status():
 async def caption(body: CaptionRequest):
     _safe_video(body.filename)
     try:
-        text = generate_caption(body.filename, body.hint)
-    except Exception as exc:
-        raise HTTPException(500, str(exc)) from exc
+        text = instagram_caption_from_file(body.filename)
+    except CaptionTemplatesError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {"caption": text}
 
 
-JAPANESE_ACCOUNT_STYLES = (
-    ("今日の注目シーンをチェック！🎬", "#おすすめ #リール #切り抜き #配信 #話題"),
-    ("思わずもう一度見たくなる瞬間 ✨", "#動画 #おすすめ #面白い #ハイライト #リール"),
-    ("このシーン、どう思う？ 👀", "#おすすめ #リアクション #エンタメ #動画 #注目"),
-    ("印象に残るワンシーンをお届け 🎧", "#リール #動画 #クリップ #瞬間 #おすすめ"),
-    ("今日のベストシーンはこちら！ 🎮", "#ゲーム #配信 #切り抜き #おすすめ #リール"),
-)
-
-
 def instagram_caption(caption: str, filename: str, slot: int = 1) -> str:
-    """Japanese-only Reel caption, with a distinct stable style per Instagram account."""
-    import hashlib
-    import re
+    """Select only a user-provided TXT template for Instagram.
 
-    intro, _ = JAPANESE_ACCOUNT_STYLES[(slot - 1) % len(JAPANESE_ACCOUNT_STYLES)]
-    raw = (caption or "").strip()
-    # Legacy Russian/English captions must not leak into Japanese-only Reels.
-    if re.search(r"[\\u0400-\\u04ff]", raw) or re.search(r"[A-Za-z]{3,}", raw):
-        raw = ""
-    # Remove previous hashtag blocks; keep account-specific Japanese tags.
-    body = re.sub(r"#[^\\s#]+", "", raw).strip()
-    if not body:
-        variants = (
-            "気になるシーンをまとめました。ぜひ最後まで見てね！",
-            "何度でも見たくなるワンシーン。お気に入りの瞬間を見つけよう！",
-            "今回のハイライトをお届け。楽しんでもらえたら嬉しいです！",
-            "注目の瞬間をシェアします。感想をコメントで教えてね！",
-        )
-        digest = hashlib.sha256((filename + str(slot)).encode("utf-8")).digest()
-        body = variants[int.from_bytes(digest[:2], "big") % len(variants)]
-    return f"{intro}\\n{body}"
+    Legacy AI captions and built-in Japanese phrases are intentionally ignored.
+    """
+    return instagram_caption_from_file(filename, slot)
 
 
 async def _publish_single_target(
@@ -520,15 +500,14 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     _save_batch_job(job)
                 caption = youtube_metadata["description"]
                 item["youtube_title"] = youtube_metadata["title"]
+            elif target.startswith("instagram:"):
+                # One source of truth: the user's local TXT templates.
+                slot = int(target.split(":", 1)[1])
+                caption = instagram_caption_from_file(video.name, slot)
             elif not caption:
                 item["status"] = "caption"
                 _save_batch_job(job)
-                generator = (
-                    generate_tiktok_caption
-                    if target.startswith("tiktok:")
-                    else generate_caption
-                )
-                caption = await asyncio.to_thread(generator, video.name, body.hint)
+                caption = await asyncio.to_thread(generate_tiktok_caption, video.name, body.hint)
             item["caption"] = caption
             cooldown = (
                 max(60, body.interval_seconds)
@@ -665,6 +644,11 @@ async def batch_start(body: BatchPublishRequest):
         raise HTTPException(400, "Выбери хотя бы одно видео")
     if not targets:
         raise HTTPException(400, "Выбери хотя бы один аккаунт")
+    if any(target.startswith("instagram:") for target in targets):
+        try:
+            load_instagram_caption_templates()
+        except CaptionTemplatesError as exc:
+            raise HTTPException(400, str(exc)) from exc
     if not 60 <= body.interval_seconds <= body.interval_max_seconds <= 86400:
         raise HTTPException(400, "Пауза должна быть от 60 секунд")
     if not 1 <= body.wave_min_minutes <= body.wave_max_minutes <= 1440:
@@ -835,6 +819,11 @@ async def publish(body: PublishRequest):
 
     if not targets:
         raise HTTPException(400, "Нет подключенных аккаунтов")
+    if any(target.startswith("instagram:") for target in targets):
+        try:
+            load_instagram_caption_templates()
+        except CaptionTemplatesError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     video_key = publish_state.video_key(video)
 
@@ -1041,16 +1030,27 @@ def _edge_executable() -> str:
 
 
 @app.post("/api/instagram/edge/{slot}")
-def open_instagram_edge(slot: int, request: Request, mode: Literal["connect", "profile"] = "connect"):
+def open_instagram_edge(
+    slot: int,
+    request: Request,
+    mode: Literal["connect", "profile"] = "connect",
+    meta_app: Literal[1, 2] = 1,
+):
     # Launching local applications must never be possible through a public tunnel.
     if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
         raise HTTPException(403, "Открывать Edge можно только из локального приложения")
-    if slot not in (6, 7, 8):
-        raise HTTPException(400, "Edge-профили доступны для слотов 6–8")
+    if slot not in range(1, 9):
+        raise HTTPException(400, "Instagram поддерживает слоты 1–8")
     if mode == "connect":
-        if not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
-            raise HTTPException(400, "Настрой INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2")
-        url = f"http://127.0.0.1:{settings.port}/connect/instagram/{slot}"
+        # New accounts may use the first Meta app in any of the eight slots.
+        # The second Meta app remains optional for legacy 6–8 accounts.
+        if meta_app == 2 and slot <= 5:
+            raise HTTPException(400, "Meta 2 поддерживает слоты 6–8")
+        if meta_app == 1 and not (settings.instagram_client_id and settings.instagram_client_secret):
+            raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID и INSTAGRAM_CLIENT_SECRET")
+        if meta_app == 2 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
+            raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2")
+        url = f"http://127.0.0.1:{settings.port}/connect/instagram/{slot}?meta_app={meta_app}"
     else:
         account = store.get("instagram", slot)
         if not account:
@@ -1061,23 +1061,36 @@ def open_instagram_edge(slot: int, request: Request, mode: Literal["connect", "p
     profile_dir.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.Popen(
-            [_edge_executable(), f"--user-data-dir={profile_dir}", "--no-first-run", url],
+            [
+                _edge_executable(),
+                f"--user-data-dir={profile_dir}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--new-window",
+                url,
+            ],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except OSError as exc:
         raise HTTPException(503, f"Не удалось запустить Microsoft Edge: {exc}") from exc
-    return {"ok": True, "slot": slot, "mode": mode}
+    return {"ok": True, "slot": slot, "mode": mode, "meta_app": meta_app if mode == "connect" else (store.get("instagram", slot) or {}).get("meta_app", 1 if slot <= 5 else 2)}
 
 
 @app.get("/connect/{platform}/{slot}")
-async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
+async def connect(
+    platform: Literal["youtube", "tiktok", "instagram"],
+    slot: int,
+    meta_app: Literal[1, 2] = 1,
+):
     if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
         raise HTTPException(400, "Недопустимый слот")
     _require_platform(platform)
     if platform == "instagram":
-        if slot <= 5 and not (settings.instagram_client_id and settings.instagram_client_secret):
+        if meta_app == 2 and slot <= 5:
+            raise HTTPException(400, "Meta 2 поддерживает слоты 6–8")
+        if meta_app == 1 and not (settings.instagram_client_id and settings.instagram_client_secret):
             raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID и INSTAGRAM_CLIENT_SECRET в .env")
-        if slot >= 6 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
+        if meta_app == 2 and not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
             raise HTTPException(400, "Заполни INSTAGRAM_CLIENT_ID_2 и INSTAGRAM_CLIENT_SECRET_2 в .env")
     if platform == "tiktok" and not settings.tiktok_enabled:
         raise HTTPException(503, "TikTok временно отключен")
@@ -1089,7 +1102,8 @@ async def connect(platform: Literal["youtube", "tiktok", "instagram"], slot: int
     elif platform == "tiktok":
         url = tiktok_auth_url(state)
     else:
-        url = instagram_auth_url(state, slot)
+        OAUTH_INSTAGRAM_META_APPS[state] = meta_app
+        url = instagram_auth_url(state, slot, meta_app=meta_app)
     return RedirectResponse(url)
 
 
@@ -1125,8 +1139,10 @@ async def tiktok_callback(code: str, state: str):
 @app.get("/auth/instagram/callback")
 async def instagram_callback(code: str, state: str):
     slot = _consume_state(state, "instagram")
+    meta_app = OAUTH_INSTAGRAM_META_APPS.pop(state, 1 if slot <= 5 else 2)
     try:
-        account = await instagram_exchange(code, slot)
+        account = await instagram_exchange(code, slot, meta_app=meta_app)
+        account["meta_app"] = meta_app
         store.save("instagram", slot, account)
     except Exception as exc:
         raise HTTPException(500, f"Instagram OAuth: {exc}") from exc

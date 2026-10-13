@@ -402,14 +402,22 @@ async def tiktok_upload(slot: int, video_path: Path, caption: str) -> dict:
     return {"id": publish_id, "platform": "tiktok", "slot": slot}
 
 
-def _instagram_app(slot: int) -> tuple[str, str, str]:
-    if slot >= 6:
+def _instagram_app(slot: int, meta_app: int | None = None) -> tuple[str, str, str]:
+    """Select OAuth credentials by app, not only by account slot.
+
+    None preserves the legacy 1-5/6-8 mapping for callers using the old API.
+    New Edge connections pass meta_app explicitly.
+    """
+    selected = (1 if slot <= 5 else 2) if meta_app is None else meta_app
+    if selected == 1:
+        return settings.instagram_client_id, settings.instagram_client_secret, settings.instagram_redirect_uri
+    if selected == 2:
         return settings.instagram_client_id_2, settings.instagram_client_secret_2, settings.instagram_redirect_uri_2
-    return settings.instagram_client_id, settings.instagram_client_secret, settings.instagram_redirect_uri
+    raise ValueError("Meta App должна быть 1 или 2")
 
 
-def instagram_auth_url(state: str, slot: int = 1) -> str:
-    client_id, _, redirect_uri = _instagram_app(slot)
+def instagram_auth_url(state: str, slot: int = 1, meta_app: int | None = None) -> str:
+    client_id, _, redirect_uri = _instagram_app(slot, meta_app)
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -422,8 +430,8 @@ def instagram_auth_url(state: str, slot: int = 1) -> str:
     return "https://www.instagram.com/oauth/authorize?" + urlencode(params)
 
 
-async def instagram_exchange(code: str, slot: int = 1) -> dict:
-    client_id, client_secret, redirect_uri = _instagram_app(slot)
+async def instagram_exchange(code: str, slot: int = 1, meta_app: int | None = None) -> dict:
+    client_id, client_secret, redirect_uri = _instagram_app(slot, meta_app)
     code = code.replace("#_", "")
     async with httpx.AsyncClient(timeout=30) as client:
         short = await client.post(
