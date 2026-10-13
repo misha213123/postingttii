@@ -42,7 +42,7 @@ def load_instagram_caption_templates() -> tuple[str, ...]:
 
     templates = tuple(
         block.strip()
-        for block in re.split(r"(?m)^\\s*---\\s*$", raw)
+        for block in re.split(r"(?m)^[ \t]*---[ \t]*$", raw)
         if block.strip()
     )
     if not templates:
@@ -57,6 +57,6 @@ def load_instagram_caption_templates() -> tuple[str, ...]:
 def instagram_caption_from_file(filename: str, slot: int = 1) -> str:
     """Choose a stable template for this video/account; return it verbatim."""
     templates = load_instagram_caption_templates()
-    fingerprint = hashlib.sha256(f"{slot}\\0{filename}".encode("utf-8")).digest()
+    fingerprint = hashlib.sha256(f"{slot}:{filename}".encode("utf-8")).digest()
     index = int.from_bytes(fingerprint[:8], "big") % len(templates)
     return templates[index]
