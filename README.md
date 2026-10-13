@@ -17,10 +17,11 @@
 Studio (`fix/instagram-meta-concurrency-20261009`). Tor Browser и Tor OAuth
 **не используются**. Существующие авторизации и обложки не удаляются.
 
-- **Meta 1 · Edge:** Instagram-слоты **1–5**, используются
-  `INSTAGRAM_CLIENT_ID`, `INSTAGRAM_CLIENT_SECRET`,
-  `INSTAGRAM_REDIRECT_URI`.
-- **Meta 2 · Edge:** Instagram-слоты **6–8**, используются
+- **Meta 1 · Edge (основной режим):** **любой свободный Instagram-слот 1–8**
+  подключается через `INSTAGRAM_CLIENT_ID`, `INSTAGRAM_CLIENT_SECRET`,
+  `INSTAGRAM_REDIRECT_URI`. Это работает и для новых аккаунтов в слотах 6–8.
+- **Meta 2 · Edge (совместимость):** ранее подключённые аккаунты в слотах 6–8
+  остаются со своими токенами. Второе приложение доступно опционально через
   `INSTAGRAM_CLIENT_ID_2`, `INSTAGRAM_CLIENT_SECRET_2`,
   `INSTAGRAM_REDIRECT_URI_2`.
 
@@ -33,10 +34,12 @@ Studio (`fix/instagram-meta-concurrency-20261009`). Tor Browser и Tor OAuth
 токена. Последующие Reels публикуются прежним способом через Meta API,
 а не автоматизацией браузера.
 
-В панели пустые слоты скрыты. Для подключения нажмите «Подключить Meta 1 · Edge»
-или «Подключить Meta 2 · Edge», выберите свободный слот и завершите вход
-в открывшемся Edge. Подключённый аккаунт появится в панели и в очереди
-публикаций; все сохранённые обложки останутся на месте.
+В панели пустые слоты скрыты. Для подключения нового Instagram-аккаунта
+нажмите «Подключить Instagram · Meta 1 / Edge», выберите **любой**
+свободный слот от 1 до 8 и завершите вход в открывшемся Edge.
+Если аккаунты уже добавлены в первое Meta-приложение, добавлять их во
+второе приложение **не нужно**. После успешного OAuth они появятся
+в панели и очереди публикаций. Все сохранённые обложки остаются на месте.
 
 Важно: для обеих Meta App зарегистрируйте соответствующие **точные**
 HTTPS Redirect URI. Чтобы Reels могли получать видео и обложки, установите
@@ -60,10 +63,11 @@ cloudflared tunnel --url http://127.0.0.1:8766
 
 У gateway разрешены только `GET/HEAD /media/{token}` и
 `GET /auth/instagram/callback`; он не публикует панель управления или
-API Account Manager. Задайте HTTPS-туннель в `PUBLIC_BASE_URL`,
-`INSTAGRAM_REDIRECT_URI` и `INSTAGRAM_REDIRECT_URI_2`, последним двум
-добавив `/auth/instagram/callback`; URI должны совпадать с настройками
-соответствующих Meta App.
+API Account Manager. Задайте HTTPS-туннель в `PUBLIC_BASE_URL` и
+`INSTAGRAM_REDIRECT_URI` (с путём `/auth/instagram/callback`) для
+**первого** приложения. В Meta for Developers этот адрес должен быть в
+списке разрешённых OAuth Redirect URIs. `INSTAGRAM_REDIRECT_URI_2`
+требуется только при отдельной авторизации через второе приложение.
 
 При переходе с прошлой Tor-ветки **не нужно удалять** `.env`, `data/` или
 `videos/`. Tor-переменные, если остались в локальном `.env`, в этой версии
