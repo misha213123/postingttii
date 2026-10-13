@@ -226,11 +226,9 @@ function renderPlatforms(){
     card.className='card platform';
     let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div>';
     if(instagram){
-      const freeFirst=[1,2,3,4,5].some(slot=>!connected(platform,slot));
-      const freeSecond=[6,7,8].some(slot=>!connected(platform,slot));
+      const hasFreeSlot=slots.some(slot=>!connected(platform,slot));
       html+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">';
-      if(freeFirst)html+='<button class="btn secondary" style="font-size:11px;padding:7px 9px" onclick="connectInstagramViaEdge(1)">+ Подключить Meta 1 · Edge</button>';
-      if(freeSecond)html+='<button class="btn primary" style="font-size:11px;padding:7px 9px" onclick="connectInstagramViaEdge(2)">+ Подключить Meta 2 · Edge</button>';
+      if(hasFreeSlot)html+='<button class="btn primary" style="font-size:11px;padding:7px 9px" onclick="connectInstagramViaEdge(1)">+ Подключить Instagram · Meta 1 / Edge</button>';
       html+='</div>';
     }else if(slots.some(slot=>!connected(platform,slot))){
       html+='<button class="btn secondary" style="font-size:11px;margin-bottom:9px;padding:7px 9px" onclick="connectYouTubeFirst()">+ Подключить YouTube</button>';
@@ -238,7 +236,7 @@ function renderPlatforms(){
     if(active.length)html+='<div class="account-row">';
     for(const a of active){
       const slot=Number(a.slot);
-      const metaLabel=instagram?' · Meta '+(slot<=5?'1':'2'):'';
+      const metaLabel=instagram?' · Meta '+(Number(a.meta_app)||(slot<=5?1:2)):'';
       html+='<div class="account"><b>'+esc(a.label||a.id||title+' #'+slot)+metaLabel+'</b>';
       html+='<div class="label good">'+esc(a.label||'Подключён')+'</div>';
       if(instagram)html+='<button class="btn secondary" style="padding:5px 8px;font-size:10px" onclick="openEdge('+slot+',\'profile\')">Открыть Edge</button> ';
@@ -308,17 +306,18 @@ function renderPlatforms(){
   root.appendChild(t);
 }
 
-async function connectInstagramViaEdge(metaApp){
-  const range=metaApp===1?[1,2,3,4,5]:[6,7,8];
+async function connectInstagramViaEdge(metaApp=1){
+  // All free Instagram slots can be connected to Meta 1, including 6–8.
+  const range=metaApp===1?[1,2,3,4,5,6,7,8]:[6,7,8];
   const free=range.filter(slot=>!connected('instagram',slot));
-  if(!free.length){alert('Все слоты Meta '+metaApp+' уже заняты.');return;}
+  if(!free.length){alert('Нет свободных Instagram-слотов.');return;}
   if(metaApp===1&&!state.configured.instagram){alert('В .env не настроено первое приложение Meta.');return;}
   if(metaApp===2&&!state.configured.instagram_second_app){alert('В .env не настроено второе приложение Meta.');return;}
-  const answer=prompt('Свободные слоты Meta '+metaApp+': '+free.join(', ')+'. Введи номер:',String(free[0]));
+  const answer=prompt('Свободные Instagram-слоты для Meta '+metaApp+': '+free.join(', ')+'. Выбери номер:',String(free[0]));
   if(answer===null)return;
   const slot=Number(answer.trim());
   if(!free.includes(slot)){alert('Выбери свободный слот: '+free.join(', '));return;}
-  if(await openEdge(slot,'connect'))startEdgeConnectionCheck(slot);
+  if(await openEdge(slot,'connect',metaApp))startEdgeConnectionCheck(slot);
 }
 
 function connectYouTubeFirst(){
@@ -615,9 +614,9 @@ async function cancelBatch(){
   }
 }
 async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
-async function openEdge(slot,mode){
+async function openEdge(slot,mode,metaApp=1){
   try{
-    const r=await fetch('/api/instagram/edge/'+slot+'?mode='+encodeURIComponent(mode),{method:'POST'});
+    const r=await fetch('/api/instagram/edge/'+slot+'?mode='+encodeURIComponent(mode)+'&meta_app='+encodeURIComponent(metaApp),{method:'POST'});
     const d=await r.json();
     if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Не удалось открыть Edge');
     return true;
