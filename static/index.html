@@ -154,7 +154,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
       <div class="field"><label for="intervalMaxSeconds">До (сек)</label><input id="intervalMaxSeconds" type="number" min="60" max="86400" value="160" style="width:100%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div>
       <div class="field"><label>Пауза между волнами (мин)</label><div style="display:flex;gap:8px"><input id="waveMinMinutes" type="number" min="1" max="1440" value="22" style="width:50%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"><input id="waveMaxMinutes" type="number" min="1" max="1440" value="28" style="width:50%;padding:10px;background:#080d13;color:white;border:1px solid #2a3747;border-radius:10px"></div></div>
       <label class="muted" style="display:flex;gap:8px;align-items:center;margin:10px 0"><input type="checkbox" id="shuffleVideos" checked> Перемешивать видео перед запуском</label>
-      <div class="ai-note">✨ Для Instagram сохраняются японские описания и шаблоны. Для TikTok OpenAI отдельно создаёт описание с хештегами. AI вызывается только при публикации.</div>
+      <div class="ai-note">✨ Instagram: описания выбираются только из локального TXT с шаблонами. TikTok и YouTube работают как прежде.</div>
       <div class="note" id="cadenceNote"></div>
       <button class="primary start" id="startBatch" onclick="startBatch()">Запустить очередь</button>
     </aside>
