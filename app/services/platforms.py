@@ -143,9 +143,11 @@ async def _youtube_access_token(slot: int) -> tuple[str, dict]:
     return account["access_token"], account
 
 
-async def youtube_upload(slot: int, video_path: Path, caption: str) -> dict:
+async def youtube_upload(
+    slot: int, video_path: Path, caption: str, *, title: str | None = None
+) -> dict:
     token, _ = await _youtube_access_token(slot)
-    title = clean_video_title(video_path)
+    title = (title or clean_video_title(video_path)).strip()[:100]
     body = {
         "snippet": {
             "title": title,
@@ -188,7 +190,10 @@ async def youtube_upload(slot: int, video_path: Path, caption: str) -> dict:
             raise _api_error(upload, "YouTube", "upload video")
         data = upload.json()
 
-    return {"id": data.get("id"), "platform": "youtube", "slot": slot}
+    return {
+        "id": data.get("id"), "platform": "youtube", "slot": slot,
+        "title": title, "description": caption[:5000],
+    }
 
 
 def tiktok_auth_url(state: str) -> str:

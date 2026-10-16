@@ -18,6 +18,10 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.services.openai_text import generate_caption
+from app.services.tiktok_text import generate_tiktok_caption
+from app.services.youtube_text import generate_youtube_metadata
+from app.services import autotok_bridge
+from app.services.autotok_routes import router as autotok_router
 from app.publish_state import publish_state
 from app.services.platforms import (
     instagram_auth_url,
@@ -50,6 +54,7 @@ app.include_router(account_profile_router)
 app.include_router(account_browser_router)
 app.include_router(account_tiktok_router)
 app.include_router(account_instagram_router)
+app.include_router(autotok_router)
 app.include_router(telegram_studio_router)
 app.include_router(instagram_reels_router)
 
@@ -183,14 +188,15 @@ async def status():
             target: publish_state.cooldown_remaining(
                 target, settings.post_cooldown_minutes * 60
             )
-            for platform in ("youtube", "instagram")
+            for platform in ("youtube", "instagram", "tiktok")
             for account in store.list_accounts().get(platform, [])
             for target in [f"{platform}:{account['slot']}"]
         },
         "configured": {
             "openai": bool(settings.openai_api_key),
             "youtube": bool(settings.youtube_client_id and settings.youtube_client_secret),
-            "tiktok": bool(settings.tiktok_client_key and settings.tiktok_client_secret),
+            "tiktok": bool(settings.tiktok_client_key and settings.tiktok_client_secret) or bool(autotok_bridge.executable()),
+            "autotok": bool(autotok_bridge.executable()),
             "tiktok_enabled": settings.tiktok_enabled,
             "instagram": bool(settings.instagram_client_id and settings.instagram_client_secret),
             "instagram_public_url": bool(settings.public_base_url),
@@ -245,6 +251,7 @@ def instagram_caption(caption: str, filename: str, slot: int = 1) -> str:
 async def _publish_single_target(
     video: Path, caption: str, target: str, *,
     cooldown_seconds: int | None = None,
+    youtube_metadata: dict[str, str] | None = None,
 ) -> dict:
     try:
         platform, slot_text = target.split(":", 1)
@@ -256,8 +263,8 @@ async def _publish_single_target(
         raise HTTPException(400, "Недопустимый номер аккаунта")
     if platform not in {"youtube", "instagram", "tiktok"}:
         raise HTTPException(400, f"Неизвестная платформа: {platform}")
-    if platform == "tiktok" and not settings.tiktok_enabled:
-        raise HTTPException(503, "TikTok временно отключен")
+    if platform == "tiktok" and not settings.tiktok_enabled and (store.get("tiktok", slot) or {}).get("provider") != "autotok":
+        raise HTTPException(503, "TikTok API отключён. Подключи TikTok через AutoTok")
 
     video_key = publish_state.video_key(video)
     if publish_state.is_completed(video_key, target):
@@ -295,7 +302,12 @@ async def _publish_single_target(
 
     try:
         if platform == "youtube":
-            result = await youtube_upload(slot, video, caption)
+            metadata = youtube_metadata or await asyncio.to_thread(
+                generate_youtube_metadata, video.name, caption
+            )
+            result = await youtube_upload(
+                slot, video, metadata["description"], title=metadata["title"]
+            )
         elif platform == "instagram":
             cover_path = COVER_DIR / f"{slot}.jpg"
             if not cover_path.exists():
@@ -305,7 +317,12 @@ async def _publish_single_target(
             cover_url = f"{settings.public_base_url}/media/{cover_token}" if settings.public_base_url else ""
             result = await instagram_upload(slot, video_url, instagram_caption(caption, video.name, slot), cover_url=cover_url)
         else:
-            result = await tiktok_upload(slot, video, caption)
+            account = store.get("tiktok", slot) or {}
+            result = (
+                await autotok_bridge.publish(slot, video, caption)
+                if account.get("provider") == "autotok"
+                else await tiktok_upload(slot, video, caption)
+            )
 
         publish_state.mark_completed(
             video_key=video_key,
@@ -469,11 +486,32 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 item["status"] = "already"
                 _queue_archive(job, video, key)
                 return
+            youtube_metadata = None
             caption = (body.captions.get(video.name) or item.get("caption") or "").strip()
-            if not caption:
+            if target.startswith("youtube:"):
+                youtube_metadata = item.get("youtube_metadata")
+                if not youtube_metadata:
+                    item["status"] = "caption"
+                    _save_batch_job(job)
+                    youtube_metadata = await asyncio.to_thread(
+                        generate_youtube_metadata, video.name,
+                        body.hint or caption,
+                    )
+                    # Save before uploading so a restarted worker keeps the
+                    # previously generated title and description.
+                    item["youtube_metadata"] = youtube_metadata
+                    _save_batch_job(job)
+                caption = youtube_metadata["description"]
+                item["youtube_title"] = youtube_metadata["title"]
+            elif not caption:
                 item["status"] = "caption"
                 _save_batch_job(job)
-                caption = await asyncio.to_thread(generate_caption, video.name, body.hint)
+                generator = (
+                    generate_tiktok_caption
+                    if target.startswith("tiktok:")
+                    else generate_caption
+                )
+                caption = await asyncio.to_thread(generator, video.name, body.hint)
             item["caption"] = caption
             cooldown = (
                 max(60, body.interval_seconds)
@@ -493,7 +531,8 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 _save_batch_job(job)
                 try:
                     result = await _publish_single_target(
-                        video, caption, target, cooldown_seconds=cooldown
+                        video, caption, target, cooldown_seconds=cooldown,
+                        youtube_metadata=youtube_metadata,
                     )
                 except HTTPException as exc:
                     if exc.status_code != 429:
@@ -631,7 +670,7 @@ async def batch_start(body: BatchPublishRequest):
 
     allowed_targets = {
         f"{platform}:{account['slot']}"
-        for platform in ("youtube", "instagram")
+        for platform in ("youtube", "instagram", "tiktok")
         for account in store.list_accounts().get(platform, [])
     }
     invalid = [target for target in targets if target not in allowed_targets]
@@ -640,6 +679,22 @@ async def batch_start(body: BatchPublishRequest):
             400,
             "Недоступные аккаунты: " + ", ".join(invalid),
         )
+    if len(filenames) < len(targets):
+        raise HTTPException(
+            400,
+            "Выбрано меньше уникальных видео, чем аккаунтов. "
+            "Часть аккаунтов (в том числе TikTok) не получит ролик. "
+            "Добавь видео или сними лишние галочки аккаунтов.",
+        )
+    # Verify AutoTok sessions before any YouTube or Instagram work starts.
+    for target in targets:
+        if target.startswith("tiktok:"):
+            account = store.get("tiktok", int(target.split(":", 1)[1])) or {}
+            if account.get("provider") == "autotok":
+                try:
+                    await autotok_bridge.check_account(account["autotok_account"])
+                except RuntimeError as exc:
+                    raise HTTPException(400, f"{target}: {exc}") from exc
 
     job_id = secrets.token_urlsafe(12)
     # Round-robin: each video is assigned to exactly one account.
@@ -755,7 +810,7 @@ async def publish(body: PublishRequest):
     else:
         targets = []
         default_platforms = ["youtube", "instagram"]
-        if settings.tiktok_enabled:
+        if settings.tiktok_enabled or accounts.get("tiktok"):
             default_platforms.append("tiktok")
         for platform in default_platforms:
             for account in accounts.get(platform, []):
@@ -791,11 +846,20 @@ async def publish(body: PublishRequest):
                 raise RuntimeError("Недопустимый слот аккаунта")
 
             if platform == "youtube":
-                result = await youtube_upload(slot, video, body.caption)
+                metadata = await asyncio.to_thread(
+                    generate_youtube_metadata, video.name, body.caption
+                )
+                result = await youtube_upload(
+                    slot, video, metadata["description"], title=metadata["title"]
+                )
             elif platform == "tiktok":
-                if not settings.tiktok_enabled:
-                    raise RuntimeError("TikTok временно отключен")
-                result = await tiktok_upload(slot, video, body.caption)
+                account = store.get("tiktok", slot) or {}
+                if account.get("provider") == "autotok":
+                    result = await autotok_bridge.publish(slot, video, body.caption)
+                elif settings.tiktok_enabled:
+                    result = await tiktok_upload(slot, video, body.caption)
+                else:
+                    raise RuntimeError("TikTok API отключён. Подключи аккаунт через AutoTok")
             elif platform == "instagram":
                 cover_path = COVER_DIR / f"{slot}.jpg"
                 if not cover_path.is_file():
