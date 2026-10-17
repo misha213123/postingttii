@@ -246,8 +246,9 @@ function renderPlatforms(){
       }
       html+='</div>';
       if(activeInstagramMetaTab===2){
-        html+='<button class="btn primary" style="font-size:12px;padding:9px 12px;margin-bottom:10px" onclick="addMeta2Account()">+ Добавить Instagram</button>';
-        html+='<div class="note">Новые аккаунты добавляются через второе Meta-приложение. Номера выбирать не нужно.</div>';
+        html+='<button class="btn primary" style="font-size:12px;padding:9px 12px;margin-bottom:10px" onclick="addMeta2Account()">+ Добавить Instagram через Dolphin</button>';
+        html+='<div class="note">Открой ссылку авторизации в выбранном профиле Dolphin. Номера аккаунтов вводить не нужно.</div>';
+        html+='<div id="dolphinOAuthPanel" style="display:none;margin-top:10px" class="note"><div>Ссылка для Dolphin (скопируй и открой в браузере):</div><input id="dolphinOAuthUrl" type="text" readonly style="width:100%;margin:6px 0;padding:7px;border-radius:6px"><button class="btn secondary" style="font-size:11px;padding:6px 10px" onclick="copyDolphinOAuthUrl()">Скопировать ссылку</button></div>';
       }else if(slots.some(slot=>!connected('instagram',slot))){
         html+='<button class="btn secondary" style="font-size:11px;padding:7px 9px;margin-bottom:9px" onclick="connectInstagramViaEdge(1)">+ Подключить Instagram · Meta 1 / Edge</button>';
       }
@@ -259,7 +260,7 @@ function renderPlatforms(){
       const slot=Number(a.slot);
       html+='<div class="account"><b>'+esc(a.label||a.id||'Instagram')+'</b>';
       html+='<div class="label good">Подключён</div>';
-      if(instagram)html+='<button class="btn secondary" style="padding:5px 8px;font-size:10px" onclick="openEdge('+slot+',\'profile\')">Открыть Edge</button> ';
+      if(instagram)html+='<button class="btn secondary" style="padding:5px 8px;font-size:10px" onclick="'+(Number(a.meta_app||(slot<=5?1:2))===2?'copyDolphinProfileUrl('+slot+')':'openEdge('+slot+',\'profile\')')+'">'+(Number(a.meta_app||(slot<=5?1:2))===2?'Ссылка для Dolphin':'Открыть Edge')+'</button> ';
       html+='<button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
       if(instagram)html+='<div style="margin-top:8px"><small>Обложка: <span id="cover-state-'+slot+'">проверка...</span></small><input type="file" accept="image/png,image/jpeg" style="width:100%;font-size:11px" onchange="saveCover('+slot+',this)"></div>';
       html+='</div>';
@@ -341,9 +342,41 @@ async function addMeta2Account(){
         Array.isArray(data.detail)?data.detail.map(x=>x.msg).join('; '):raw.slice(0,300);
       throw new Error('HTTP '+response.status+': '+(detail||'Не удалось открыть Edge'));
     }
+    if(typeof data.url!=='string'||!data.url.startsWith('http://127.0.0.1:8765/connect/instagram/')){
+      throw new Error('Сервер не вернул локальную ссылку Instagram OAuth');
+    }
+    const panel=document.getElementById('dolphinOAuthPanel');
+    const input=document.getElementById('dolphinOAuthUrl');
+    if(panel&&input){input.value=data.url;panel.style.display='block';}
+    try{
+      await navigator.clipboard.writeText(data.url);
+      alert('Ссылка скопирована. Открой профиль Dolphin, вставь ссылку в адресную строку и подтверди авторизацию Meta 2.');
+    }catch(err){
+      // The visible input remains selectable if clipboard permission is denied.
+      alert('Открой Dolphin и скопируй ссылку из поля в разделе Meta 2.');
+    }
     startEdgeConnectionCheck(Number(data.slot));
   }catch(err){
     alert('Meta 2: '+err.message);
+  }
+}
+
+async function copyDolphinOAuthUrl(){
+  const input=document.getElementById('dolphinOAuthUrl');
+  if(!input||!input.value)return;
+  try{await navigator.clipboard.writeText(input.value);}
+  catch(err){input.select();document.execCommand('copy');}
+}
+
+async function copyDolphinProfileUrl(slot){
+  const account=connected('instagram',slot);
+  const name=account?.label||'';
+  const url='https://www.instagram.com/'+encodeURIComponent(name.replace(/^@/,''))+'/';
+  try{
+    await navigator.clipboard.writeText(url);
+    alert('Ссылка на Instagram скопирована. Открой её в Dolphin.');
+  }catch(err){
+    prompt('Открой эту ссылку в Dolphin:',url);
   }
 }
 
