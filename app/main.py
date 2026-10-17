@@ -1199,6 +1199,8 @@ async def instagram_callback(code: str, state: str):
                 "Выбери другой аккаунт в Edge перед новой авторизацией.",
             )
         store.save("instagram", slot, account)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(500, f"Instagram OAuth: {exc}") from exc
     return RedirectResponse("/?connected=instagram")
