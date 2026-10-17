@@ -72,6 +72,7 @@ async def telegram_studio_page():
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 OAUTH_INSTAGRAM_META_APPS: dict[str, int] = {}
+META2_SLOT_LOCK = asyncio.Lock()
 MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
 IG_CIRCLE_CLAIMS: dict[str, str] = {}
@@ -246,8 +247,8 @@ async def _publish_single_target(
     except Exception as exc:
         raise HTTPException(400, "Некорректный target") from exc
 
-    if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
-        raise HTTPException(400, "Недопустимый номер аккаунта")
+    if (platform == "instagram" and (slot <= 0 or not store.get("instagram", slot))) or (platform != "instagram" and slot not in (1, 2)):
+        raise HTTPException(400, "Аккаунт не подключён или номер недопустим")
     if platform not in {"youtube", "instagram", "tiktok"}:
         raise HTTPException(400, f"Неизвестная платформа: {platform}")
     if platform == "tiktok" and not settings.tiktok_enabled and (store.get("tiktok", slot) or {}).get("provider") != "autotok":
@@ -848,8 +849,9 @@ async def publish(body: PublishRequest):
         try:
             platform, slot_text = target.split(":", 1)
             slot = int(slot_text)
-            if slot not in range(1, 9) or (slot > 2 and platform != "instagram"):
-                raise RuntimeError("Недопустимый слот аккаунта")
+            if ((platform == "instagram" and (slot <= 0 or not store.get("instagram", slot)))
+                    or (platform != "instagram" and slot not in (1, 2))):
+                raise RuntimeError("Аккаунт не подключён или номер недопустим")
 
             if platform == "youtube":
                 metadata = await asyncio.to_thread(
@@ -912,13 +914,14 @@ COVER_DIR.mkdir(parents=True, exist_ok=True)
 
 @app.get("/api/instagram/covers")
 async def list_instagram_covers():
-    return {"covers": {str(slot): (COVER_DIR / f"{slot}.jpg").exists() for slot in range(1, 9)}}
+    slots = set(range(1, 9)) | {int(account["slot"]) for account in store.list_accounts().get("instagram", [])}
+    return {"covers": {str(slot): (COVER_DIR / f"{slot}.jpg").exists() for slot in sorted(slots)}}
 
 
 @app.post("/api/instagram/covers/{slot}")
 async def upload_instagram_cover(slot: int, file: UploadFile = File(...)):
-    if slot not in range(1, 9):
-        raise HTTPException(400, "Номер аккаунта должен быть от 1 до 8")
+    if slot < 1 or (slot > 8 and not store.get("instagram", slot)):
+        raise HTTPException(400, "Instagram-аккаунт не подключён")
     data = await file.read(8 * 1024 * 1024 + 1)
     if len(data) > 8 * 1024 * 1024:
         raise HTTPException(413, "Обложка больше 8 МБ")
@@ -938,8 +941,8 @@ async def upload_instagram_cover(slot: int, file: UploadFile = File(...)):
 
 @app.get("/api/instagram/covers/{slot}/preview")
 async def instagram_cover_preview(slot: int):
-    if slot not in range(1, 9):
-        raise HTTPException(400, "Недопустимый слот")
+    if slot < 1 or (slot > 8 and not store.get("instagram", slot)):
+        raise HTTPException(400, "Instagram-аккаунт не подключён")
     path = COVER_DIR / f"{slot}.jpg"
     if not path.is_file():
         raise HTTPException(404, "Обложка не выбрана")
@@ -962,15 +965,21 @@ section h3{margin:0 0 12px;font-size:16px}
 button{padding:10px 14px;border:0;border-radius:9px;background:#7965e8;color:white;cursor:pointer;width:100%}
 .status{display:block;min-height:22px;margin-top:10px;font-size:12px}
 </style><header><div><h1>Обложки Instagram Reels</h1>
-<p class="muted">Текущие обложки и загрузка новых для 8 аккаунтов</p></div><a href="/">← Назад к публикациям</a></header>
+<p class="muted">Обложки для подключённых аккаунтов Meta 1 и Meta 2</p></div><a href="/">← Назад к публикациям</a></header>
 <div id="items"></div><script>
 const root=document.getElementById('items');
 async function load(){
-  const r=await fetch('/api/instagram/covers');const d=await r.json();
+  const [r, status]=await Promise.all([fetch('/api/instagram/covers'),fetch('/api/status')]);
+  const d=await r.json();const accounts=(await status.json()).accounts.instagram||[];
+  const bySlot=new Map(accounts.map(a=>[Number(a.slot),a]));
+  const slots=[...new Set([...Array.from({length:8},(_,i)=>i+1),...accounts.map(a=>Number(a.slot))])].sort((a,b)=>a-b);
   root.replaceChildren();
-  for(let i=1;i<=8;i++){
+  for(const i of slots){
+    const a=bySlot.get(i);
     const el=document.createElement('section');
-    const h=document.createElement('h3');h.textContent='Instagram #'+i;el.append(h);
+    const h=document.createElement('h3');
+    h.textContent=a?((a.label||'Instagram')+' · Meta '+a.meta_app):(i<=8?'Свободное место · Instagram '+i:'Instagram');
+    el.append(h);
     const preview=document.createElement('div');preview.className='preview';el.append(preview);
     function show(hasCover){
       preview.replaceChildren();
