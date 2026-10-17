@@ -1048,8 +1048,8 @@ def open_instagram_edge(
     # Launching local applications must never be possible through a public tunnel.
     if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
         raise HTTPException(403, "Открывать Edge можно только из локального приложения")
-    if slot not in range(1, 9):
-        raise HTTPException(400, "Instagram поддерживает слоты 1–8")
+    if slot < 1:
+        raise HTTPException(400, "Некорректный идентификатор Instagram")
     if meta_app not in (1, 2):
         raise HTTPException(400, "Meta App должна быть 1 или 2")
     if mode == "connect":
@@ -1068,7 +1068,16 @@ def open_instagram_edge(
             raise HTTPException(404, "Сначала подключи Instagram-аккаунт")
         username = account.get("username", "").strip().lstrip("@")
         url = f"https://www.instagram.com/{username}/" if username else "https://www.instagram.com/"
-    profile_dir = (settings.data_dir / "edge_instagram_profiles" / f"slot_{slot}").resolve()
+    profile_name = (
+        "meta_2_shared" if slot >= 9 and (
+            meta_app == 2 if mode == "connect"
+            else (store.get("instagram", slot) or {}).get("meta_app") == 2
+        )
+        else f"slot_{slot}"
+    )
+    # A shared Edge profile for newly added Meta 2 accounts; all publishing
+    # continues through independent Meta API tokens for each account.
+    profile_dir = (settings.data_dir / "edge_instagram_profiles" / profile_name).resolve()
     profile_dir.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.Popen(
@@ -1087,14 +1096,36 @@ def open_instagram_edge(
     return {"ok": True, "slot": slot, "mode": mode, "meta_app": meta_app if mode == "connect" else (store.get("instagram", slot) or {}).get("meta_app", 1 if slot <= 5 else 2)}
 
 
+@app.post("/api/instagram/meta2/connect")
+async def connect_new_meta2(request: Request):
+    """Allocate a hidden monotonic account identifier and open Meta 2 via Edge."""
+    if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
+        raise HTTPException(403, "Подключать Instagram можно только локально")
+    if not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
+        raise HTTPException(400, "В .env не настроена вторая Meta App")
+    async with META2_SLOT_LOCK:
+        counter_path = settings.data_dir / "instagram_meta2_last_slot.txt"
+        try:
+            previous = int(counter_path.read_text(encoding="utf-8")) if counter_path.exists() else 8
+        except (OSError, ValueError) as exc:
+            raise HTTPException(500, "Не удалось прочитать счётчик Instagram аккаунтов Meta 2") from exc
+        connected = [int(a["slot"]) for a in store.list_accounts().get("instagram", [])]
+        slot = max([8, previous, *connected]) + 1
+        counter_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = counter_path.with_suffix(".tmp")
+        temp_path.write_text(str(slot), encoding="utf-8")
+        temp_path.replace(counter_path)
+    return open_instagram_edge(slot, request, mode="connect", meta_app=2)
+
+
 @app.get("/connect/{platform}/{slot}")
 async def connect(
     platform: Literal["youtube", "tiktok", "instagram"],
     slot: int,
     meta_app: int = 1,
 ):
-    if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
-        raise HTTPException(400, "Недопустимый слот")
+    if (platform == "instagram" and slot < 1) or (platform != "instagram" and slot not in (1, 2)):
+        raise HTTPException(400, "Недопустимый идентификатор аккаунта")
     _require_platform(platform)
     if platform == "instagram":
         if meta_app not in (1, 2):
@@ -1156,6 +1187,17 @@ async def instagram_callback(code: str, state: str):
     try:
         account = await instagram_exchange(code, slot, meta_app=meta_app)
         account["meta_app"] = meta_app
+        duplicate = next(
+            (item for item in store.list_accounts().get("instagram", [])
+             if str(item.get("id")) == str(account.get("id")) and int(item["slot"]) != slot),
+            None,
+        )
+        if duplicate:
+            raise HTTPException(
+                409,
+                f"Instagram @{account.get('username') or account.get('label') or 'account'} уже подключён. "
+                "Выбери другой аккаунт в Edge перед новой авторизацией.",
+            )
         store.save("instagram", slot, account)
     except Exception as exc:
         raise HTTPException(500, f"Instagram OAuth: {exc}") from exc
@@ -1164,8 +1206,8 @@ async def instagram_callback(code: str, state: str):
 
 @app.delete("/api/account/{platform}/{slot}")
 async def disconnect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
-    if slot not in (range(1, 9) if platform == "instagram" else (1, 2)):
-        raise HTTPException(400, "Недопустимый слот")
+    if (platform == "instagram" and (slot < 1 or not store.get("instagram", slot))) or (platform != "instagram" and slot not in (1, 2)):
+        raise HTTPException(400, "Аккаунт не найден")
     store.delete(platform, slot)
     return {"ok": True}
 
