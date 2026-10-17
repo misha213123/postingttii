@@ -196,6 +196,7 @@ let currentJobId=localStorage.getItem('postingttii_batch_job')||'';
 let pollTimer=null;
 let lastArchivedCount=0;
 let terminalRefreshed=false;
+let activeInstagramMetaTab=1;
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function connected(platform,slot){return (state.accounts[platform]||[]).find(a=>Number(a.slot)===slot);}
@@ -214,6 +215,11 @@ async function load(){
   if(!(await discoverActiveJob()) && currentJobId)await resumeJob(currentJobId);
 }
 
+function switchInstagramMetaTab(app){
+  activeInstagramMetaTab=app===2?2:1;
+  renderPlatforms();
+}
+
 function renderPlatforms(){
   const root=document.getElementById('platforms');
   root.innerHTML='';
@@ -221,31 +227,45 @@ function renderPlatforms(){
     const instagram=platform==='instagram';
     const title=instagram?'Instagram':'YouTube';
     const slots=instagram?[1,2,3,4,5,6,7,8]:[1,2];
-    const active=slots.map(slot=>connected(platform,slot)).filter(Boolean);
+    const allAccounts=state.accounts[platform]||[];
+    const active=instagram?
+      allAccounts.filter(a=>Number(a.meta_app||(Number(a.slot)<=5?1:2))===activeInstagramMetaTab):
+      allAccounts;
+    const ready=instagram?
+      (activeInstagramMetaTab===2?state.configured.instagram_second_app:state.configured.instagram):
+      state.configured[platform];
     const card=document.createElement('div');
     card.className='card platform';
-    let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(state.configured[platform]?'good':'bad')+'" style="font-size:11px">'+(state.configured[platform]?'API готов':'Нет ключей')+'</span></div>';
+    let html='<div class="platform-head"><h3>'+title+'</h3><span class="'+(ready?'good':'bad')+'" style="font-size:11px">'+(ready?'API готов':'Нет ключей')+'</span></div>';
     if(instagram){
-      const hasFreeSlot=slots.some(slot=>!connected(platform,slot));
-      html+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">';
-      if(hasFreeSlot)html+='<button class="btn primary" style="font-size:11px;padding:7px 9px" onclick="connectInstagramViaEdge(1)">+ Подключить Instagram · Meta 1 / Edge</button>';
+      html+='<div style="display:flex;gap:7px;margin-bottom:10px">';
+      for(const app of [1,2]){
+        const activeTab=activeInstagramMetaTab===app;
+        const count=allAccounts.filter(a=>Number(a.meta_app||(Number(a.slot)<=5?1:2))===app).length;
+        html+='<button type="button" class="btn '+(activeTab?'primary':'secondary')+'" style="padding:8px 11px;font-size:12px;flex:1" onclick="switchInstagramMetaTab('+app+')">Meta '+app+' ('+count+')</button>';
+      }
       html+='</div>';
+      if(activeInstagramMetaTab===2){
+        html+='<button class="btn primary" style="font-size:12px;padding:9px 12px;margin-bottom:10px" onclick="addMeta2Account()">+ Добавить Instagram</button>';
+        html+='<div class="note">Новые аккаунты добавляются через второе Meta-приложение. Номера выбирать не нужно.</div>';
+      }else if(slots.some(slot=>!connected('instagram',slot))){
+        html+='<button class="btn secondary" style="font-size:11px;padding:7px 9px;margin-bottom:9px" onclick="connectInstagramViaEdge(1)">+ Подключить Instagram · Meta 1 / Edge</button>';
+      }
     }else if(slots.some(slot=>!connected(platform,slot))){
       html+='<button class="btn secondary" style="font-size:11px;margin-bottom:9px;padding:7px 9px" onclick="connectYouTubeFirst()">+ Подключить YouTube</button>';
     }
     if(active.length)html+='<div class="account-row">';
     for(const a of active){
       const slot=Number(a.slot);
-      const metaLabel=instagram?' · Meta '+(Number(a.meta_app)||(slot<=5?1:2)):'';
-      html+='<div class="account"><b>'+esc(a.label||a.id||title+' #'+slot)+metaLabel+'</b>';
-      html+='<div class="label good">'+esc(a.label||'Подключён')+'</div>';
+      html+='<div class="account"><b>'+esc(a.label||a.id||'Instagram')+'</b>';
+      html+='<div class="label good">Подключён</div>';
       if(instagram)html+='<button class="btn secondary" style="padding:5px 8px;font-size:10px" onclick="openEdge('+slot+',\'profile\')">Открыть Edge</button> ';
       html+='<button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
       if(instagram)html+='<div style="margin-top:8px"><small>Обложка: <span id="cover-state-'+slot+'">проверка...</span></small><input type="file" accept="image/png,image/jpeg" style="width:100%;font-size:11px" onchange="saveCover('+slot+',this)"></div>';
       html+='</div>';
     }
     if(active.length)html+='</div>';
-    else html+='<div class="label muted">Нет подключённых аккаунтов.</div>';
+    else html+='<div class="label muted">В этой вкладке нет подключённых аккаунтов.</div>';
     if(instagram&&!state.configured.instagram_public_url)html+='<div class="warn" style="font-size:10px;margin-top:6px">Нет PUBLIC_BASE_URL</div>';
     card.innerHTML=html;
     root.appendChild(card);
@@ -304,6 +324,27 @@ function renderPlatforms(){
   note.textContent='Импорт — подключить существующий AutoTok аккаунт. Войти — открыть новый вход AutoTok.';
   t.append(note);
   root.appendChild(t);
+}
+
+async function addMeta2Account(){
+  if(!state.configured.instagram_second_app){
+    alert('Настрой INSTAGRAM_CLIENT_ID_2, INSTAGRAM_CLIENT_SECRET_2 и INSTAGRAM_REDIRECT_URI_2 в .env.');
+    return;
+  }
+  try{
+    const response=await fetch('/api/instagram/meta2/connect',{method:'POST'});
+    const raw=await response.text();
+    let data={};
+    try{data=JSON.parse(raw);}catch(err){}
+    if(!response.ok||!data.ok){
+      const detail=typeof data.detail==='string'?data.detail:
+        Array.isArray(data.detail)?data.detail.map(x=>x.msg).join('; '):raw.slice(0,300);
+      throw new Error('HTTP '+response.status+': '+(detail||'Не удалось открыть Edge'));
+    }
+    startEdgeConnectionCheck(Number(data.slot));
+  }catch(err){
+    alert('Meta 2: '+err.message);
+  }
 }
 
 async function connectInstagramViaEdge(metaApp=1){
@@ -384,7 +425,7 @@ async function connectTikTok(slot,mode){
 
 async function refreshCoverStates(){
  try{const r=await fetch('/api/instagram/covers');const d=await r.json();
- for(let i=1;i<=8;i++){const el=document.getElementById('cover-state-'+i);
+ for(const a of state.accounts.instagram||[]){const i=Number(a.slot);const el=document.getElementById('cover-state-'+i);
  if(el)el.textContent=d.covers?.[String(i)]?'✓ Сохранена':'Не выбрана';}}catch(e){}
 }
 async function saveCover(slot,input){
