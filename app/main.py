@@ -1098,7 +1098,11 @@ def open_instagram_edge(
 
 @app.post("/api/instagram/meta2/connect")
 async def connect_new_meta2(request: Request):
-    """Allocate a hidden monotonic account identifier and open Meta 2 via Edge."""
+    """Reserve hidden ID and provide a local OAuth link for an existing Dolphin profile.
+
+    The app does not control Dolphin fingerprint, proxy, profiles, or credentials.
+    User opens this URL in their own existing browser profile.
+    """
     if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
         raise HTTPException(403, "Подключать Instagram можно только локально")
     if not (settings.instagram_client_id_2 and settings.instagram_client_secret_2):
@@ -1115,7 +1119,14 @@ async def connect_new_meta2(request: Request):
         temp_path = counter_path.with_suffix(".tmp")
         temp_path.write_text(str(slot), encoding="utf-8")
         temp_path.replace(counter_path)
-    return open_instagram_edge(slot, request, mode="connect", meta_app=2)
+    # Do not launch Edge or Dolphin: Dolphin profiles are user-managed.
+    # Opening the local /connect URL in Dolphin initiates standard Meta 2 OAuth.
+    return {
+        "ok": True,
+        "slot": slot,
+        "url": f"http://127.0.0.1:{settings.port}/connect/instagram/{slot}?meta_app=2",
+        "browser": "dolphin",
+    }
 
 
 @app.get("/connect/{platform}/{slot}")
