@@ -1,4 +1,4 @@
-"""Regression tests for unlimited Meta 2 accounts and no-number Edge connection."""
+"""Regression tests for unlimited Meta 2 accounts with user-chosen Dolphin browser."""
 from __future__ import annotations
 
 import tempfile
@@ -33,13 +33,15 @@ class Meta2UnlimitedTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(main.store, "list_accounts", return_value={
                     "instagram": [{"slot": 4, "id": "old1"}, {"slot": 8, "id": "old2"}],
                 }),
-                patch.object(main, "open_instagram_edge", return_value={"ok": True}) as opener,
+                patch.object(main, "open_instagram_edge") as edge,
             ):
-                self.assertEqual((await main.connect_new_meta2(local_request()))["ok"], True)
-                self.assertEqual(opener.call_args.args[0], 9)
-                self.assertEqual(opener.call_args.kwargs["meta_app"], 2)
-                self.assertEqual((await main.connect_new_meta2(local_request()))["ok"], True)
-                self.assertEqual(opener.call_args.args[0], 10)
+                first = await main.connect_new_meta2(local_request())
+                self.assertEqual(first["slot"], 9)
+                self.assertEqual(first["browser"], "dolphin")
+                self.assertEqual(first["url"], "http://127.0.0.1:8765/connect/instagram/9?meta_app=2")
+                second = await main.connect_new_meta2(local_request())
+                self.assertEqual(second["slot"], 10)
+                edge.assert_not_called()
                 # No reusing identifiers even when old account is disconnected.
                 self.assertEqual(
                     (Path(folder) / "instagram_meta2_last_slot.txt").read_text(), "10",
@@ -56,10 +58,12 @@ class Meta2UnlimitedTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(main.store, "list_accounts", return_value={
                     "instagram": [{"slot": 4, "id": "one"}, {"slot": 21, "id": "other"}],
                 }),
-                patch.object(main, "open_instagram_edge", return_value={"ok": True}) as opener,
+                patch.object(main, "open_instagram_edge") as edge,
             ):
-                await main.connect_new_meta2(local_request())
-                self.assertEqual(opener.call_args.args[0], 22)
+                result = await main.connect_new_meta2(local_request())
+                self.assertEqual(result["slot"], 22)
+                self.assertEqual(result["url"], "http://127.0.0.1:8765/connect/instagram/22?meta_app=2")
+                edge.assert_not_called()
 
     async def test_meta2_connect_is_local_only(self):
         with self.assertRaises(HTTPException) as error:
@@ -89,28 +93,22 @@ class Meta2UnlimitedTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["covers"]["9"], False)
                 self.assertIn("3", result["covers"])
 
-    async def test_shared_edge_browser_profile_for_new_meta2_accounts(self):
-        with tempfile.TemporaryDirectory() as folder:
-            conf = SimpleNamespace(
-                data_dir=Path(folder), port=8765,
-                instagram_client_id_2="second", instagram_client_secret_2="secret",
-            )
-            with (
-                patch.object(main, "settings", conf),
-                patch.object(main, "_edge_executable", return_value="msedge.exe"),
-                patch.object(main.subprocess, "Popen") as launch,
-            ):
-                for slot in (9, 10, 27):
-                    main.open_instagram_edge(slot, local_request(), mode="connect", meta_app=2)
-                    command = launch.call_args.args[0]
-                    self.assertIn(
-                        f"--user-data-dir={Path(folder) / 'edge_instagram_profiles' / 'meta_2_shared'}",
-                        command,
-                    )
-                    self.assertEqual(
-                        command[-1],
-                        f"http://127.0.0.1:8765/connect/instagram/{slot}?meta_app=2",
-                    )
+    async def test_meta2_oauth_link_uses_registered_second_meta_redirect(self):
+        from urllib.parse import parse_qs, urlparse
+        from app.services import platforms
+        config = SimpleNamespace(
+            instagram_client_id="first", instagram_client_secret="secret1",
+            instagram_redirect_uri="https://first.example/auth/instagram/callback",
+            instagram_client_id_2="second", instagram_client_secret_2="secret2",
+            instagram_redirect_uri_2="https://second.example/auth/instagram/callback",
+        )
+        with patch.object(main, "settings", config), patch.object(platforms, "settings", config):
+            response = await main.connect("instagram", 9, meta_app=2)
+            query = parse_qs(urlparse(response.headers["location"]).query)
+            self.assertEqual(query["client_id"], ["second"])
+            self.assertEqual(query["redirect_uri"], ["https://second.example/auth/instagram/callback"])
+            main._consume_state(query["state"][0], "instagram")
+            main.OAUTH_INSTAGRAM_META_APPS.pop(query["state"][0], None)
 
 
 if __name__ == "__main__":
