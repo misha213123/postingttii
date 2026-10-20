@@ -30,7 +30,8 @@ class TelegramRenderDesignTests(unittest.TestCase):
             banner = Path(folder) / "promo.mp4"
             banner.write_bytes(b"mock banner")
             for color in ("#2078ca", "#ffffff", "#171717", "#FF00A4"):
-                with self.subTest(color=color), (
+                with (
+                    self.subTest(color=color),
                     patch.object(studio, "duration", side_effect=[8.0, 20.0]),
                     patch.object(studio.subprocess, "run") as run,
                 ):
