@@ -547,16 +547,11 @@ def render(
     size = design.circle_size
     center = size // 2
     radius_squared = center * center
-    keyed = (
-        f"chromakey=0x{design.chromakey_color[1:]}:"
-        f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
-        if design.chromakey_enabled else ""
-    )
-    # Preserve the chromakey alpha in the circular mask instead of overwriting
-    # it. Without chromakey, alpha(X,Y) is opaque inside the circle.
+    # Telegram circle is never chroma-keyed. The background removal belongs
+    # exclusively to the optional promotional banner (image or looping video).
     circle_filter = (
         f"[0:v]scale={size}:{size}:force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop={size}:{size},format=rgba,{keyed}"
+        f"crop={size}:{size},format=rgba,"
         "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
         f"a='if(lte((X-{center})*(X-{center})+(Y-{center})*(Y-{center}),"
         f"{radius_squared}),alpha(X,Y),0)'[circle];"
@@ -584,8 +579,14 @@ def render(
             cmd += ["-stream_loop", "-1", "-i", str(banner)]
         else:
             cmd += ["-loop", "1", "-i", str(banner)]
+        banner_key = (
+            f"chromakey=0x{design.chromakey_color[1:]}:"
+            f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
+            if design.chromakey_enabled else ""
+        )
         filter_chain += (
-            f"[2:v]format=rgba,scale={design.banner_width}:-1:flags=lanczos[banner];"
+            f"[2:v]scale={design.banner_width}:-1:flags=lanczos,"
+            f"format=rgba,{banner_key}format=rgba[banner];"
             f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
             "format=auto:shortest=1,fps=30,format=yuv420p[v]"
         )
