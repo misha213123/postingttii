@@ -12,19 +12,22 @@ import subprocess
 import uuid
 from pathlib import Path
 from datetime import date
+from io import BytesIO
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from PIL import Image, UnidentifiedImageError
 from app.config import settings
 
 router = APIRouter(prefix="/api/telegram-studio", tags=["telegram-studio"])
 ROOT = settings.data_dir / "telegram_studio"
 BACKGROUNDS = ROOT / "backgrounds"
 ORIGINALS = ROOT / "originals"
+BANNERS = ROOT / "banners"
 CONFIG = ROOT / "config.json"
 SESSION = ROOT / "telegram"
-for p in (ROOT, BACKGROUNDS, ORIGINALS):
+for p in (ROOT, BACKGROUNDS, ORIGINALS, BANNERS):
     p.mkdir(parents=True, exist_ok=True)
 LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
@@ -104,6 +107,157 @@ class LoginStart(BaseModel):
 class LoginFinish(BaseModel):
     code: str
     password: str = ""
+
+
+class RenderDesign(BaseModel):
+    """Saved design and layout in 1080 x 1920 video pixels."""
+    circle_size: int = Field(default=1040, ge=760, le=1080)
+    chromakey_enabled: bool = False
+    banner_enabled: bool = False
+    banner_x: int = Field(default=270, ge=0, le=1080)
+    banner_y: int = Field(default=1550, ge=0, le=1920)
+    banner_width: int = Field(default=540, ge=100, le=1080)
+
+
+def saved_design() -> RenderDesign:
+    return RenderDesign.model_validate(config().get("render_design", {}))
+
+
+def current_banner(data=None) -> Path | None:
+    d = data if data is not None else config()
+    name = d.get("banner_file", "")
+    if not isinstance(name, str) or not re.fullmatch(r"[a-f0-9]{32}[.](?:png|mp4|webm)", name):
+        return None
+    path = BANNERS / name
+    return path if path.is_file() else None
+
+
+def design_response():
+    d = config()
+    banner = current_banner(d)
+    return {
+        "design": RenderDesign.model_validate(d.get("render_design", {})).model_dump(),
+        "banner_available": banner is not None,
+        "banner_kind": "video" if banner and banner.suffix in {".mp4", ".webm"} else ("image" if banner else None),
+    }
+
+
+@router.get("/design")
+def get_design():
+    return design_response()
+
+
+@router.post("/design")
+def update_design(body: RenderDesign):
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Дождись завершения рендера перед изменением оформления")
+    d = config()
+    d["render_design"] = body.model_dump()
+    save(d)
+    return design_response()
+
+
+@router.get("/banner/preview")
+def banner_preview():
+    path = current_banner()
+    if not path:
+        raise HTTPException(404, "Баннер не загружен")
+    media_type = {".png": "image/png", ".mp4": "video/mp4", ".webm": "video/webm"}[path.suffix]
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-store"})
+
+
+def validate_video_banner(path: Path) -> None:
+    """Reject uploads without a decodable video stream or reasonable dimensions."""
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_type,width,height:format=duration",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=20, check=True,
+        )
+        info = json.loads(probe.stdout)
+        streams = info.get("streams", [])
+        if not streams or streams[0].get("codec_type") != "video":
+            raise ValueError("В файле нет видеодорожки")
+        width, height = int(streams[0].get("width", 0)), int(streams[0].get("height", 0))
+        if not (16 <= width <= 3840 and 16 <= height <= 3840):
+            raise ValueError("Размер видео-баннера должен быть от 16 до 3840 пикселей")
+        seconds = float(info.get("format", {}).get("duration", 0))
+        if not (0 < seconds <= 600):
+            raise ValueError("Продолжительность баннера должна быть от 0 до 600 секунд")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, f"Некорректный видео-баннер или FFprobe недоступен: {exc}") from exc
+
+
+@router.post("/banner")
+async def upload_banner(file: UploadFile = File(...)):
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Нельзя изменять баннер во время рендера")
+    suffix = Path(file.filename or "").suffix.lower()
+    allowed_images = {".png", ".jpg", ".jpeg", ".webp"}
+    allowed_videos = {".mp4", ".webm"}
+    if suffix not in allowed_images | allowed_videos:
+        raise HTTPException(400, "Загрузи баннер PNG, JPG, WEBP, MP4 или WebM")
+
+    if suffix in allowed_images:
+        data = await file.read(10 * 1024 * 1024 + 1)
+        if len(data) > 10 * 1024 * 1024:
+            raise HTTPException(413, "Изображение больше 10 МБ")
+        try:
+            with Image.open(BytesIO(data)) as image:
+                image.verify()
+            with Image.open(BytesIO(data)) as original:
+                original.load()
+                if original.width < 16 or original.height < 16 or original.width > 6000 or original.height > 6000:
+                    raise ValueError("Размер баннера должен быть от 16 до 6000 пикселей")
+                picture = original.convert("RGBA")
+        except (ValueError, UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+            raise HTTPException(400, f"Не удалось прочитать изображение баннера: {exc}") from exc
+        name = uuid.uuid4().hex + ".png"
+        picture.save(BANNERS / name, "PNG")
+    else:
+        # Stream to disk to avoid keeping an entire video in application memory.
+        name = uuid.uuid4().hex + suffix
+        dest = BANNERS / name
+        total = 0
+        try:
+            with dest.open("wb") as output:
+                while chunk := await file.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > 100 * 1024 * 1024:
+                        raise HTTPException(413, "Видео-баннер больше 100 МБ")
+                    output.write(chunk)
+            validate_video_banner(dest)
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise
+
+    d = config()
+    d["banner_file"] = name
+    save(d)
+    return design_response()
+
+
+@router.delete("/banner")
+def delete_banner():
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Нельзя удалять баннер во время рендера")
+    d = config()
+    d.pop("banner_file", None)
+    design = RenderDesign.model_validate(d.get("render_design", {}))
+    d["render_design"] = design.model_copy(update={"banner_enabled": False}).model_dump()
+    save(d)
+    return design_response()
+
+
+@router.get("/sample-circle/preview")
+def sample_circle_preview():
+    # Real Telegram sample when available; no remote download is triggered.
+    samples = sorted(ORIGINALS.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not samples:
+        raise HTTPException(404, "Пока нет скачанных Telegram-кружков")
+    return FileResponse(samples[0], media_type="video/mp4")
 
 
 class RenderRequest(BaseModel):
@@ -352,34 +506,76 @@ def duration(path):
     return float(p.stdout.strip())
 
 
-def render(source: Path, bg: Path, target: Path):
+def render(
+    source: Path,
+    bg: Path,
+    target: Path,
+    design: RenderDesign | None = None,
+    banner: Path | None = None,
+):
+    """Composite a 9:16 Reel with configurable circle and optional banner."""
+    design = design or RenderDesign()
     seconds = duration(source)
     bg_seconds = duration(bg)
     if seconds <= 0 or bg_seconds <= 0:
         raise ValueError("Некорректная длительность")
     offset = random.uniform(0, max(0, bg_seconds - seconds))
-    # Enlarge circular videos to 980px within the 1080px-wide frame.
-    # Keep the circular clip near the top (150px margin) so the background
-    # artwork/cover remains visible in the lower part of the final Reel.
-    # Overlay square with transparent corners, preserving the original audio.
-    filt = ("[0:v]scale=980:980:force_original_aspect_ratio=increase:flags=lanczos,"
-            "crop=980:980,format=rgba,"
-            "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-            "a='if(lte((X-490)*(X-490)+(Y-490)*(Y-490),240100),255,0)'[circle];"
-            "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-            "crop=1080:1920,setsar=1[bg];"
-            "[bg][circle]overlay=(W-w)/2:150:shortest=1,"
-            "fps=30,format=yuv420p[v]")
-    cmd = ["ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
-           "-ss", str(offset), "-i", str(bg), "-filter_complex", filt,
-           "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
-           "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-           "-profile:v", "high", "-level:v", "4.2", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(target)]
+
+    size = design.circle_size
+    center = size // 2
+    radius_squared = center * center
+    keyed = "chromakey=0x00ff00:0.20:0.07," if design.chromakey_enabled else ""
+    # Preserve the chromakey alpha in the circular mask instead of overwriting
+    # it. Without chromakey, alpha(X,Y) is opaque inside the circle.
+    circle_filter = (
+        f"[0:v]scale={size}:{size}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={size}:{size},format=rgba,{keyed}"
+        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='if(lte((X-{center})*(X-{center})+(Y-{center})*(Y-{center}),"
+        f"{radius_squared}),alpha(X,Y),0)'[circle];"
+    )
+    bg_filter = (
+        "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
+        "crop=1080:1920,setsar=1[bg];"
+    )
+    circle_y = 90
+    # FFmpeg overlays the real circular clip over random background footage.
+    main_filter = f"[bg][circle]overlay=(W-w)/2:{circle_y}:shortest=1[composite];"
+    cmd = [
+        "ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
+        "-ss", str(offset), "-i", str(bg),
+    ]
+    filter_chain = circle_filter + bg_filter + main_filter
+
+    if design.banner_enabled:
+        if not banner or not banner.is_file():
+            raise ValueError("Включён рекламный баннер, но файл не загружен")
+        if banner.suffix.lower() in {".mp4", ".webm"}:
+            # Repeat the ad animation until the original Telegram circle ends.
+            # No banner audio is mapped to the output.
+            cmd += ["-stream_loop", "-1", "-i", str(banner)]
+        else:
+            cmd += ["-loop", "1", "-i", str(banner)]
+        filter_chain += (
+            f"[2:v]format=rgba,scale={design.banner_width}:-1:flags=lanczos[banner];"
+            f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
+            "format=auto:shortest=1,fps=30,format=yuv420p[v]"
+        )
+    else:
+        filter_chain += "[composite]fps=30,format=yuv420p[v]"
+
+    cmd += [
+        "-filter_complex", filter_chain,
+        "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-profile:v", "high", "-level:v", "4.2", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-movflags", "+faststart", str(target),
+    ]
     subprocess.run(cmd, capture_output=True, text=True, check=True)
 
 
-async def process(limit, order="oldest", date_from=None, date_to=None):
+async def process(limit, order="oldest", date_from=None, date_to=None, *, design: RenderDesign, banner: Path | None):
     JOB.update(status="running", total=0, done=0, errors=[])
     try:
         d = config()
@@ -485,7 +681,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
                     # Render to a temporary file, publish only after ffprobe validates it.
                     temp_target = target.with_name(target.stem + ".rendering.mp4")
                     try:
-                        await asyncio.to_thread(render, source, next_background(), temp_target)
+                        await asyncio.to_thread(render, source, next_background(), temp_target, design, banner)
                         if duration(temp_target) <= 0:
                             raise ValueError("Готовый ролик не прошёл проверку FFprobe")
                         temp_target.replace(target)
@@ -521,10 +717,19 @@ async def run(body: RenderRequest):
         raise HTTPException(400, "Некорректный порядок")
     if body.date_from and body.date_to and body.date_from > body.date_to:
         raise HTTPException(400, "Начальная дата позже конечной")
+    # Snapshot settings at batch start so every Reel uses one consistent layout.
+    data = config()
+    design = RenderDesign.model_validate(data.get("render_design", {}))
+    banner = current_banner(data)
+    if design.banner_enabled and banner is None:
+        raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
     global JOB_TASK, STOP_REQUESTED
     await LOCK.acquire()
     STOP_REQUESTED = False
-    JOB_TASK = asyncio.create_task(process(body.limit_per_channel, body.order, body.date_from, body.date_to))
+    JOB_TASK = asyncio.create_task(process(
+        body.limit_per_channel, body.order, body.date_from, body.date_to,
+        design=design, banner=banner,
+    ))
     return {"started": True}
 
 

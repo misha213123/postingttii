@@ -1,10 +1,57 @@
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Telegram Studio — PostingTTII</title>
 <style>
-:root{color-scheme:dark;font-family:Inter,Segoe UI,Arial,sans-serif;background:#080b14;color:#eff5ff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 10% 0%,#1d2d53 0%,#080b14 50%);min-height:100vh}main{max-width:1250px;margin:auto;padding:32px 22px}header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:28px}h1{font-size:34px;letter-spacing:-1px;margin:8px 0}h2{font-size:19px;margin:0 0 16px}.muted{color:#93a3be;font-size:13px}a{color:#b4ccff;text-decoration:none}button,.btn{border:1px solid #395074;background:#243658;color:#f2f6ff;border-radius:12px;padding:11px 15px;cursor:pointer;font-weight:650}button:hover,.btn:hover{background:#34518b}button:disabled{opacity:.5}.primary{background:#5467ed;border-color:#7481ff}.danger{background:#401f32;border-color:#79344d}select{border:1px solid #364561;background:#0d1628;border-radius:11px;color:white;padding:12px}input{border:1px solid #364561;background:#0d1628;border-radius:11px;color:white;padding:12px;min-width:0}input[type=file]{width:100%}.layout{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#111a2bcf;border:1px solid #293953;border-radius:20px;padding:22px;box-shadow:0 10px 35px #0003}.wide{grid-column:1/-1}.inline{display:flex;gap:9px;flex-wrap:wrap}.inline input{flex:1}.item{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid #283750;border-radius:13px;padding:12px;margin-top:10px;background:#10192b}.item strong{overflow-wrap:anywhere}.actions{display:flex;gap:7px;align-items:center}.actions button{padding:7px 10px}.pill{display:inline-block;border:1px solid #4966a4;color:#b8cbff;padding:5px 10px;border-radius:20px;font-size:12px}#log{white-space:pre-wrap;overflow-wrap:anywhere;background:#090f1d;border-radius:12px;padding:14px;max-height:250px;overflow:auto}.progress{height:9px;border-radius:20px;background:#27334b;overflow:hidden;margin:15px 0}.progress>div{height:100%;background:linear-gradient(90deg,#596dff,#65c8ff);width:0;transition:.2s}.empty{color:#8c9bb3;padding:20px 0}video{width:120px;height:150px;object-fit:cover;border-radius:10px}@media(max-width:780px){.layout{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:20px 12px}h1{font-size:28px}}</style></head><body><main>
+:root{color-scheme:dark;font-family:Inter,Segoe UI,Arial,sans-serif;background:#080b14;color:#eff5ff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 10% 0%,#1d2d53 0%,#080b14 50%);min-height:100vh}main{max-width:1250px;margin:auto;padding:32px 22px}header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:28px}h1{font-size:34px;letter-spacing:-1px;margin:8px 0}h2{font-size:19px;margin:0 0 16px}.muted{color:#93a3be;font-size:13px}a{color:#b4ccff;text-decoration:none}button,.btn{border:1px solid #395074;background:#243658;color:#f2f6ff;border-radius:12px;padding:11px 15px;cursor:pointer;font-weight:650}button:hover,.btn:hover{background:#34518b}button:disabled{opacity:.5}.primary{background:#5467ed;border-color:#7481ff}.danger{background:#401f32;border-color:#79344d}select{border:1px solid #364561;background:#0d1628;border-radius:11px;color:white;padding:12px}input{border:1px solid #364561;background:#0d1628;border-radius:11px;color:white;padding:12px;min-width:0}input[type=file]{width:100%}.layout{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#111a2bcf;border:1px solid #293953;border-radius:20px;padding:22px;box-shadow:0 10px 35px #0003}.wide{grid-column:1/-1}.inline{display:flex;gap:9px;flex-wrap:wrap}.inline input{flex:1}.item{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid #283750;border-radius:13px;padding:12px;margin-top:10px;background:#10192b}.item strong{overflow-wrap:anywhere}.actions{display:flex;gap:7px;align-items:center}.actions button{padding:7px 10px}.pill{display:inline-block;border:1px solid #4966a4;color:#b8cbff;padding:5px 10px;border-radius:20px;font-size:12px}#log{white-space:pre-wrap;overflow-wrap:anywhere;background:#090f1d;border-radius:12px;padding:14px;max-height:250px;overflow:auto}.progress{height:9px;border-radius:20px;background:#27334b;overflow:hidden;margin:15px 0}.progress>div{height:100%;background:linear-gradient(90deg,#596dff,#65c8ff);width:0;transition:.2s}.empty{color:#8c9bb3;padding:20px 0}video{width:120px;height:150px;object-fit:cover;border-radius:10px}@media(max-width:780px){.layout{grid-template-columns:1fr}.wide{grid-column:auto}main{padding:20px 12px}h1{font-size:28px}}
+/* Optional Telegram circle advertisement layout editor */
+.design-layout{display:grid;grid-template-columns:minmax(240px,330px) minmax(280px,1fr);gap:23px;align-items:start}
+.design-preview{width:100%;max-width:320px;aspect-ratio:9/16;position:relative;overflow:hidden;background:linear-gradient(165deg,#18345a,#101626);border:2px solid #4b6083;border-radius:13px;touch-action:none;margin:auto}
+.design-preview>video.preview-background{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:0;pointer-events:none}
+.design-preview>.preview-circle,.design-preview>video.preview-circle{position:absolute;left:50%;top:4.6875%;transform:translateX(-50%);aspect-ratio:1/1;width:96.3%;height:auto;max-width:none;border-radius:50%;object-fit:cover;clip-path:circle(50% at 50% 50%);pointer-events:none;background:#213b5d}
+.preview-placeholder{display:grid;place-items:center;text-align:center;color:#d4e6ff;font-size:12px}
+.design-preview>.preview-banner{position:absolute;max-width:none;max-height:none;display:none;width:50%;height:auto;cursor:grab;touch-action:none;border:1px dashed #a6c8ff;box-shadow:0 2px 10px #0007;user-select:none;z-index:4}
+.design-preview>.preview-banner:active{cursor:grabbing}
+.design-preview>.safe-area{position:absolute;inset:4%;border:1px dashed #ffffff35;pointer-events:none}
+.design-controls{display:grid;gap:14px}.design-field{display:grid;gap:7px}.design-field label{font-weight:600;font-size:13px}
+.design-field input[type=range]{width:100%;padding:0;accent-color:#8393ff}
+.design-field select{width:100%}.design-check{display:flex;align-items:center;gap:8px;font-weight:600}
+.design-check input{min-width:0;width:17px;height:17px}
+#bannerFile{padding:9px}#designHint{margin-top:8px;text-align:center}
+@media(max-width:780px){.design-layout{grid-template-columns:1fr}.design-preview{max-width:285px}}
+</style></head><body><main>
 <header><div><a href="/">← Вернуться к PostingTTII</a><h1>◉ Telegram Studio</h1><div class="muted">Кружки Telegram → случайный фон → готовые Reels</div></div><span class="pill" id="health">Проверка системы...</span></header>
 <div class="layout">
 <section class="card"><h2>01 / Источники: Telegram + Instagram</h2><p class="muted">Telegram-каналы и Instagram-аккаунты в одном списке. Каждый источник можно включать и отключать.</p><form id="addChannel" class="inline"><input id="channel" placeholder="@channel или https://t.me/channel" required><button class="primary">+ Добавить</button></form><form id="igAdd" class="inline" style="margin-top:10px"><input id="igUrl" placeholder="https://www.instagram.com/username/" required><button class="primary">+ Instagram</button></form><div id="channels"></div><div id="igAccounts"></div></section>
 <section class="card"><h2>02 / Фоновые видео</h2><p class="muted">Загружай несколько MP4. Для каждого кружка фон и момент выбираются случайно.</p><form id="upload"><input id="files" type="file" accept="video/mp4" multiple required><button class="primary" style="margin-top:10px">Загрузить фоны</button></form><div id="backgrounds"></div></section>
+<section class="card wide" id="designCard"><h2>🎬 Оформление Reels · баннер и кружок</h2>
+<p class="muted">Здесь видно расположение кружка и рекламного баннера на вертикальном видео 1080×1920 (9:16). Баннер можно тянуть мышкой прямо по миниатюре — координаты сохраняются для реального FFmpeg-рендера.</p>
+<div class="design-layout">
+  <div>
+    <div class="design-preview" id="designPreview" aria-label="Макет готового вертикального видео 9 на 16">
+      <video class="preview-background" id="designBgVideo" muted playsinline loop preload="metadata"></video>
+      <video class="preview-circle" id="designCircleVideo" muted playsinline loop preload="metadata" style="display:none"></video>
+      <div class="preview-circle preview-placeholder" id="designCirclePlaceholder">Telegram<br>кружок</div>
+      <div class="safe-area"></div>
+      <img class="preview-banner" id="designBanner" alt="Перемещаемый рекламный баннер" draggable="false">
+      <video class="preview-banner" id="designBannerVideo" aria-label="Перемещаемый видео-баннер" autoplay muted playsinline loop preload="metadata"></video>
+    </div>
+    <div class="muted" id="designHint">Превью использует последний скачанный кружок и выбранный фон</div>
+  </div>
+  <div class="design-controls">
+    <div class="design-field"><label for="designBgSelect">Фон для предпросмотра</label><select id="designBgSelect"><option value="">Нет фоновых видео</option></select>
+    <span class="muted">При монтаже случайные фоны продолжат чередоваться, как раньше.</span></div>
+    <div class="design-field"><label for="circleScale">Размер Telegram-кружка: <span id="circleScaleValue">1040</span> px</label>
+      <input id="circleScale" type="range" min="760" max="1080" step="10" value="1040"></div>
+    <label class="design-check"><input type="checkbox" id="chromakeyEnabled">Удалять зелёный фон (хромакей)</label>
+    <span class="muted">По умолчанию хромакей выключен. Если включить, при рендере удаляется зелёный цвет внутри кружка; в живом превью удаление цвета приблизительное.</span>
+    <label class="design-check"><input type="checkbox" id="bannerEnabled">Добавить рекламный баннер</label>
+    <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
+    <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
+    <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
+      <input id="bannerScale" type="range" min="100" max="1080" step="10" value="540"></div>
+    <div class="inline"><button id="resetBannerPosition" type="button" onclick="resetBannerPosition()">Сбросить позицию</button>
+      <button id="removeBanner" type="button" class="danger" onclick="removeDesignBanner()">Убрать баннер</button></div>
+    <span class="muted" id="designStatus">Загрузка настроек оформления...</span>
+  </div>
+</div></section>
 <section class="card"><h2>03 / Подключение Telegram</h2><p class="muted">Нужны TG_API_ID и TG_API_HASH в .env (my.telegram.org). Код приходит в твой Telegram. Никому его не передавай.</p><div style="margin:14px 0;padding:15px;border:1px solid #334769;border-radius:14px;background:#0b1527"><button class="primary" id="qrStart" onclick="startQR()">▦ Войти по QR-коду</button><p class="muted">Открой Telegram на телефоне → Настройки → Устройства → Подключить устройство. Сканируй код только со своего компьютера.</p><div id="qrPanel" style="display:none"><img id="qrImage" alt="QR-код Telegram" style="width:230px;height:230px;max-width:100%;background:white;padding:10px;border-radius:14px"><p id="qrStatus" class="muted">Ожидание сканирования...</p><div id="qr2fa" style="display:none" class="inline"><input id="qrPassword" type="password" placeholder="Пароль двухэтапной проверки"><button onclick="submitQRPassword()">Подтвердить</button></div></div></div><p class="muted">Альтернативный вход по номеру:</p><div class="inline"><input id="phone" placeholder="+48..."><button onclick="startLogin()">Получить код</button></div><div class="inline" style="margin-top:10px"><input id="code" placeholder="Код"><input id="password" type="password" placeholder="2FA, если включён"><button onclick="finishLogin()">Войти</button></div><p class="muted" id="auth">Проверка авторизации...</p></section>
 <section class="card"><h2>04 / Автомонтаж</h2><p class="muted">Скачиваем только Telegram video notes. Обработанные публикации пропускаются. Результат автоматически появится в основной очереди PostingTTII.</p><p class="muted">Сначала старые кружки — по умолчанию. Можно выбрать случайный порядок или новые. Лимит означает число новых кружков на канал, поиск ведётся среди последних 3000 сообщений.</p><div class="inline" style="margin-bottom:10px"><label>Порядок<br><select id="order"><option value="oldest">Сначала старые</option><option value="random">Случайный порядок</option><option value="newest">Сначала новые</option></select></label><label>С даты<br><input id="dateFrom" type="date"></label><label>По дату<br><input id="dateTo" type="date"></label></div><div class="inline"><input id="limit" type="number" min="1" max="500" value="30" title="Новых кружков на канал"><button class="primary" id="run" onclick="run()">Скачать и смонтировать</button></div><div class="progress"><div id="bar"></div></div><div id="progress" class="muted">Ожидание запуска</div><p class="muted">Оригиналы сохраняются без изменений. Готовые ролики не перезаписываются, повторные сообщения пропускаются.</p><a href="/" target="_blank" rel="noopener">Открыть готовые ролики в очереди PostingTTII ↗</a><pre id="log"></pre></section>
 <section class="card wide"><h2>05 / Instagram-источники</h2><div class="item"><div><strong>Вход в Instagram через Chrome</strong><p class="muted">Откроется отдельный профиль Chrome для PostingTTII. Авторизация останется в этом профиле. После входа закрой отдельное окно Chrome перед запуском сканирования. Программа проверит видимые ссылки Reels на странице профиля; Instagram может ограничивать доступ.</p><button class="primary" onclick="igOpenChrome()">Открыть Instagram в Chrome</button><hr style="border:0;border-top:1px solid #293953;margin:16px 0"><strong>Дополнительно: файл сессии Instaloader</strong><p class="muted">Один раз создай файл сессии через Instaloader на своём ПК и загрузи его сюда. Пароль в студии не вводится.</p><span id="igSessionState">Проверка...</span></div><div class="actions"><input id="igSessionFile" type="file" accept=".session"><button id="igSessionUpload" onclick="igSessionConnect()">Подключить</button><button onclick="igSessionDisconnect()">Отключить</button></div></div><p class="muted">Добавь ссылки на свои публичные Instagram-профили. Студия выбирает более старые ролики среди найденных, не скачивает обработанные повторно и монтирует без титров: размытие либо случайный фон TG Studio. Готовые MP4 появятся в общей очереди.</p><div class="inline" style="margin-top:15px"><label>Новых видео на аккаунт <input id="igLimit" type="number" min="1" max="100" value="5" style="width:90px"></label><button id="igRun" class="primary" onclick="igRun()">Скачать и смонтировать Instagram</button></div><div id="igProgress" class="muted" style="margin-top:10px">Ожидание запуска</div><pre id="igLog" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><p class="muted">Для скачивания публичных видео используется yt-dlp. Instagram может ограничивать доступ; ошибки будут показаны ниже. Не требует ввода пароля Instagram.</p></section>
@@ -16,10 +63,214 @@ const el=id=>document.getElementById(id);
 const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function request(path,opts){const r=await fetch(api+path,opts);const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));return d}
 function notify(e){alert(e.message||String(e))}
+
+const designState={
+  circle_size:1040,chromakey_enabled:false,banner_enabled:false,
+  banner_x:270,banner_y:1550,banner_width:540
+};
+let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
+
+function designStatus(message){el('designStatus').textContent=message;}
+function bannerHeightPx(){return designState.banner_width*bannerRatio;}
+function clampBanner(){
+  designState.banner_x=Math.max(0,Math.min(Math.round(designState.banner_x),Math.max(0,1080-designState.banner_width)));
+  designState.banner_y=Math.max(0,Math.min(Math.round(designState.banner_y),Math.max(0,1920-bannerHeightPx())));
+}
+function updateDesignPreview(){
+  const size=designState.circle_size;
+  el('circleScaleValue').textContent=size;
+  el('bannerScaleValue').textContent=designState.banner_width;
+  for(const circle of [el('designCircleVideo'),el('designCirclePlaceholder')]){
+    circle.style.width=(size/1080*100)+'%';
+    circle.style.top=(90/1920*100)+'%';
+  }
+  clampBanner();
+  for(const id of ['designBanner','designBannerVideo']){
+    const banner=el(id);
+    banner.style.display=designState.banner_enabled&&bannerAvailable&&
+      (id==='designBannerVideo'?bannerKind==='video':bannerKind==='image')?'block':'none';
+    banner.style.width=(designState.banner_width/1080*100)+'%';
+    banner.style.left=(designState.banner_x/1080*100)+'%';
+    banner.style.top=(designState.banner_y/1920*100)+'%';
+  }
+  el('bannerEnabled').checked=designState.banner_enabled;
+  el('bannerScale').value=designState.banner_width;
+  el('circleScale').value=size;
+  el('chromakeyEnabled').checked=designState.chromakey_enabled;
+}
+function saveRenderDesign(){
+  const snapshot={...designState};
+  designSaveQueue=designSaveQueue.catch(()=>{}).then(async()=>{
+    await request('/design',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(snapshot)
+    });
+    designStatus('✓ Оформление сохранено. Следующий рендер использует эти параметры.');
+  }).catch(err=>designStatus('Ошибка сохранения: '+err.message));
+  return designSaveQueue;
+}
+function selectDesignBackground(){
+  const value=el('designBgSelect').value;
+  const video=el('designBgVideo');
+  if(value){
+    const next=api+'/backgrounds/'+encodeURIComponent(value)+'/preview';
+    if(video.getAttribute('src')!==next){video.src=next;video.load();}
+    video.play().catch(()=>{});
+  }else{video.removeAttribute('src');video.load();}
+}
+function updateDesignBackgroundChoices(bgs){
+  const sel=el('designBgSelect');
+  const names=bgs.filter(b=>b.enabled).map(b=>b.name);
+  const current=sel.value;
+  const signature=names.join('|');
+  if(sel.dataset.signature===signature)return;
+  sel.dataset.signature=signature;
+  sel.replaceChildren();
+  if(!names.length){
+    const option=document.createElement('option');option.value='';option.textContent='Нет активных фонов';sel.append(option);
+  }else{
+    for(const name of names){
+      const opt=document.createElement('option');opt.value=name;opt.textContent=name;sel.append(opt);
+    }
+    sel.value=names.includes(current)?current:names[0];
+  }
+  selectDesignBackground();
+}
+function loadBannerPreview(){
+  const img=el('designBanner');
+  const video=el('designBannerVideo');
+  img.onload=null;img.onerror=null;
+  video.onloadedmetadata=null;video.onerror=null;
+  video.pause();video.removeAttribute('src');video.load();
+  img.removeAttribute('src');
+  bannerRatio=.25;
+  if(!bannerAvailable){updateDesignPreview();return;}
+  const src=api+'/banner/preview?t='+Date.now();
+  if(bannerKind==='video'){
+    video.onloadedmetadata=()=>{
+      if(video.videoWidth&&video.videoHeight)bannerRatio=video.videoHeight/video.videoWidth;
+      updateDesignPreview();
+      video.play().catch(()=>{});
+    };
+    video.onerror=()=>{
+      designStatus('Не удалось воспроизвести видео-баннер. Проверь MP4/WebM в браузере.');
+      updateDesignPreview();
+    };
+    video.src=src;video.load();
+    video.play().catch(()=>{});
+  }else{
+    img.onload=()=>{
+      bannerRatio=img.naturalHeight/img.naturalWidth;
+      updateDesignPreview();
+    };
+    img.onerror=()=>{
+      designStatus('Не удалось загрузить миниатюру баннера');
+      updateDesignPreview();
+    };
+    img.src=src;
+  }
+  updateDesignPreview();
+}
+async function loadDesign(){
+  try{
+    const d=await request('/design');
+    Object.assign(designState,d.design);
+    bannerAvailable=d.banner_available;
+    bannerKind=d.banner_kind||'image';
+    updateDesignPreview();
+    loadBannerPreview();
+    designStatus('✓ Оформление загружено');
+  }catch(err){designStatus('Не удалось загрузить оформление: '+err.message);}
+  const sample=el('designCircleVideo');
+  sample.onloadeddata=()=>{
+    sampleCircleLoaded=true;sample.style.display='block';
+    el('designCirclePlaceholder').style.display='none';
+    sample.play().catch(()=>{});
+  };
+  sample.onerror=()=>{sampleCircleLoaded=false;sample.style.display='none';el('designCirclePlaceholder').style.display='grid';};
+  sample.src=api+'/sample-circle/preview';
+}
+function resetBannerPosition(){
+  designState.banner_x=Math.round((1080-designState.banner_width)/2);
+  designState.banner_y=Math.round(1920-bannerHeightPx()-100);
+  updateDesignPreview();saveRenderDesign();
+}
+async function removeDesignBanner(){
+  try{
+    const result=await request('/banner',{method:'DELETE'});
+    bannerAvailable=result.banner_available;
+    bannerKind=result.banner_kind||'image';
+    Object.assign(designState,result.design);
+    loadBannerPreview();
+    el('bannerFile').value='';
+    designStatus('Баннер убран');
+  }catch(err){notify(err);}
+}
+function initDesignControls(){
+  el('designBgSelect').addEventListener('change',selectDesignBackground);
+  el('circleScale').addEventListener('input',e=>{
+    designState.circle_size=Number(e.target.value);updateDesignPreview();
+  });
+  el('circleScale').addEventListener('change',saveRenderDesign);
+  el('bannerScale').addEventListener('input',e=>{
+    designState.banner_width=Number(e.target.value);updateDesignPreview();
+  });
+  el('bannerScale').addEventListener('change',saveRenderDesign);
+  el('chromakeyEnabled').addEventListener('change',e=>{
+    designState.chromakey_enabled=e.target.checked;updateDesignPreview();saveRenderDesign();
+  });
+  el('bannerEnabled').addEventListener('change',e=>{
+    if(e.target.checked&&!bannerAvailable){
+      e.target.checked=false;alert('Сначала загрузи рекламный баннер');return;
+    }
+    designState.banner_enabled=e.target.checked;updateDesignPreview();saveRenderDesign();
+  });
+  el('bannerFile').addEventListener('change',async e=>{
+    const file=e.target.files?.[0];if(!file)return;
+    const body=new FormData();body.append('file',file);
+    try{
+      designStatus('Загрузка баннера...');
+      // Finish pending layout edits before replacing the banner.
+      await designSaveQueue;
+      const d=await request('/banner',{method:'POST',body});
+      bannerAvailable=d.banner_available;
+      bannerKind=d.banner_kind||'image';
+      Object.assign(designState,d.design);
+      designState.banner_enabled=true;
+      loadBannerPreview();
+      updateDesignPreview();
+      await saveRenderDesign();
+    }catch(err){designStatus('Не удалось загрузить баннер: '+err.message);}
+  });
+  let start=null;
+  for(const banner of [el('designBanner'),el('designBannerVideo')]){
+    banner.addEventListener('pointerdown',e=>{
+      if(!bannerAvailable||!designState.banner_enabled)return;
+      e.preventDefault();
+      const rect=el('designPreview').getBoundingClientRect();
+      start={pointer:e.pointerId,cx:e.clientX,cy:e.clientY,x:designState.banner_x,y:designState.banner_y,w:rect.width,h:rect.height};
+      banner.setPointerCapture(e.pointerId);
+    });
+    banner.addEventListener('pointermove',e=>{
+      if(!start||e.pointerId!==start.pointer)return;
+      designState.banner_x=start.x+(e.clientX-start.cx)*1080/start.w;
+      designState.banner_y=start.y+(e.clientY-start.cy)*1920/start.h;
+      updateDesignPreview();
+    });
+    const finish=e=>{
+      if(!start||e.pointerId!==start.pointer)return;
+      start=null;saveRenderDesign();
+    };
+    banner.addEventListener('pointerup',finish);
+    banner.addEventListener('pointercancel',finish);
+  }
+}
+
 async function refresh(){
 try{const d=await request('/status');el('health').textContent=(d.ffmpeg_ready?'FFmpeg ✓':'FFmpeg отсутствует')+' · '+(d.telegram_configured?'Telegram API ✓':'Telegram API не настроен');
 el('channels').innerHTML=d.channels.map(c=>'<div class="item"><strong>✈ Telegram · @'+safe(c)+'</strong><div class="actions"><label><input type="checkbox" data-tg-toggle="'+safe(c)+'" '+(!(d.channels_disabled||[]).includes(c)?'checked':'')+'> Вкл.</label><button class="danger" data-channel="'+safe(c)+'">Удалить</button></div></div>').join('');
-const bgSignature=JSON.stringify(d.backgrounds);if(bgSignature!==lastBackgroundSignature){lastBackgroundSignature=bgSignature;el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>'<div class="item"><video preload="none" controls data-preview="'+safe(b.name)+'" poster=""></video><button type="button" data-play="'+safe(b.name)+'">▶ Предпросмотр</button><div><strong>'+safe(b.name)+'</strong><div class="muted">'+b.size_mb+' MB</div></div><div class="actions"><label><input type="checkbox" data-toggle="'+safe(b.name)+'" '+(b.enabled?'checked':'')+'> Вкл.</label><button class="danger" data-bg="'+safe(b.name)+'">×</button></div></div>').join('') :'<div class="empty">Добавь хотя бы один фон</div>'; }
+updateDesignBackgroundChoices(d.backgrounds);
+ const bgSignature=JSON.stringify(d.backgrounds);if(bgSignature!==lastBackgroundSignature){lastBackgroundSignature=bgSignature;el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>'<div class="item"><video preload="none" controls data-preview="'+safe(b.name)+'" poster=""></video><button type="button" data-play="'+safe(b.name)+'">▶ Предпросмотр</button><div><strong>'+safe(b.name)+'</strong><div class="muted">'+b.size_mb+' MB</div></div><div class="actions"><label><input type="checkbox" data-toggle="'+safe(b.name)+'" '+(b.enabled?'checked':'')+'> Вкл.</label><button class="danger" data-bg="'+safe(b.name)+'">×</button></div></div>').join('') :'<div class="empty">Добавь хотя бы один фон</div>'; }
 const j=d.job;el('progress').textContent=j.status+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=(j.errors||[]).join('\n');el('run').disabled=j.status==='running';
 }catch(e){el('log').textContent=e.message}}
 el('addChannel').onsubmit=async e=>{e.preventDefault();try{await request('/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:el('channel').value})});el('channel').value='';await refresh()}catch(e){notify(e)}};
@@ -28,7 +279,7 @@ document.addEventListener('click',async e=>{try{if(e.target.dataset.channel){awa
 document.addEventListener('change',async e=>{if(e.target.dataset.toggle){try{await request('/backgrounds/'+encodeURIComponent(e.target.dataset.toggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}catch(err){notify(err)}}});
 async function startLogin(){try{await request('/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:el('phone').value})});el('auth').textContent='Код отправлен'}catch(e){notify(e)}}
 async function finishLogin(){try{const d=await request('/auth/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:el('code').value,password:el('password').value})});el('auth').textContent=d.password_required?'Введи пароль 2FA':'Telegram подключён';el('code').value='';el('password').value=''}catch(e){notify(e)}}
-async function run(){try{await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_channel:Number(el('limit').value),order:el('order').value,date_from:el('dateFrom').value||null,date_to:el('dateTo').value||null})});await refresh()}catch(e){notify(e)}}
+async function run(){try{await designSaveQueue;await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_channel:Number(el('limit').value),order:el('order').value,date_from:el('dateFrom').value||null,date_to:el('dateTo').value||null})});await refresh()}catch(e){notify(e)}}
 async function auth(){try{const d=await request('/auth');el('auth').textContent=d.authorized?'Telegram подключён':'Telegram не авторизован'}catch(e){el('auth').textContent=e.message}}
 let qrPoll=null;
 async function startQR(){
@@ -54,7 +305,7 @@ else if(d.state==='expired'||d.state==='error'){clearInterval(qrPoll);el('qrStat
 async function submitQRPassword(){
 try{await request('/auth/qr/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:el('qrPassword').value})});el('qrPassword').value='';el('qr2fa').style.display='none';el('qrStatus').textContent='Telegram подключён ✓';el('auth').textContent='Telegram подключён';el('qrImage').style.display='none'}catch(e){notify(e)}
 }
-refresh();auth();setInterval(refresh,2500);
+initDesignControls();loadDesign();refresh();auth();setInterval(refresh,2500);
 const igApi='/api/telegram-studio/instagram';
 async function igRequest(path,opts){const r=await fetch(igApi+path,opts);const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));return d}
 async function igRefresh(){try{const d=await igRequest('/status');el('igSessionState').textContent=d.session_connected?'✓ Сессия подключена':'Сессия не подключена';el('igAccounts').innerHTML=d.accounts.map(a=>'<div class="item"><strong>◎ Instagram · @'+safe(a.split('/').filter(Boolean).pop())+'</strong><div class="actions"><label><input type="checkbox" data-ig-toggle="'+safe(a.split('/').filter(Boolean).pop())+'" '+(!(d.disabled||[]).includes(a)?'checked':'')+'> Вкл.</label><button class="danger" data-ig-remove="'+safe(a.split('/').filter(Boolean).pop())+'">Удалить</button></div></div>').join('');el('igProgress').textContent=d.job.status+' · готово '+d.job.done+' / '+d.job.total+' · ранее обработано '+d.processed_count;el('igLog').textContent=(d.job.errors||[]).join('\n');el('igRun').disabled=d.job.status==='running'}catch(e){el('igLog').textContent=e.message}}
