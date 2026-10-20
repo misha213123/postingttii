@@ -39,8 +39,8 @@
 .editor-note{font-size:12px;color:#a6bddd;line-height:1.45}
 .design-preview{box-shadow:0 14px 40px #0009}
 /* Color-key picker; transparent canvas approximates FFmpeg output. */
-.design-preview>.preview-chroma{pointer-events:none;z-index:2;background:transparent}
-.chroma-pick-overlay{position:absolute;inset:0;z-index:10;cursor:crosshair;background:#54c7ff16;border:2px dashed #8bd7ff;touch-action:none}
+.design-preview>.preview-banner.preview-chroma{z-index:5;background:transparent;box-shadow:none;cursor:grab;border:1px dashed #a6c8ff;pointer-events:auto}
+.chroma-pick-overlay{position:absolute;inset:auto;z-index:10;cursor:crosshair;background:#54c7ff16;border:2px dashed #8bd7ff;touch-action:none}
 .chroma-pick-overlay[hidden]{display:none}
 .chroma-pick-overlay .tip{position:absolute;bottom:12px;left:10px;right:10px;padding:8px;background:#071427d9;color:#deefff;border-radius:10px;text-align:center;font-size:12px}
 .chroma-panel{padding:14px;border-radius:14px;background:#111f38;border:1px solid #3c5379;display:grid;gap:12px}
@@ -66,18 +66,17 @@
     <div class="design-preview" id="designPreview" aria-label="Макет готового вертикального видео 9 на 16">
       <video class="preview-background" id="designBgVideo" muted playsinline loop preload="metadata"></video>
       <video class="preview-circle" id="designCircleVideo" muted playsinline loop preload="metadata" style="display:none"></video>
-      <canvas class="preview-circle preview-chroma" id="chromaPreviewCanvas" width="320" height="320" style="display:none" aria-hidden="true"></canvas>
       <div class="preview-circle preview-placeholder" id="designCirclePlaceholder">Telegram<br>кружок</div>
       <div class="safe-area"></div>
       <div id="designCircleDrag" class="editor-drag-circle" title="Тяни кружок; за нижний угол меняй размер"><span class="editor-handle" data-resize="circle"></span></div>
-      <div id="chromaPickOverlay" class="chroma-pick-overlay" hidden aria-label="Выбери цвет на кадре кружка">
-        <div class="tip">Пипетка включена · нажми на цвет внутри кружка</div>
+      <img class="preview-banner" id="designBanner" alt="Рекламный баннер" draggable="false">
+      <video class="preview-banner" id="designBannerVideo" aria-label="Видео-баннер" autoplay muted playsinline loop preload="metadata"></video>
+      <canvas class="preview-banner preview-chroma" id="chromaPreviewCanvas" width="320" height="100" style="display:none" aria-label="Баннер с удалённым фоном"></canvas>
+      <div id="chromaPickOverlay" class="chroma-pick-overlay" hidden aria-label="Выбери цвет фона на рекламном баннере">
+        <div class="tip">Пипетка · нажми по цвету фона НА БАННЕРЕ</div>
       </div>
-      <img class="preview-banner" id="designBanner" alt="Перемещаемый рекламный баннер" draggable="false">
-      <video class="preview-banner" id="designBannerVideo" aria-label="Перемещаемый видео-баннер" autoplay muted playsinline loop preload="metadata"></video>
     </div>
-    <div class="muted" id="designHint">Превью использует последний скачанный кружок и выбранный фон. Если кружка ещё нет, можно выбрать видео с ПК — оно не загружается на сервер.</div>
-    <input type="file" id="tgPreviewSampleInput" accept="video/mp4,video/webm" aria-label="Локальное видео для предпросмотра Telegram-кружка">
+    <div class="muted" id="designHint">Перемещай кружок и баннер. Для удаления фона загрузи баннер и используй пипетку прямо на нём.</div>
   </div>
   <div class="design-controls">
     <div class="editor-subtitle">Фоны Telegram</div>
@@ -88,11 +87,13 @@
     <div class="design-field"><label for="circleScale">Диаметр: <span id="circleScaleValue">1040</span> px</label>
       <input id="circleScale" type="range" min="400" max="1080" step="10" value="1040">
       <span class="editor-note">Тяни кружок по видео. Размер меняется ползунком или за белый маркер на окружности.</span></div>
+    <label class="design-check"><input type="checkbox" id="bannerEnabled">Добавить рекламный баннер</label>
+    <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
     <div class="chroma-panel">
-      <label class="design-check"><input type="checkbox" id="chromakeyEnabled">Удалять выбранный цвет (хромакей)</label>
-      <div class="editor-subtitle">Пипетка · цвет удаления</div>
+      <label class="design-check"><input type="checkbox" id="chromakeyEnabled">Удалять фон рекламного баннера (хромакей)</label>
+      <div class="editor-subtitle">Удаление цвета на изображении или видео-баннере</div>
       <div class="chroma-controls">
-        <button id="chromaPickButton" type="button" onclick="toggleChromaPicker()" aria-pressed="false">◉ Пипетка — выбрать на видео</button>
+        <button id="chromaPickButton" type="button" onclick="toggleChromaPicker()" aria-pressed="false">◉ Пипетка — выбрать на баннере</button>
         <input id="chromaColor" type="color" value="#00ff00" aria-label="Выбрать цвет вручную">
         <code id="chromaColorHex">#00FF00</code>
       </div>
@@ -100,11 +101,9 @@
         <input id="chromaSimilarity" type="range" min="1" max="100" step="1" value="20"></div>
       <div class="design-field"><label for="chromaBlend">Мягкость краёв: <span id="chromaBlendValue">7</span>%</label>
         <input id="chromaBlend" type="range" min="0" max="100" step="1" value="7"></div>
-      <span class="editor-note" id="chromaPickStatus" aria-live="polite">Нажми «Пипетка», затем кликни по цвету на кружке. Можно выбрать любой оттенок или задать его вручную.</span>
-      <span class="editor-note">Предпросмотр удаления цвета приблизительный; точный результат рассчитывает FFmpeg при монтаже. Слишком высокая чувствительность может удалять похожие цвета на самом видео.</span>
+      <span class="editor-note" id="chromaPickStatus" aria-live="polite">Загрузи рекламный баннер, нажми «Пипетка», затем кликни по цвету фона на баннере. Telegram-кружок останется без изменений.</span>
+      <span class="editor-note">Удаление выполняется только на рекламном баннере. Предпросмотр приблизительный; точный результат рассчитывает FFmpeg. Высокая чувствительность удаляет также похожие цвета.</span>
     </div>
-    <label class="design-check"><input type="checkbox" id="bannerEnabled">Добавить рекламный баннер</label>
-    <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
     <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
     <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
       <input id="bannerScale" type="range" min="100" max="1080" step="10" value="540"></div>
