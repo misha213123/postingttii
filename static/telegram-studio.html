@@ -222,6 +222,108 @@ function updateDesignPreview(){
   el('chromaPreviewCanvas').style.display=previewReady?'block':'none';
   el('designCircleVideo').style.opacity=previewReady?'0':'1';
 }
+
+let chromaPicking=false;
+let chromaLastFrame=0;
+const chromaScratch=document.createElement('canvas');
+chromaScratch.width=320;
+chromaScratch.height=320;
+const chromaScratchCtx=chromaScratch.getContext('2d',{willReadFrequently:true});
+const chromaOnePixel=document.createElement('canvas');
+chromaOnePixel.width=5;chromaOnePixel.height=5;
+const chromaPixelContext=chromaOnePixel.getContext('2d',{willReadFrequently:true});
+
+function chromaVideoSource(){
+  const video=el('designCircleVideo');
+  if(!sampleCircleLoaded||video.readyState<2||!video.videoWidth||!video.videoHeight)return null;
+  const crop=Math.min(video.videoWidth,video.videoHeight);
+  return {video,crop,sx:(video.videoWidth-crop)/2,sy:(video.videoHeight-crop)/2};
+}
+
+function toggleChromaPicker(force){
+  const enable=typeof force==='boolean'?force:!chromaPicking;
+  if(enable&&!chromaVideoSource()){
+    el('chromaPickStatus').textContent='Для пипетки сначала нужен скачанный Telegram-кружок. Если его ещё нет, выбери цвет квадратом вручную.';
+    return;
+  }
+  chromaPicking=enable;
+  el('chromaPickOverlay').hidden=!enable;
+  el('chromaPickButton').classList.toggle('active',enable);
+  el('chromaPickButton').setAttribute('aria-pressed',String(enable));
+  el('chromaPickButton').textContent=enable?'✕ Отменить выбор':'◉ Пипетка — выбрать на видео';
+  const video=el('designCircleVideo');
+  if(enable){
+    video.pause();
+    el('chromaPickStatus').textContent='Видео остановлено. Нажми на цвет внутри кружка, который нужно убрать.';
+  }else{
+    video.play().catch(()=>{});
+  }
+}
+
+function pickedChromaColor(event){
+  if(!chromaPicking)return;
+  const src=chromaVideoSource();
+  if(!src){toggleChromaPicker(false);return;}
+  const rect=el('designCircleVideo').getBoundingClientRect();
+  const x=(event.clientX-rect.left)/rect.width;
+  const y=(event.clientY-rect.top)/rect.height;
+  if(x<0||x>1||y<0||y>1||Math.hypot(x-.5,y-.5)>.5){
+    el('chromaPickStatus').textContent='Нажми именно внутри Telegram-кружка, а не на фоне или баннере.';
+    return;
+  }
+  const sx=Math.max(0,Math.min(src.video.videoWidth-5,Math.round(src.sx+x*src.crop)-2));
+  const sy=Math.max(0,Math.min(src.video.videoHeight-5,Math.round(src.sy+y*src.crop)-2));
+  let pixels;
+  try{
+    chromaPixelContext.clearRect(0,0,5,5);
+    chromaPixelContext.drawImage(src.video,sx,sy,5,5,0,0,5,5);
+    pixels=chromaPixelContext.getImageData(0,0,5,5).data;
+  }catch(err){
+    el('chromaPickStatus').textContent='Не удалось взять цвет с кадра. Попробуй выбрать цвет вручную.';
+    return;
+  }
+  const rgb=[0,0,0];
+  for(let i=0;i<pixels.length;i+=4)for(let j=0;j<3;j++)rgb[j]+=pixels[i+j];
+  const toHex=v=>Math.round(v/25).toString(16).padStart(2,'0');
+  designState.chromakey_color='#'+rgb.map(toHex).join('');
+  designState.chromakey_enabled=true;
+  toggleChromaPicker(false);
+  updateDesignPreview();
+  el('chromaPickStatus').textContent='✓ Выбран '+designState.chromakey_color.toUpperCase()+'. Цвет будет удаляться при следующем FFmpeg-рендере.';
+  saveRenderDesign();
+}
+
+function drawChromaPreview(now){
+  requestAnimationFrame(drawChromaPreview);
+  if(now-chromaLastFrame<100||!designState.chromakey_enabled||!sampleCircleLoaded
+       ||el('tgEditor').hidden)return;
+  const src=chromaVideoSource();
+  if(!src)return;
+  chromaLastFrame=now;
+  const canvas=el('chromaPreviewCanvas');
+  if(!chromaScratchCtx)return;
+  try{
+    chromaScratchCtx.drawImage(src.video,src.sx,src.sy,src.crop,src.crop,0,0,320,320);
+    const frame=chromaScratchCtx.getImageData(0,0,320,320);
+    const pixels=frame.data;
+    const key=designState.chromakey_color;
+    const rgb=[1,3,5].map(offset=>parseInt(key.slice(offset,offset+2),16));
+    const threshold=designState.chromakey_similarity;
+    const blend=Math.max(.001,designState.chromakey_blend);
+    for(let i=0;i<pixels.length;i+=4){
+      // Fast, approximate RGB-distance key for interactive preview.
+      // FFmpeg chromakey uses chroma channels, so edge pixels can differ.
+      const distance=Math.hypot(pixels[i]-rgb[0],pixels[i+1]-rgb[1],pixels[i+2]-rgb[2])/(255*Math.sqrt(3));
+      const alpha=Math.max(0,Math.min(1,(distance-threshold)/blend));
+      pixels[i+3]=Math.round(pixels[i+3]*alpha);
+    }
+    const ctx=canvas.getContext('2d');
+    ctx.putImageData(frame,0,0);
+  }catch(err){
+    // Video still loading / browser could not decode a frame; no preview edit.
+  }
+}
+
 function saveRenderDesign(){
   const snapshot={...designState};
   designSaveQueue=designSaveQueue.catch(()=>{}).then(async()=>{
@@ -329,9 +431,10 @@ async function loadDesign(){
   sample.onloadeddata=()=>{
     sampleCircleLoaded=true;sample.style.display='block';
     el('designCirclePlaceholder').style.display='none';
-    sample.play().catch(()=>{});
+    updateDesignPreview();
+    if(!chromaPicking)sample.play().catch(()=>{});
   };
-  sample.onerror=()=>{sampleCircleLoaded=false;sample.style.display='none';el('designCirclePlaceholder').style.display='grid';};
+  sample.onerror=()=>{sampleCircleLoaded=false;sample.style.display='none';el('designCirclePlaceholder').style.display='grid';toggleChromaPicker(false);updateDesignPreview();};
   sample.src=api+'/sample-circle/preview';
 }
 function resetBannerPosition(){
@@ -394,6 +497,26 @@ function initDesignControls(){
   el('bannerScale').addEventListener('change',saveRenderDesign);
   el('chromakeyEnabled').addEventListener('change',e=>{
     designState.chromakey_enabled=e.target.checked;updateDesignPreview();saveRenderDesign();
+  });
+  el('chromaColor').addEventListener('input',e=>{
+    designState.chromakey_color=e.target.value;
+    updateDesignPreview();
+    el('chromaPickStatus').textContent='Выбран цвет '+e.target.value.toUpperCase();
+  });
+  el('chromaColor').addEventListener('change',saveRenderDesign);
+  el('chromaSimilarity').addEventListener('input',e=>{
+    designState.chromakey_similarity=Number(e.target.value)/100;
+    updateDesignPreview();
+  });
+  el('chromaSimilarity').addEventListener('change',saveRenderDesign);
+  el('chromaBlend').addEventListener('input',e=>{
+    designState.chromakey_blend=Number(e.target.value)/100;
+    updateDesignPreview();
+  });
+  el('chromaBlend').addEventListener('change',saveRenderDesign);
+  el('chromaPickOverlay').addEventListener('click',pickedChromaColor);
+  window.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&chromaPicking)toggleChromaPicker(false);
   });
   el('bannerEnabled').addEventListener('change',e=>{
     if(e.target.checked&&!bannerAvailable){
@@ -482,7 +605,7 @@ else if(d.state==='expired'||d.state==='error'){clearInterval(qrPoll);el('qrStat
 async function submitQRPassword(){
 try{await request('/auth/qr/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:el('qrPassword').value})});el('qrPassword').value='';el('qr2fa').style.display='none';el('qrStatus').textContent='Telegram подключён ✓';el('auth').textContent='Telegram подключён';el('qrImage').style.display='none'}catch(e){notify(e)}
 }
-initDesignControls();loadDesign();refresh();auth();setInterval(refresh,2500);
+initDesignControls();requestAnimationFrame(drawChromaPreview);loadDesign();refresh();auth();setInterval(refresh,2500);
 const igApi='/api/telegram-studio/instagram';
 
 /* Instagram and Telegram templates stay separate in persistence and rendering. */
