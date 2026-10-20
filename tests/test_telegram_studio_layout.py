@@ -25,6 +25,43 @@ class TelegramRenderDesignTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             studio.RenderDesign(banner_width=0)
 
+    def test_chromakey_color_can_be_any_hex_rgb(self):
+        for color in ("#2078ca", "#ffffff", "#171717", "#FF00A4"):
+            with self.subTest(color=color), (
+                patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+                patch.object(studio.subprocess, "run") as run,
+            ):
+                design = studio.RenderDesign(
+                    chromakey_enabled=True, chromakey_color=color,
+                    chromakey_similarity=0.31, chromakey_blend=0.13,
+                )
+                studio.render(
+                    Path("tg-circle.mp4"), Path("background.mp4"),
+                    Path("render.mp4"), design,
+                )
+                args = run.call_args.args[0]
+                filter_graph = args[args.index("-filter_complex") + 1]
+                self.assertIn(
+                    "chromakey=0x" + color[1:] + ":0.310:0.130,",
+                    filter_graph,
+                )
+                self.assertIn("0:a?", args)
+
+    def test_default_green_still_applies_for_old_saved_designs(self):
+        older = studio.RenderDesign.model_validate({"chromakey_enabled": True})
+        self.assertEqual(older.chromakey_color, "#00ff00")
+        self.assertEqual(older.chromakey_similarity, .20)
+        self.assertEqual(older.chromakey_blend, .07)
+
+    def test_rejects_invalid_colors_and_ffmpeg_filter_injection(self):
+        for invalid in ("green", "#ABC", "#AABBCC;hue=s=0", "AABBCC", "#12345g"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                studio.RenderDesign(chromakey_color=invalid)
+        with self.assertRaises(ValidationError):
+            studio.RenderDesign(chromakey_similarity=1.3)
+        with self.assertRaises(ValidationError):
+            studio.RenderDesign(chromakey_blend=-.1)
+
     def test_render_without_banner_preserves_background_and_audio(self):
         with (
             patch.object(studio, "duration", side_effect=[8.0, 20.0]),
