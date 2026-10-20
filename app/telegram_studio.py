@@ -12,19 +12,22 @@ import subprocess
 import uuid
 from pathlib import Path
 from datetime import date
+from io import BytesIO
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from PIL import Image, UnidentifiedImageError
 from app.config import settings
 
 router = APIRouter(prefix="/api/telegram-studio", tags=["telegram-studio"])
 ROOT = settings.data_dir / "telegram_studio"
 BACKGROUNDS = ROOT / "backgrounds"
 ORIGINALS = ROOT / "originals"
+BANNERS = ROOT / "banners"
 CONFIG = ROOT / "config.json"
 SESSION = ROOT / "telegram"
-for p in (ROOT, BACKGROUNDS, ORIGINALS):
+for p in (ROOT, BACKGROUNDS, ORIGINALS, BANNERS):
     p.mkdir(parents=True, exist_ok=True)
 LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
@@ -104,6 +107,109 @@ class LoginStart(BaseModel):
 class LoginFinish(BaseModel):
     code: str
     password: str = ""
+
+
+class RenderDesign(BaseModel):
+    """Saved design and layout in 1080 x 1920 video pixels."""
+    circle_size: int = Field(default=1040, ge=760, le=1080)
+    chromakey_enabled: bool = False
+    banner_enabled: bool = False
+    banner_x: int = Field(default=270, ge=0, le=1080)
+    banner_y: int = Field(default=1550, ge=0, le=1920)
+    banner_width: int = Field(default=540, ge=100, le=1080)
+
+
+def saved_design() -> RenderDesign:
+    return RenderDesign.model_validate(config().get("render_design", {}))
+
+
+def current_banner(data=None) -> Path | None:
+    d = data if data is not None else config()
+    name = d.get("banner_file", "")
+    if not isinstance(name, str) or not re.fullmatch(r"[a-f0-9]{32}[.]png", name):
+        return None
+    path = BANNERS / name
+    return path if path.is_file() else None
+
+
+def design_response():
+    d = config()
+    return {
+        "design": RenderDesign.model_validate(d.get("render_design", {})).model_dump(),
+        "banner_available": current_banner(d) is not None,
+    }
+
+
+@router.get("/design")
+def get_design():
+    return design_response()
+
+
+@router.post("/design")
+def update_design(body: RenderDesign):
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Дождись завершения рендера перед изменением оформления")
+    d = config()
+    d["render_design"] = body.model_dump()
+    save(d)
+    return design_response()
+
+
+@router.get("/banner/preview")
+def banner_preview():
+    path = current_banner()
+    if not path:
+        raise HTTPException(404, "Баннер не загружен")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/banner")
+async def upload_banner(file: UploadFile = File(...)):
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Нельзя изменять баннер во время рендера")
+    if not file.filename or Path(file.filename).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise HTTPException(400, "Загрузи PNG, JPG или WEBP")
+    data = await file.read(10 * 1024 * 1024 + 1)
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Баннер больше 10 МБ")
+    try:
+        with Image.open(BytesIO(data)) as image:
+            image.verify()
+        with Image.open(BytesIO(data)) as original:
+            original.load()
+            if original.width < 16 or original.height < 16 or original.width > 6000 or original.height > 6000:
+                raise ValueError("Размер баннера должен быть от 16 до 6000 пикселей")
+            picture = original.convert("RGBA")
+    except (ValueError, UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+        raise HTTPException(400, f"Не удалось прочитать баннер: {exc}") from exc
+    name = uuid.uuid4().hex + ".png"
+    dest = BANNERS / name
+    picture.save(dest, "PNG")
+    d = config()
+    d["banner_file"] = name
+    save(d)
+    return design_response()
+
+
+@router.delete("/banner")
+def delete_banner():
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Нельзя удалять баннер во время рендера")
+    d = config()
+    d.pop("banner_file", None)
+    design = RenderDesign.model_validate(d.get("render_design", {}))
+    d["render_design"] = design.model_copy(update={"banner_enabled": False}).model_dump()
+    save(d)
+    return design_response()
+
+
+@router.get("/sample-circle/preview")
+def sample_circle_preview():
+    # Real Telegram sample when available; no remote download is triggered.
+    samples = sorted(ORIGINALS.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not samples:
+        raise HTTPException(404, "Пока нет скачанных Telegram-кружков")
+    return FileResponse(samples[0], media_type="video/mp4")
 
 
 class RenderRequest(BaseModel):
