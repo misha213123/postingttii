@@ -134,7 +134,9 @@ async function request(path,opts){const r=await fetch(api+path,opts);const d=awa
 function notify(e){alert(e.message||String(e))}
 
 const designState={
-  circle_size:1040,chromakey_enabled:false,banner_enabled:false,
+  circle_size:1040,circle_x:20,circle_y:90,
+  background_mode:'shuffle',background_name:'',
+  chromakey_enabled:false,banner_enabled:false,
   banner_x:270,banner_y:1550,banner_width:540
 };
 let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
@@ -147,11 +149,26 @@ function clampBanner(){
 }
 function updateDesignPreview(){
   const size=designState.circle_size;
+  designState.circle_x=Math.max(0,Math.min(Math.round(designState.circle_x),1080-size));
+  designState.circle_y=Math.max(0,Math.min(Math.round(designState.circle_y),1920-size));
+  const ring=el('designCircleDrag');
+  ring.style.left=(designState.circle_x/1080*100)+'%';
+  ring.style.top=(designState.circle_y/1920*100)+'%';
+  ring.style.width=(size/1080*100)+'%';
+  for(const name of ['tgShuffleBtn','tgSingleBtn']){
+    const active=(name==='tgShuffleBtn'?'shuffle':'single')===designState.background_mode;
+    el(name).classList.toggle('active',active);
+  }
+  el('tgBgDescription').textContent=designState.background_mode==='shuffle'?
+    'Каждое новое видео получает следующий фон из всех включённых. Если включён только один, он повторяется.':
+    'Каждый кружок получит именно выбранный фон, пока ты не изменишь настройку.';
   el('circleScaleValue').textContent=size;
   el('bannerScaleValue').textContent=designState.banner_width;
   for(const circle of [el('designCircleVideo'),el('designCirclePlaceholder')]){
     circle.style.width=(size/1080*100)+'%';
-    circle.style.top=(90/1920*100)+'%';
+    circle.style.top=(designState.circle_y/1920*100)+'%';
+    circle.style.left=(designState.circle_x/1080*100)+'%';
+    circle.style.transform='none';
   }
   clampBanner();
   for(const id of ['designBanner','designBannerVideo']){
@@ -178,8 +195,16 @@ function saveRenderDesign(){
   }).catch(err=>designStatus('Ошибка сохранения: '+err.message));
   return designSaveQueue;
 }
+function setTelegramBgMode(mode){
+  designState.background_mode=mode==='single'?'single':'shuffle';
+  if(designState.background_mode==='single')
+    designState.background_name=el('designBgSelect').value;
+  updateDesignPreview();saveRenderDesign();
+}
 function selectDesignBackground(){
   const value=el('designBgSelect').value;
+  designState.background_name=value;
+  saveRenderDesign();
   const video=el('designBgVideo');
   if(value){
     const next=api+'/backgrounds/'+encodeURIComponent(value)+'/preview';
@@ -190,7 +215,7 @@ function selectDesignBackground(){
 function updateDesignBackgroundChoices(bgs){
   const sel=el('designBgSelect');
   const names=bgs.filter(b=>b.enabled).map(b=>b.name);
-  const current=sel.value;
+  const current=sel.value||designState.background_name;
   const signature=names.join('|');
   if(sel.dataset.signature===signature)return;
   sel.dataset.signature=signature;
@@ -202,8 +227,14 @@ function updateDesignBackgroundChoices(bgs){
       const opt=document.createElement('option');opt.value=name;opt.textContent=name;sel.append(opt);
     }
     sel.value=names.includes(current)?current:names[0];
+    if(!designState.background_name)designState.background_name=sel.value;
   }
-  selectDesignBackground();
+  const value=sel.value,video=el('designBgVideo');
+  if(value){
+    const next=api+'/backgrounds/'+encodeURIComponent(value)+'/preview';
+    if(video.getAttribute('src')!==next){video.src=next;video.load();}
+    video.play().catch(()=>{});
+  }else{video.removeAttribute('src');video.load();}
 }
 function loadBannerPreview(){
   const img=el('designBanner');
@@ -244,6 +275,12 @@ async function loadDesign(){
   try{
     const d=await request('/design');
     Object.assign(designState,d.design);
+    if(designState.background_name){
+      const select=el('designBgSelect');
+      if([...select.options].some(option=>option.value===designState.background_name)){
+        select.value=designState.background_name;selectDesignBackground();
+      }
+    }
     bannerAvailable=d.banner_available;
     bannerKind=d.banner_kind||'image';
     updateDesignPreview();
@@ -281,6 +318,38 @@ function initDesignControls(){
     designState.circle_size=Number(e.target.value);updateDesignPreview();
   });
   el('circleScale').addEventListener('change',saveRenderDesign);
+  const circle=el('designCircleDrag');
+  let circleStart=null;
+  circle.addEventListener('pointerdown',event=>{
+    event.preventDefault();
+    const box=el('designPreview').getBoundingClientRect();
+    circleStart={
+      pointer:event.pointerId,resize:!!event.target.closest('[data-resize="circle"]'),
+      cx:event.clientX,cy:event.clientY,
+      x:designState.circle_x,y:designState.circle_y,
+      size:designState.circle_size,w:box.width,h:box.height
+    };
+    circle.setPointerCapture(event.pointerId);
+  });
+  circle.addEventListener('pointermove',event=>{
+    if(!circleStart||circleStart.pointer!==event.pointerId)return;
+    const dx=(event.clientX-circleStart.cx)*1080/circleStart.w;
+    const dy=(event.clientY-circleStart.cy)*1920/circleStart.h;
+    if(circleStart.resize){
+      const next=Math.max(400,Math.min(1080,Math.round((circleStart.size+Math.max(dx,dy))/10)*10));
+      designState.circle_size=next;
+    }else{
+      designState.circle_x=circleStart.x+dx;
+      designState.circle_y=circleStart.y+dy;
+    }
+    updateDesignPreview();
+  });
+  const endCircle=event=>{
+    if(!circleStart||circleStart.pointer!==event.pointerId)return;
+    circleStart=null;saveRenderDesign();
+  };
+  circle.addEventListener('pointerup',endCircle);
+  circle.addEventListener('pointercancel',endCircle);
   el('bannerScale').addEventListener('input',e=>{
     designState.banner_width=Number(e.target.value);updateDesignPreview();
   });
