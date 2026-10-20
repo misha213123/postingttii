@@ -65,6 +65,30 @@ class TelegramRenderDesignTests(unittest.TestCase):
             self.assertEqual(args[args.index("-loop")+1], "1")
             self.assertIn("0:a?", args)
 
+    def test_video_banner_repeats_frames_but_keeps_only_telegram_audio(self):
+        for extension in (".mp4", ".webm"):
+            with self.subTest(extension=extension), tempfile.TemporaryDirectory() as folder:
+                banner = Path(folder) / ("ad" + extension)
+                banner.write_bytes(b"mock-video")
+                d = studio.RenderDesign(
+                    banner_enabled=True, banner_x=120,
+                    banner_y=1460, banner_width=610,
+                )
+                with (
+                    patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+                    patch.object(studio.subprocess, "run") as run,
+                ):
+                    studio.render(Path("circle.mp4"), Path("bg.mp4"), Path("reel.mp4"), d, banner)
+                args = run.call_args.args[0]
+                graph = args[args.index("-filter_complex") + 1]
+                self.assertEqual(args.count("-i"), 3)
+                self.assertEqual(args.count("-stream_loop"), 2)  # background + video banner
+                self.assertNotIn("-loop", args)
+                self.assertIn("overlay=120:1460", graph)
+                self.assertEqual(args[args.index("-map") + 1], "[v]")
+                self.assertEqual(args[args.index("-map", args.index("-map")+1) + 1], "0:a?")
+                self.assertIn(str(banner), args)
+
     def test_missing_enabled_banner_fails_before_running_ffmpeg(self):
         with (
             patch.object(studio, "duration", side_effect=[5.0, 12.0]),
@@ -116,6 +140,61 @@ class TelegramDesignApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(removed["banner_available"])
                 self.assertFalse(removed["design"]["banner_enabled"])
                 self.assertEqual(studio.config()["channels"], ["mychannel"])
+
+    async def test_video_upload_keeps_original_file_and_detects_kind(self):
+        import json
+        from types import SimpleNamespace
+        for ext in (".mp4", ".webm"):
+            with self.subTest(ext=ext), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                banner_folder = root / "banners"
+                banner_folder.mkdir()
+                conf = root / "config.json"
+                conf.write_text('{"channels":["keep"]}', encoding="utf-8")
+                probe_result = SimpleNamespace(stdout=json.dumps({
+                    "streams":[{"codec_type":"video","width":720,"height":200}],
+                    "format":{"duration":"5.0"}
+                }))
+                with (
+                    patch.object(studio, "CONFIG", conf),
+                    patch.object(studio, "BANNERS", banner_folder),
+                    patch.object(studio.subprocess, "run", return_value=probe_result) as probe,
+                    patch.dict(studio.JOB, {"status": "idle"}),
+                ):
+                    uploaded = await studio.upload_banner(
+                        UploadFile(filename="ad"+ext, file=BytesIO(b"video-bytes"))
+                    )
+                    self.assertTrue(uploaded["banner_available"])
+                    self.assertEqual(uploaded["banner_kind"], "video")
+                    self.assertEqual(studio.current_banner().suffix, ext)
+                    self.assertEqual(studio.current_banner().read_bytes(), b"video-bytes")
+                    self.assertEqual(studio.config()["channels"], ["keep"])
+                    preview = studio.banner_preview()
+                    self.assertEqual(preview.media_type, "video/mp4" if ext==".mp4" else "video/webm")
+                    self.assertIn("ffprobe", probe.call_args.args[0])
+                    removed = studio.delete_banner()
+                    self.assertIsNone(removed["banner_kind"])
+
+    async def test_rejects_invalid_video_without_activating_it(self):
+        from subprocess import CalledProcessError
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            banner_folder=root/"banners"
+            banner_folder.mkdir()
+            conf=root/"config.json"
+            with (
+                patch.object(studio, "CONFIG", conf),
+                patch.object(studio, "BANNERS", banner_folder),
+                patch.object(studio.subprocess, "run", side_effect=CalledProcessError(1, "ffprobe")),
+                patch.dict(studio.JOB, {"status": "idle"}),
+            ):
+                with self.assertRaises(HTTPException) as err:
+                    await studio.upload_banner(
+                        UploadFile(filename="broken.mp4",file=BytesIO(b"not-real-mp4"))
+                    )
+                self.assertEqual(err.exception.status_code, 400)
+                self.assertFalse(list(banner_folder.iterdir()))
+                self.assertFalse(conf.exists())
 
     async def test_bad_file_rejected_without_mutating_studio(self):
         with tempfile.TemporaryDirectory() as folder:
