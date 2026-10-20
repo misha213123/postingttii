@@ -76,7 +76,8 @@
       <img class="preview-banner" id="designBanner" alt="Перемещаемый рекламный баннер" draggable="false">
       <video class="preview-banner" id="designBannerVideo" aria-label="Перемещаемый видео-баннер" autoplay muted playsinline loop preload="metadata"></video>
     </div>
-    <div class="muted" id="designHint">Превью использует последний скачанный кружок и выбранный фон</div>
+    <div class="muted" id="designHint">Превью использует последний скачанный кружок и выбранный фон. Если кружка ещё нет, можно выбрать видео с ПК — оно не загружается на сервер.</div>
+    <input type="file" id="tgPreviewSampleInput" accept="video/mp4,video/webm" aria-label="Локальное видео для предпросмотра Telegram-кружка">
   </div>
   <div class="design-controls">
     <div class="editor-subtitle">Фоны Telegram</div>
@@ -225,6 +226,7 @@ function updateDesignPreview(){
 
 let chromaPicking=false;
 let chromaLastFrame=0;
+let tgPreviewSampleURL=null;
 const chromaScratch=document.createElement('canvas');
 chromaScratch.width=320;
 chromaScratch.height=320;
@@ -515,6 +517,18 @@ function initDesignControls(){
   });
   el('chromaBlend').addEventListener('change',saveRenderDesign);
   el('chromaPickOverlay').addEventListener('click',pickedChromaColor);
+  el('tgPreviewSampleInput').addEventListener('change',event=>{
+    const file=event.target.files?.[0];
+    if(!file)return;
+    if(tgPreviewSampleURL)URL.revokeObjectURL(tgPreviewSampleURL);
+    tgPreviewSampleURL=URL.createObjectURL(file);
+    toggleChromaPicker(false);
+    sampleCircleLoaded=false;
+    const sample=el('designCircleVideo');
+    sample.src=tgPreviewSampleURL;
+    sample.load();
+    el('chromaPickStatus').textContent='Пример загружается. После загрузки нажми «Пипетка» и выбери цвет.';
+  });
   window.addEventListener('keydown',e=>{
     if(e.key==='Escape'&&chromaPicking)toggleChromaPicker(false);
   });
