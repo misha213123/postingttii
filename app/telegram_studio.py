@@ -118,6 +118,9 @@ class RenderDesign(BaseModel):
     background_mode: Literal["shuffle", "single"] = "shuffle"
     background_name: str = ""
     chromakey_enabled: bool = False
+    chromakey_color: str = Field(default="#00ff00", pattern=r"^#[0-9A-Fa-f]{6}$")
+    chromakey_similarity: float = Field(default=0.20, ge=0.01, le=1.0)
+    chromakey_blend: float = Field(default=0.07, ge=0.0, le=1.0)
     banner_enabled: bool = False
     banner_x: int = Field(default=270, ge=0, le=1080)
     banner_y: int = Field(default=1550, ge=0, le=1920)
@@ -544,7 +547,11 @@ def render(
     size = design.circle_size
     center = size // 2
     radius_squared = center * center
-    keyed = "chromakey=0x00ff00:0.20:0.07," if design.chromakey_enabled else ""
+    keyed = (
+        f"chromakey=0x{design.chromakey_color[1:]}:"
+        f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
+        if design.chromakey_enabled else ""
+    )
     # Preserve the chromakey alpha in the circular mask instead of overwriting
     # it. Without chromakey, alpha(X,Y) is opaque inside the circle.
     circle_filter = (
