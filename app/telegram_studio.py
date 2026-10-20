@@ -126,7 +126,7 @@ def saved_design() -> RenderDesign:
 def current_banner(data=None) -> Path | None:
     d = data if data is not None else config()
     name = d.get("banner_file", "")
-    if not isinstance(name, str) or not re.fullmatch(r"[a-f0-9]{32}[.]png", name):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-f0-9]{32}[.](?:png|mp4|webm)", name):
         return None
     path = BANNERS / name
     return path if path.is_file() else None
@@ -134,9 +134,11 @@ def current_banner(data=None) -> Path | None:
 
 def design_response():
     d = config()
+    banner = current_banner(d)
     return {
         "design": RenderDesign.model_validate(d.get("render_design", {})).model_dump(),
-        "banner_available": current_banner(d) is not None,
+        "banner_available": banner is not None,
+        "banner_kind": "video" if banner and banner.suffix in {".mp4", ".webm"} else ("image" if banner else None),
     }
 
 
@@ -160,31 +162,77 @@ def banner_preview():
     path = current_banner()
     if not path:
         raise HTTPException(404, "Баннер не загружен")
-    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
+    media_type = {".png": "image/png", ".mp4": "video/mp4", ".webm": "video/webm"}[path.suffix]
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-store"})
+
+
+def validate_video_banner(path: Path) -> None:
+    """Reject uploads without a decodable video stream or reasonable dimensions."""
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_type,width,height:format=duration",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=20, check=True,
+        )
+        info = json.loads(probe.stdout)
+        streams = info.get("streams", [])
+        if not streams or streams[0].get("codec_type") != "video":
+            raise ValueError("В файле нет видеодорожки")
+        width, height = int(streams[0].get("width", 0)), int(streams[0].get("height", 0))
+        if not (16 <= width <= 3840 and 16 <= height <= 3840):
+            raise ValueError("Размер видео-баннера должен быть от 16 до 3840 пикселей")
+        seconds = float(info.get("format", {}).get("duration", 0))
+        if not (0 < seconds <= 600):
+            raise ValueError("Продолжительность баннера должна быть от 0 до 600 секунд")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, f"Некорректный видео-баннер или FFprobe недоступен: {exc}") from exc
 
 
 @router.post("/banner")
 async def upload_banner(file: UploadFile = File(...)):
     if JOB["status"] == "running":
         raise HTTPException(409, "Нельзя изменять баннер во время рендера")
-    if not file.filename or Path(file.filename).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
-        raise HTTPException(400, "Загрузи PNG, JPG или WEBP")
-    data = await file.read(10 * 1024 * 1024 + 1)
-    if len(data) > 10 * 1024 * 1024:
-        raise HTTPException(413, "Баннер больше 10 МБ")
-    try:
-        with Image.open(BytesIO(data)) as image:
-            image.verify()
-        with Image.open(BytesIO(data)) as original:
-            original.load()
-            if original.width < 16 or original.height < 16 or original.width > 6000 or original.height > 6000:
-                raise ValueError("Размер баннера должен быть от 16 до 6000 пикселей")
-            picture = original.convert("RGBA")
-    except (ValueError, UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
-        raise HTTPException(400, f"Не удалось прочитать баннер: {exc}") from exc
-    name = uuid.uuid4().hex + ".png"
-    dest = BANNERS / name
-    picture.save(dest, "PNG")
+    suffix = Path(file.filename or "").suffix.lower()
+    allowed_images = {".png", ".jpg", ".jpeg", ".webp"}
+    allowed_videos = {".mp4", ".webm"}
+    if suffix not in allowed_images | allowed_videos:
+        raise HTTPException(400, "Загрузи баннер PNG, JPG, WEBP, MP4 или WebM")
+
+    if suffix in allowed_images:
+        data = await file.read(10 * 1024 * 1024 + 1)
+        if len(data) > 10 * 1024 * 1024:
+            raise HTTPException(413, "Изображение больше 10 МБ")
+        try:
+            with Image.open(BytesIO(data)) as image:
+                image.verify()
+            with Image.open(BytesIO(data)) as original:
+                original.load()
+                if original.width < 16 or original.height < 16 or original.width > 6000 or original.height > 6000:
+                    raise ValueError("Размер баннера должен быть от 16 до 6000 пикселей")
+                picture = original.convert("RGBA")
+        except (ValueError, UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+            raise HTTPException(400, f"Не удалось прочитать изображение баннера: {exc}") from exc
+        name = uuid.uuid4().hex + ".png"
+        picture.save(BANNERS / name, "PNG")
+    else:
+        # Stream to disk to avoid keeping an entire video in application memory.
+        name = uuid.uuid4().hex + suffix
+        dest = BANNERS / name
+        total = 0
+        try:
+            with dest.open("wb") as output:
+                while chunk := await file.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > 100 * 1024 * 1024:
+                        raise HTTPException(413, "Видео-баннер больше 100 МБ")
+                    output.write(chunk)
+            validate_video_banner(dest)
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise
+
     d = config()
     d["banner_file"] = name
     save(d)
@@ -502,7 +550,12 @@ def render(
     if design.banner_enabled:
         if not banner or not banner.is_file():
             raise ValueError("Включён рекламный баннер, но файл не загружен")
-        cmd += ["-loop", "1", "-i", str(banner)]
+        if banner.suffix.lower() in {".mp4", ".webm"}:
+            # Repeat the ad animation until the original Telegram circle ends.
+            # No banner audio is mapped to the output.
+            cmd += ["-stream_loop", "-1", "-i", str(banner)]
+        else:
+            cmd += ["-loop", "1", "-i", str(banner)]
         filter_chain += (
             f"[2:v]format=rgba,scale={design.banner_width}:-1:flags=lanczos[banner];"
             f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
