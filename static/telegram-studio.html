@@ -38,6 +38,17 @@
 #igLayoutBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;border-radius:0;pointer-events:none}
 .editor-note{font-size:12px;color:#a6bddd;line-height:1.45}
 .design-preview{box-shadow:0 14px 40px #0009}
+/* Color-key picker; transparent canvas approximates FFmpeg output. */
+.design-preview>.preview-chroma{pointer-events:none;z-index:2;background:transparent}
+.chroma-pick-overlay{position:absolute;inset:0;z-index:10;cursor:crosshair;background:#54c7ff16;border:2px dashed #8bd7ff;touch-action:none}
+.chroma-pick-overlay[hidden]{display:none}
+.chroma-pick-overlay .tip{position:absolute;bottom:12px;left:10px;right:10px;padding:8px;background:#071427d9;color:#deefff;border-radius:10px;text-align:center;font-size:12px}
+.chroma-panel{padding:14px;border-radius:14px;background:#111f38;border:1px solid #3c5379;display:grid;gap:12px}
+.chroma-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.chroma-controls input[type=color]{width:52px;height:42px;padding:3px;cursor:pointer;border-radius:10px;background:#243e64}
+.chroma-controls code{letter-spacing:1px;font-size:13px;color:#e5f2ff}
+#chromaPickButton.active{background:linear-gradient(125deg,#326d93,#405fcf);border-color:#92d3ff}
+
 </style></head><body><main>
 <header><div><a href="/">← Вернуться к PostingTTII</a><h1>◉ Telegram Studio</h1><div class="muted">Кружки Telegram → случайный фон → готовые Reels</div></div><span class="pill" id="health">Проверка системы...</span></header>
 <div class="layout">
@@ -55,9 +66,13 @@
     <div class="design-preview" id="designPreview" aria-label="Макет готового вертикального видео 9 на 16">
       <video class="preview-background" id="designBgVideo" muted playsinline loop preload="metadata"></video>
       <video class="preview-circle" id="designCircleVideo" muted playsinline loop preload="metadata" style="display:none"></video>
+      <canvas class="preview-circle preview-chroma" id="chromaPreviewCanvas" width="320" height="320" style="display:none" aria-hidden="true"></canvas>
       <div class="preview-circle preview-placeholder" id="designCirclePlaceholder">Telegram<br>кружок</div>
       <div class="safe-area"></div>
       <div id="designCircleDrag" class="editor-drag-circle" title="Тяни кружок; за нижний угол меняй размер"><span class="editor-handle" data-resize="circle"></span></div>
+      <div id="chromaPickOverlay" class="chroma-pick-overlay" hidden aria-label="Выбери цвет на кадре кружка">
+        <div class="tip">Пипетка включена · нажми на цвет внутри кружка</div>
+      </div>
       <img class="preview-banner" id="designBanner" alt="Перемещаемый рекламный баннер" draggable="false">
       <video class="preview-banner" id="designBannerVideo" aria-label="Перемещаемый видео-баннер" autoplay muted playsinline loop preload="metadata"></video>
     </div>
@@ -72,8 +87,21 @@
     <div class="design-field"><label for="circleScale">Диаметр: <span id="circleScaleValue">1040</span> px</label>
       <input id="circleScale" type="range" min="400" max="1080" step="10" value="1040">
       <span class="editor-note">Тяни кружок по видео. Размер меняется ползунком или за белый маркер на окружности.</span></div>
-    <label class="design-check"><input type="checkbox" id="chromakeyEnabled">Удалять зелёный фон (хромакей)</label>
-    <span class="muted">По умолчанию хромакей выключен. Если включить, при рендере удаляется зелёный цвет внутри кружка; в живом превью удаление цвета приблизительное.</span>
+    <div class="chroma-panel">
+      <label class="design-check"><input type="checkbox" id="chromakeyEnabled">Удалять выбранный цвет (хромакей)</label>
+      <div class="editor-subtitle">Пипетка · цвет удаления</div>
+      <div class="chroma-controls">
+        <button id="chromaPickButton" type="button" onclick="toggleChromaPicker()" aria-pressed="false">◉ Пипетка — выбрать на видео</button>
+        <input id="chromaColor" type="color" value="#00ff00" aria-label="Выбрать цвет вручную">
+        <code id="chromaColorHex">#00FF00</code>
+      </div>
+      <div class="design-field"><label for="chromaSimilarity">Чувствительность: <span id="chromaSimilarityValue">20</span>%</label>
+        <input id="chromaSimilarity" type="range" min="1" max="100" step="1" value="20"></div>
+      <div class="design-field"><label for="chromaBlend">Мягкость краёв: <span id="chromaBlendValue">7</span>%</label>
+        <input id="chromaBlend" type="range" min="0" max="100" step="1" value="7"></div>
+      <span class="editor-note" id="chromaPickStatus" aria-live="polite">Нажми «Пипетка», затем кликни по цвету на кружке. Можно выбрать любой оттенок или задать его вручную.</span>
+      <span class="editor-note">Предпросмотр удаления цвета приблизительный; точный результат рассчитывает FFmpeg при монтаже. Слишком высокая чувствительность может удалять похожие цвета на самом видео.</span>
+    </div>
     <label class="design-check"><input type="checkbox" id="bannerEnabled">Добавить рекламный баннер</label>
     <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
     <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
@@ -136,7 +164,8 @@ function notify(e){alert(e.message||String(e))}
 const designState={
   circle_size:1040,circle_x:20,circle_y:90,
   background_mode:'shuffle',background_name:'',
-  chromakey_enabled:false,banner_enabled:false,
+  chromakey_enabled:false,chromakey_color:'#00ff00',
+  chromakey_similarity:.20,chromakey_blend:.07,banner_enabled:false,
   banner_x:270,banner_y:1550,banner_width:540
 };
 let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
@@ -164,7 +193,7 @@ function updateDesignPreview(){
     'Каждый кружок получит именно выбранный фон, пока ты не изменишь настройку.';
   el('circleScaleValue').textContent=size;
   el('bannerScaleValue').textContent=designState.banner_width;
-  for(const circle of [el('designCircleVideo'),el('designCirclePlaceholder')]){
+  for(const circle of [el('designCircleVideo'),el('designCirclePlaceholder'),el('chromaPreviewCanvas')]){
     circle.style.width=(size/1080*100)+'%';
     circle.style.top=(designState.circle_y/1920*100)+'%';
     circle.style.left=(designState.circle_x/1080*100)+'%';
@@ -183,6 +212,15 @@ function updateDesignPreview(){
   el('bannerScale').value=designState.banner_width;
   el('circleScale').value=size;
   el('chromakeyEnabled').checked=designState.chromakey_enabled;
+  el('chromaColor').value=designState.chromakey_color;
+  el('chromaColorHex').textContent=designState.chromakey_color.toUpperCase();
+  el('chromaSimilarity').value=Math.round(designState.chromakey_similarity*100);
+  el('chromaBlend').value=Math.round(designState.chromakey_blend*100);
+  el('chromaSimilarityValue').textContent=Math.round(designState.chromakey_similarity*100);
+  el('chromaBlendValue').textContent=Math.round(designState.chromakey_blend*100);
+  const previewReady=sampleCircleLoaded&&designState.chromakey_enabled;
+  el('chromaPreviewCanvas').style.display=previewReady?'block':'none';
+  el('designCircleVideo').style.opacity=previewReady?'0':'1';
 }
 function saveRenderDesign(){
   const snapshot={...designState};
