@@ -25,27 +25,50 @@ class TelegramRenderDesignTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             studio.RenderDesign(banner_width=0)
 
-    def test_chromakey_color_can_be_any_hex_rgb(self):
-        for color in ("#2078ca", "#ffffff", "#171717", "#FF00A4"):
-            with self.subTest(color=color), (
-                patch.object(studio, "duration", side_effect=[8.0, 20.0]),
-                patch.object(studio.subprocess, "run") as run,
-            ):
-                design = studio.RenderDesign(
-                    chromakey_enabled=True, chromakey_color=color,
-                    chromakey_similarity=0.31, chromakey_blend=0.13,
-                )
-                studio.render(
-                    Path("tg-circle.mp4"), Path("background.mp4"),
-                    Path("render.mp4"), design,
-                )
-                args = run.call_args.args[0]
-                filter_graph = args[args.index("-filter_complex") + 1]
-                self.assertIn(
-                    "chromakey=0x" + color[1:] + ":0.310:0.130,",
-                    filter_graph,
-                )
-                self.assertIn("0:a?", args)
+    def test_chromakey_color_only_affects_ad_banner_not_circle(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "promo.mp4"
+            banner.write_bytes(b"mock banner")
+            for color in ("#2078ca", "#ffffff", "#171717", "#FF00A4"):
+                with self.subTest(color=color), (
+                    patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+                    patch.object(studio.subprocess, "run") as run,
+                ):
+                    design = studio.RenderDesign(
+                        banner_enabled=True, chromakey_enabled=True,
+                        chromakey_color=color,
+                        chromakey_similarity=0.31, chromakey_blend=0.13,
+                    )
+                    studio.render(
+                        Path("tg-circle.mp4"), Path("background.mp4"),
+                        Path("render.mp4"), design, banner,
+                    )
+                    args = run.call_args.args[0]
+                    graph = args[args.index("-filter_complex") + 1]
+                    self.assertIn(
+                        "chromakey=0x" + color[1:] + ":0.310:0.130,",
+                        graph,
+                    )
+                    circle, rest = graph.split("[circle];", 1)
+                    self.assertNotIn("chromakey=", circle)
+                    self.assertIn("[2:v]", rest)
+                    self.assertIn("chromakey=", rest.split("[2:v]", 1)[1])
+                    self.assertIn("0:a?", args)
+
+    def test_without_banner_chromakey_never_changes_telegram_circle(self):
+        with (
+            patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+            patch.object(studio.subprocess, "run") as run,
+        ):
+            studio.render(
+                Path("tg-circle.mp4"), Path("background.mp4"),
+                Path("render.mp4"), studio.RenderDesign(
+                    chromakey_enabled=True, chromakey_color="#237af0",
+                ),
+            )
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        self.assertNotIn("chromakey=", graph)
 
     def test_default_green_still_applies_for_old_saved_designs(self):
         older = studio.RenderDesign.model_validate({"chromakey_enabled": True})
@@ -101,6 +124,28 @@ class TelegramRenderDesignTests(unittest.TestCase):
             self.assertEqual(args.count("-i"), 3)
             self.assertEqual(args[args.index("-loop")+1], "1")
             self.assertIn("0:a?", args)
+
+    def test_static_png_banner_is_keyed_without_changing_circle(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "promo.png"
+            banner.write_bytes(b"placeholder")
+            with (
+                patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+                patch.object(studio.subprocess, "run") as run,
+            ):
+                studio.render(
+                    Path("circle.mp4"), Path("bg.mp4"), Path("output.mp4"),
+                    studio.RenderDesign(
+                        banner_enabled=True, chromakey_enabled=True,
+                        chromakey_color="#1a4cdd",
+                    ), banner,
+                )
+            args = run.call_args.args[0]
+            graph = args[args.index("-filter_complex") + 1]
+            self.assertIn("[2:v]scale=", graph)
+            self.assertIn("chromakey=0x1a4cdd:0.200:0.070,", graph)
+            self.assertNotIn("chromakey=", graph.split("[circle];")[0])
+            self.assertIn("-loop", args)
 
     def test_video_banner_repeats_frames_but_keeps_only_telegram_audio(self):
         for extension in (".mp4", ".webm"):
