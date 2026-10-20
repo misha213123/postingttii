@@ -31,6 +31,7 @@
       <div class="preview-circle preview-placeholder" id="designCirclePlaceholder">Telegram<br>кружок</div>
       <div class="safe-area"></div>
       <img class="preview-banner" id="designBanner" alt="Перемещаемый рекламный баннер" draggable="false">
+      <video class="preview-banner" id="designBannerVideo" aria-label="Перемещаемый видео-баннер" autoplay muted playsinline loop preload="metadata"></video>
     </div>
     <div class="muted" id="designHint">Превью использует последний скачанный кружок и выбранный фон</div>
   </div>
@@ -42,7 +43,8 @@
     <label class="design-check"><input type="checkbox" id="chromakeyEnabled">Удалять зелёный фон (хромакей)</label>
     <span class="muted">По умолчанию хромакей выключен. Если включить, при рендере удаляется зелёный цвет внутри кружка; в живом превью удаление цвета приблизительное.</span>
     <label class="design-check"><input type="checkbox" id="bannerEnabled">Добавить рекламный баннер</label>
-    <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG или WEBP)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp"></div>
+    <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
+    <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
     <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
       <input id="bannerScale" type="range" min="100" max="1080" step="10" value="540"></div>
     <div class="inline"><button id="resetBannerPosition" type="button" onclick="resetBannerPosition()">Сбросить позицию</button>
@@ -66,7 +68,7 @@ const designState={
   circle_size:1040,chromakey_enabled:false,banner_enabled:false,
   banner_x:270,banner_y:1550,banner_width:540
 };
-let bannerAvailable=false,bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
+let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
 
 function designStatus(message){el('designStatus').textContent=message;}
 function bannerHeightPx(){return designState.banner_width*bannerRatio;}
@@ -83,11 +85,14 @@ function updateDesignPreview(){
     circle.style.top=(90/1920*100)+'%';
   }
   clampBanner();
-  const banner=el('designBanner');
-  banner.style.display=designState.banner_enabled&&bannerAvailable?'block':'none';
-  banner.style.width=(designState.banner_width/1080*100)+'%';
-  banner.style.left=(designState.banner_x/1080*100)+'%';
-  banner.style.top=(designState.banner_y/1920*100)+'%';
+  for(const id of ['designBanner','designBannerVideo']){
+    const banner=el(id);
+    banner.style.display=designState.banner_enabled&&bannerAvailable&&
+      (id==='designBannerVideo'?bannerKind==='video':bannerKind==='image')?'block':'none';
+    banner.style.width=(designState.banner_width/1080*100)+'%';
+    banner.style.left=(designState.banner_x/1080*100)+'%';
+    banner.style.top=(designState.banner_y/1920*100)+'%';
+  }
   el('bannerEnabled').checked=designState.banner_enabled;
   el('bannerScale').value=designState.banner_width;
   el('circleScale').value=size;
@@ -133,19 +138,45 @@ function updateDesignBackgroundChoices(bgs){
 }
 function loadBannerPreview(){
   const img=el('designBanner');
-  if(!bannerAvailable){img.removeAttribute('src');bannerRatio=.25;updateDesignPreview();return;}
-  img.onload=()=>{
-    bannerRatio=img.naturalHeight/img.naturalWidth;
-    updateDesignPreview();
-  };
-  img.onerror=()=>{bannerAvailable=false;designStatus('Не удалось загрузить миниатюру баннера');updateDesignPreview();};
-  img.src=api+'/banner/preview?t='+Date.now();
+  const video=el('designBannerVideo');
+  img.onload=null;img.onerror=null;
+  video.onloadedmetadata=null;video.onerror=null;
+  video.pause();video.removeAttribute('src');video.load();
+  img.removeAttribute('src');
+  bannerRatio=.25;
+  if(!bannerAvailable){updateDesignPreview();return;}
+  const src=api+'/banner/preview?t='+Date.now();
+  if(bannerKind==='video'){
+    video.onloadedmetadata=()=>{
+      if(video.videoWidth&&video.videoHeight)bannerRatio=video.videoHeight/video.videoWidth;
+      updateDesignPreview();
+      video.play().catch(()=>{});
+    };
+    video.onerror=()=>{
+      designStatus('Не удалось воспроизвести видео-баннер. Проверь MP4/WebM в браузере.');
+      updateDesignPreview();
+    };
+    video.src=src;video.load();
+    video.play().catch(()=>{});
+  }else{
+    img.onload=()=>{
+      bannerRatio=img.naturalHeight/img.naturalWidth;
+      updateDesignPreview();
+    };
+    img.onerror=()=>{
+      designStatus('Не удалось загрузить миниатюру баннера');
+      updateDesignPreview();
+    };
+    img.src=src;
+  }
+  updateDesignPreview();
 }
 async function loadDesign(){
   try{
     const d=await request('/design');
     Object.assign(designState,d.design);
     bannerAvailable=d.banner_available;
+    bannerKind=d.banner_kind||'image';
     updateDesignPreview();
     loadBannerPreview();
     designStatus('✓ Оформление загружено');
@@ -168,6 +199,7 @@ async function removeDesignBanner(){
   try{
     const result=await request('/banner',{method:'DELETE'});
     bannerAvailable=result.banner_available;
+    bannerKind=result.banner_kind||'image';
     Object.assign(designState,result.design);
     loadBannerPreview();
     el('bannerFile').value='';
@@ -202,6 +234,7 @@ function initDesignControls(){
       await designSaveQueue;
       const d=await request('/banner',{method:'POST',body});
       bannerAvailable=d.banner_available;
+      bannerKind=d.banner_kind||'image';
       Object.assign(designState,d.design);
       designState.banner_enabled=true;
       loadBannerPreview();
@@ -209,27 +242,28 @@ function initDesignControls(){
       await saveRenderDesign();
     }catch(err){designStatus('Не удалось загрузить баннер: '+err.message);}
   });
-  const banner=el('designBanner');
   let start=null;
-  banner.addEventListener('pointerdown',e=>{
-    if(!bannerAvailable||!designState.banner_enabled)return;
-    e.preventDefault();
-    const rect=el('designPreview').getBoundingClientRect();
-    start={pointer:e.pointerId,cx:e.clientX,cy:e.clientY,x:designState.banner_x,y:designState.banner_y,w:rect.width,h:rect.height};
-    banner.setPointerCapture(e.pointerId);
-  });
-  banner.addEventListener('pointermove',e=>{
-    if(!start||e.pointerId!==start.pointer)return;
-    designState.banner_x=start.x+(e.clientX-start.cx)*1080/start.w;
-    designState.banner_y=start.y+(e.clientY-start.cy)*1920/start.h;
-    updateDesignPreview();
-  });
-  const finish=e=>{
-    if(!start||e.pointerId!==start.pointer)return;
-    start=null;saveRenderDesign();
-  };
-  banner.addEventListener('pointerup',finish);
-  banner.addEventListener('pointercancel',finish);
+  for(const banner of [el('designBanner'),el('designBannerVideo')]){
+    banner.addEventListener('pointerdown',e=>{
+      if(!bannerAvailable||!designState.banner_enabled)return;
+      e.preventDefault();
+      const rect=el('designPreview').getBoundingClientRect();
+      start={pointer:e.pointerId,cx:e.clientX,cy:e.clientY,x:designState.banner_x,y:designState.banner_y,w:rect.width,h:rect.height};
+      banner.setPointerCapture(e.pointerId);
+    });
+    banner.addEventListener('pointermove',e=>{
+      if(!start||e.pointerId!==start.pointer)return;
+      designState.banner_x=start.x+(e.clientX-start.cx)*1080/start.w;
+      designState.banner_y=start.y+(e.clientY-start.cy)*1920/start.h;
+      updateDesignPreview();
+    });
+    const finish=e=>{
+      if(!start||e.pointerId!==start.pointer)return;
+      start=null;saveRenderDesign();
+    };
+    banner.addEventListener('pointerup',finish);
+    banner.addEventListener('pointercancel',finish);
+  }
 }
 
 async function refresh(){
