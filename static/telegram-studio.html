@@ -408,6 +408,7 @@ async function refresh(){
 try{const d=await request('/status');el('health').textContent=(d.ffmpeg_ready?'FFmpeg ✓':'FFmpeg отсутствует')+' · '+(d.telegram_configured?'Telegram API ✓':'Telegram API не настроен');
 el('channels').innerHTML=d.channels.map(c=>'<div class="item"><strong>✈ Telegram · @'+safe(c)+'</strong><div class="actions"><label><input type="checkbox" data-tg-toggle="'+safe(c)+'" '+(!(d.channels_disabled||[]).includes(c)?'checked':'')+'> Вкл.</label><button class="danger" data-channel="'+safe(c)+'">Удалить</button></div></div>').join('');
 updateDesignBackgroundChoices(d.backgrounds);
+ updateIgBackgroundChoices(d.backgrounds);
  const bgSignature=JSON.stringify(d.backgrounds);if(bgSignature!==lastBackgroundSignature){lastBackgroundSignature=bgSignature;el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>'<div class="item"><video preload="none" controls data-preview="'+safe(b.name)+'" poster=""></video><button type="button" data-play="'+safe(b.name)+'">▶ Предпросмотр</button><div><strong>'+safe(b.name)+'</strong><div class="muted">'+b.size_mb+' MB</div></div><div class="actions"><label><input type="checkbox" data-toggle="'+safe(b.name)+'" '+(b.enabled?'checked':'')+'> Вкл.</label><button class="danger" data-bg="'+safe(b.name)+'">×</button></div></div>').join('') :'<div class="empty">Добавь хотя бы один фон</div>'; }
 const j=d.job;el('progress').textContent=j.status+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=(j.errors||[]).join('\n');el('run').disabled=j.status==='running';
 }catch(e){el('log').textContent=e.message}}
@@ -445,6 +446,202 @@ try{await request('/auth/qr/password',{method:'POST',headers:{'Content-Type':'ap
 }
 initDesignControls();loadDesign();refresh();auth();setInterval(refresh,2500);
 const igApi='/api/telegram-studio/instagram';
+
+/* Instagram and Telegram templates stay separate in persistence and rendering. */
+const instagramLayout={
+  video_x:65,video_y:110,video_width:950,video_height:1700,
+  video_opacity:1,background_mode:'shuffle',background_name:''
+};
+let instagramLayoutSave=Promise.resolve();
+let instagramPreviewObjectURL=null;
+let instagramSampleURL='';
+function switchRenderEditor(name){
+  const telegram=name!=='instagram';
+  el('tgEditor').hidden=!telegram;
+  el('igEditor').hidden=telegram;
+  el('tgEditorTab').classList.toggle('active',telegram);
+  el('igEditorTab').classList.toggle('active',!telegram);
+  el('tgEditorTab').setAttribute('aria-selected',String(telegram));
+  el('igEditorTab').setAttribute('aria-selected',String(!telegram));
+  if(!telegram)el('igLayoutVideo').play().catch(()=>{});
+}
+function instagramLayoutStatus(message){el('igLayoutStatus').textContent=message;}
+function updateInstagramLayoutPreview(){
+  const d=instagramLayout;
+  d.video_width=Math.max(240,Math.min(1080,Math.round(d.video_width/10)*10));
+  d.video_height=Math.max(300,Math.min(1920,Math.round(d.video_height/10)*10));
+  d.video_x=Math.max(0,Math.min(Math.round(d.video_x),1080-d.video_width));
+  d.video_y=Math.max(0,Math.min(Math.round(d.video_y),1920-d.video_height));
+  const frame=el('igLayoutDrag');
+  frame.style.left=(d.video_x/1080*100)+'%';
+  frame.style.top=(d.video_y/1920*100)+'%';
+  frame.style.width=(d.video_width/1080*100)+'%';
+  frame.style.height=(d.video_height/1920*100)+'%';
+  el('igLayoutVideo').style.opacity=String(d.video_opacity);
+  el('igVideoScale').value=d.video_width;
+  el('igVideoOpacity').value=d.video_opacity*100;
+  el('igVideoScaleValue').textContent=d.video_width;
+  el('igVideoOpacityValue').textContent=Math.round(d.video_opacity*100);
+  for(const mode of ['shuffle','single','blur','none']){
+    el('igMode'+mode.charAt(0).toUpperCase()+mode.slice(1)).classList.toggle('active',d.background_mode===mode);
+  }
+  const bgVideo=el('igLayoutBg');
+  const blurVideo=el('igLayoutBgBlur');
+  const select=el('igLayoutBgSelect');
+  select.disabled=!['shuffle','single'].includes(d.background_mode);
+  bgVideo.style.display=['shuffle','single'].includes(d.background_mode)?'block':'none';
+  blurVideo.style.display=d.background_mode==='blur'?'block':'none';
+  const stage=el('igLayoutStage');
+  stage.style.background=d.background_mode==='none'?'#050506':'linear-gradient(155deg,#182b43,#080b15)';
+  const info={
+    shuffle:'🔀 Фоны чередуются между роликами из всех включённых MP4.',
+    single:'▣ Все обычные Instagram-видео используют только выбранный фон.',
+    blur:'◌ Фон создаётся из размытой копии самого Instagram-видео.',
+    none:'▯ Без фонового клипа: видео показывается поверх чёрного холста. Для прозрачности используй режим с фоном.'
+  };
+  el('igBgDescription').textContent=info[d.background_mode];
+  updateInstagramBackgroundPreview();
+}
+function saveInstagramLayout(){
+  const snapshot={...instagramLayout};
+  instagramLayoutSave=instagramLayoutSave.catch(()=>{}).then(async()=>{
+    await igRequest('/layout',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(snapshot)
+    });
+    instagramLayoutStatus('✓ Шаблон Instagram сохранён — следующий рендер использует эти настройки.');
+  }).catch(err=>instagramLayoutStatus('Ошибка сохранения Instagram: '+err.message));
+  return instagramLayoutSave;
+}
+function setInstagramBgMode(mode){
+  if(!['shuffle','single','blur','none'].includes(mode))return;
+  instagramLayout.background_mode=mode;
+  if(mode==='single')instagramLayout.background_name=el('igLayoutBgSelect').value;
+  updateInstagramLayoutPreview();saveInstagramLayout();
+}
+function updateInstagramBackgroundPreview(){
+  const chosen=el('igLayoutBgSelect').value;
+  const bg=el('igLayoutBg');
+  if(chosen&&['shuffle','single'].includes(instagramLayout.background_mode)){
+    const url=api+'/backgrounds/'+encodeURIComponent(chosen)+'/preview';
+    if(bg.getAttribute('src')!==url){bg.src=url;bg.load();}
+    bg.play().catch(()=>{});
+  }else{bg.pause();}
+  const blur=el('igLayoutBgBlur');
+  if(instagramLayout.background_mode==='blur'&&instagramSampleURL){
+    if(blur.getAttribute('src')!==instagramSampleURL){blur.src=instagramSampleURL;blur.load();}
+    blur.play().catch(()=>{});
+  }else{blur.pause();}
+}
+function updateIgBackgroundChoices(backgrounds){
+  const sel=el('igLayoutBgSelect');
+  const names=backgrounds.filter(bg=>bg.enabled).map(bg=>bg.name);
+  const signature=names.join('|');
+  const previous=sel.value||instagramLayout.background_name;
+  if(sel.dataset.signature!==signature){
+    sel.dataset.signature=signature;
+    sel.replaceChildren();
+    if(!names.length){
+      const option=document.createElement('option');option.value='';option.textContent='Нет активных фонов';sel.append(option);
+    }
+    for(const name of names){
+      const option=document.createElement('option');option.value=name;option.textContent=name;
+      sel.append(option);
+    }
+    sel.value=names.includes(previous)?previous:(names[0]||'');
+  }
+  updateInstagramBackgroundPreview();
+}
+async function loadInstagramLayout(){
+  try{
+    const d=await igRequest('/layout');
+    Object.assign(instagramLayout,d.layout);
+    const sel=el('igLayoutBgSelect');
+    if([...sel.options].some(o=>o.value===instagramLayout.background_name))
+      sel.value=instagramLayout.background_name;
+    updateInstagramLayoutPreview();
+    instagramLayoutStatus('✓ Отдельный шаблон Instagram загружен');
+  }catch(err){instagramLayoutStatus('Ошибка загрузки шаблона: '+err.message);}
+  const sample=el('igLayoutVideo');
+  sample.addEventListener('loadedmetadata',()=>{
+    el('igLayoutFallback').style.display='none';
+    sample.play().catch(()=>{});
+    updateInstagramBackgroundPreview();
+  });
+  sample.addEventListener('error',()=>{
+    el('igLayoutFallback').style.display='grid';
+  });
+  instagramSampleURL=igApi+'/sample/preview';
+  sample.src=instagramSampleURL;
+  sample.load();
+}
+function resetInstagramPosition(){
+  instagramLayout.video_width=950;instagramLayout.video_height=1700;
+  instagramLayout.video_x=65;instagramLayout.video_y=110;
+  updateInstagramLayoutPreview();saveInstagramLayout();
+}
+function initInstagramLayoutControls(){
+  const selector=el('igLayoutBgSelect');
+  selector.addEventListener('change',()=>{
+    instagramLayout.background_name=selector.value;
+    updateInstagramBackgroundPreview();saveInstagramLayout();
+  });
+  el('igVideoScale').addEventListener('input',e=>{
+    const factor=Number(e.target.value)/instagramLayout.video_width;
+    instagramLayout.video_width=Number(e.target.value);
+    instagramLayout.video_height=Math.round(instagramLayout.video_height*factor);
+    updateInstagramLayoutPreview();
+  });
+  el('igVideoScale').addEventListener('change',saveInstagramLayout);
+  el('igVideoOpacity').addEventListener('input',e=>{
+    instagramLayout.video_opacity=Number(e.target.value)/100;updateInstagramLayoutPreview();
+  });
+  el('igVideoOpacity').addEventListener('change',saveInstagramLayout);
+  el('igLayoutSampleInput').addEventListener('change',e=>{
+    const file=e.target.files?.[0];if(!file)return;
+    if(instagramPreviewObjectURL)URL.revokeObjectURL(instagramPreviewObjectURL);
+    instagramPreviewObjectURL=URL.createObjectURL(file);
+    instagramSampleURL=instagramPreviewObjectURL;
+    const video=el('igLayoutVideo');video.src=instagramSampleURL;video.load();
+    updateInstagramBackgroundPreview();
+  });
+  const frame=el('igLayoutDrag');
+  let drag=null;
+  frame.addEventListener('pointerdown',event=>{
+    event.preventDefault();
+    const rect=el('igLayoutStage').getBoundingClientRect();
+    drag={
+      pointer:event.pointerId,resize:!!event.target.closest('[data-resize="instagram"]'),
+      clientX:event.clientX,clientY:event.clientY,
+      x:instagramLayout.video_x,y:instagramLayout.video_y,
+      w:instagramLayout.video_width,h:instagramLayout.video_height,
+      rectWidth:rect.width,rectHeight:rect.height
+    };
+    frame.setPointerCapture(event.pointerId);
+  });
+  frame.addEventListener('pointermove',event=>{
+    if(!drag||drag.pointer!==event.pointerId)return;
+    const dx=(event.clientX-drag.clientX)*1080/drag.rectWidth;
+    const dy=(event.clientY-drag.clientY)*1920/drag.rectHeight;
+    if(drag.resize){
+      instagramLayout.video_width=drag.w+dx;
+      instagramLayout.video_height=drag.h+dy;
+    }else{
+      instagramLayout.video_x=drag.x+dx;
+      instagramLayout.video_y=drag.y+dy;
+    }
+    updateInstagramLayoutPreview();
+  });
+  const done=event=>{
+    if(!drag||drag.pointer!==event.pointerId)return;
+    drag=null;saveInstagramLayout();
+  };
+  frame.addEventListener('pointerup',done);
+  frame.addEventListener('pointercancel',done);
+}
+initInstagramLayoutControls();
+loadInstagramLayout();
+
 async function igRequest(path,opts){const r=await fetch(igApi+path,opts);const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));return d}
 async function igRefresh(){try{const d=await igRequest('/status');el('igSessionState').textContent=d.session_connected?'✓ Сессия подключена':'Сессия не подключена';el('igAccounts').innerHTML=d.accounts.map(a=>'<div class="item"><strong>◎ Instagram · @'+safe(a.split('/').filter(Boolean).pop())+'</strong><div class="actions"><label><input type="checkbox" data-ig-toggle="'+safe(a.split('/').filter(Boolean).pop())+'" '+(!(d.disabled||[]).includes(a)?'checked':'')+'> Вкл.</label><button class="danger" data-ig-remove="'+safe(a.split('/').filter(Boolean).pop())+'">Удалить</button></div></div>').join('');el('igProgress').textContent=d.job.status+' · готово '+d.job.done+' / '+d.job.total+' · ранее обработано '+d.processed_count;el('igLog').textContent=(d.job.errors||[]).join('\n');el('igRun').disabled=d.job.status==='running'}catch(e){el('igLog').textContent=e.message}}
 
@@ -452,7 +649,7 @@ el('igAdd').onsubmit=async e=>{e.preventDefault();try{await igRequest('/accounts
 async function igOpenChrome(){try{const d=await igRequest('/chrome/open',{method:'POST'});alert(d.message)}catch(e){notify(e)}}
 async function igSessionConnect(){try{const file=el('igSessionFile').files[0];if(!file)throw Error('Выбери .session файл');const form=new FormData();form.append('file',file);await igRequest('/session',{method:'POST',body:form});await igRefresh()}catch(e){notify(e)}}
 async function igSessionDisconnect(){try{await igRequest('/session',{method:'DELETE'});await igRefresh()}catch(e){notify(e)}}
-async function igRun(){try{await igRequest('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_account:Number(el('igLimit').value)})});await igRefresh()}catch(e){notify(e)}}
+async function igRun(){try{await instagramLayoutSave;await igRequest('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_account:Number(el('igLimit').value)})});await igRefresh()}catch(e){notify(e)}}
 document.addEventListener('click',async e=>{if(e.target.dataset.igRemove){try{await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igRemove),{method:'DELETE'});await igRefresh()}catch(err){notify(err)}}});
 document.addEventListener('change',async e=>{try{if(e.target.dataset.tgToggle){await request('/channels/'+encodeURIComponent(e.target.dataset.tgToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}if(e.target.dataset.igToggle){await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await igRefresh()}}catch(err){notify(err);await refresh();await igRefresh()}});
 igRefresh();setInterval(igRefresh,2500);
