@@ -61,10 +61,182 @@ const el=id=>document.getElementById(id);
 const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function request(path,opts){const r=await fetch(api+path,opts);const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));return d}
 function notify(e){alert(e.message||String(e))}
+
+const designState={
+  circle_size:1040,chromakey_enabled:false,banner_enabled:false,
+  banner_x:270,banner_y:1550,banner_width:540
+};
+let bannerAvailable=false,bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
+
+function designStatus(message){el('designStatus').textContent=message;}
+function bannerHeightPx(){return designState.banner_width*bannerRatio;}
+function clampBanner(){
+  designState.banner_x=Math.max(0,Math.min(Math.round(designState.banner_x),Math.max(0,1080-designState.banner_width)));
+  designState.banner_y=Math.max(0,Math.min(Math.round(designState.banner_y),Math.max(0,1920-bannerHeightPx())));
+}
+function updateDesignPreview(){
+  const size=designState.circle_size;
+  el('circleScaleValue').textContent=size;
+  el('bannerScaleValue').textContent=designState.banner_width;
+  for(const circle of [el('designCircleVideo'),el('designCirclePlaceholder')]){
+    circle.style.width=(size/1080*100)+'%';
+    circle.style.top=(90/1920*100)+'%';
+  }
+  clampBanner();
+  const banner=el('designBanner');
+  banner.style.display=designState.banner_enabled&&bannerAvailable?'block':'none';
+  banner.style.width=(designState.banner_width/1080*100)+'%';
+  banner.style.left=(designState.banner_x/1080*100)+'%';
+  banner.style.top=(designState.banner_y/1920*100)+'%';
+  el('bannerEnabled').checked=designState.banner_enabled;
+  el('bannerScale').value=designState.banner_width;
+  el('circleScale').value=size;
+  el('chromakeyEnabled').checked=designState.chromakey_enabled;
+}
+function saveRenderDesign(){
+  const snapshot={...designState};
+  designSaveQueue=designSaveQueue.catch(()=>{}).then(async()=>{
+    await request('/design',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(snapshot)
+    });
+    designStatus('✓ Оформление сохранено. Следующий рендер использует эти параметры.');
+  }).catch(err=>designStatus('Ошибка сохранения: '+err.message));
+  return designSaveQueue;
+}
+function selectDesignBackground(){
+  const value=el('designBgSelect').value;
+  const video=el('designBgVideo');
+  if(value){
+    const next=api+'/backgrounds/'+encodeURIComponent(value)+'/preview';
+    if(video.getAttribute('src')!==next){video.src=next;video.load();}
+    video.play().catch(()=>{});
+  }else{video.removeAttribute('src');video.load();}
+}
+function updateDesignBackgroundChoices(bgs){
+  const sel=el('designBgSelect');
+  const names=bgs.filter(b=>b.enabled).map(b=>b.name);
+  const current=sel.value;
+  const signature=names.join('|');
+  if(sel.dataset.signature===signature)return;
+  sel.dataset.signature=signature;
+  sel.replaceChildren();
+  if(!names.length){
+    const option=document.createElement('option');option.value='';option.textContent='Нет активных фонов';sel.append(option);
+  }else{
+    for(const name of names){
+      const opt=document.createElement('option');opt.value=name;opt.textContent=name;sel.append(opt);
+    }
+    sel.value=names.includes(current)?current:names[0];
+  }
+  selectDesignBackground();
+}
+function loadBannerPreview(){
+  const img=el('designBanner');
+  if(!bannerAvailable){img.removeAttribute('src');bannerRatio=.25;updateDesignPreview();return;}
+  img.onload=()=>{
+    bannerRatio=img.naturalHeight/img.naturalWidth;
+    updateDesignPreview();
+  };
+  img.onerror=()=>{bannerAvailable=false;designStatus('Не удалось загрузить миниатюру баннера');updateDesignPreview();};
+  img.src=api+'/banner/preview?t='+Date.now();
+}
+async function loadDesign(){
+  try{
+    const d=await request('/design');
+    Object.assign(designState,d.design);
+    bannerAvailable=d.banner_available;
+    updateDesignPreview();
+    loadBannerPreview();
+    designStatus('✓ Оформление загружено');
+  }catch(err){designStatus('Не удалось загрузить оформление: '+err.message);}
+  const sample=el('designCircleVideo');
+  sample.onloadeddata=()=>{
+    sampleCircleLoaded=true;sample.style.display='block';
+    el('designCirclePlaceholder').style.display='none';
+    sample.play().catch(()=>{});
+  };
+  sample.onerror=()=>{sampleCircleLoaded=false;sample.style.display='none';el('designCirclePlaceholder').style.display='grid';};
+  sample.src=api+'/sample-circle/preview';
+}
+function resetBannerPosition(){
+  designState.banner_x=Math.round((1080-designState.banner_width)/2);
+  designState.banner_y=Math.round(1920-bannerHeightPx()-100);
+  updateDesignPreview();saveRenderDesign();
+}
+async function removeDesignBanner(){
+  try{
+    const result=await request('/banner',{method:'DELETE'});
+    bannerAvailable=result.banner_available;
+    Object.assign(designState,result.design);
+    loadBannerPreview();
+    el('bannerFile').value='';
+    designStatus('Баннер убран');
+  }catch(err){notify(err);}
+}
+function initDesignControls(){
+  el('designBgSelect').addEventListener('change',selectDesignBackground);
+  el('circleScale').addEventListener('input',e=>{
+    designState.circle_size=Number(e.target.value);updateDesignPreview();
+  });
+  el('circleScale').addEventListener('change',saveRenderDesign);
+  el('bannerScale').addEventListener('input',e=>{
+    designState.banner_width=Number(e.target.value);updateDesignPreview();
+  });
+  el('bannerScale').addEventListener('change',saveRenderDesign);
+  el('chromakeyEnabled').addEventListener('change',e=>{
+    designState.chromakey_enabled=e.target.checked;updateDesignPreview();saveRenderDesign();
+  });
+  el('bannerEnabled').addEventListener('change',e=>{
+    if(e.target.checked&&!bannerAvailable){
+      e.target.checked=false;alert('Сначала загрузи рекламный баннер');return;
+    }
+    designState.banner_enabled=e.target.checked;updateDesignPreview();saveRenderDesign();
+  });
+  el('bannerFile').addEventListener('change',async e=>{
+    const file=e.target.files?.[0];if(!file)return;
+    const body=new FormData();body.append('file',file);
+    try{
+      designStatus('Загрузка баннера...');
+      // Finish pending layout edits before replacing the banner.
+      await designSaveQueue;
+      const d=await request('/banner',{method:'POST',body});
+      bannerAvailable=d.banner_available;
+      Object.assign(designState,d.design);
+      designState.banner_enabled=true;
+      loadBannerPreview();
+      updateDesignPreview();
+      await saveRenderDesign();
+    }catch(err){designStatus('Не удалось загрузить баннер: '+err.message);}
+  });
+  const banner=el('designBanner');
+  let start=null;
+  banner.addEventListener('pointerdown',e=>{
+    if(!bannerAvailable||!designState.banner_enabled)return;
+    e.preventDefault();
+    const rect=el('designPreview').getBoundingClientRect();
+    start={pointer:e.pointerId,cx:e.clientX,cy:e.clientY,x:designState.banner_x,y:designState.banner_y,w:rect.width,h:rect.height};
+    banner.setPointerCapture(e.pointerId);
+  });
+  banner.addEventListener('pointermove',e=>{
+    if(!start||e.pointerId!==start.pointer)return;
+    designState.banner_x=start.x+(e.clientX-start.cx)*1080/start.w;
+    designState.banner_y=start.y+(e.clientY-start.cy)*1920/start.h;
+    updateDesignPreview();
+  });
+  const finish=e=>{
+    if(!start||e.pointerId!==start.pointer)return;
+    start=null;saveRenderDesign();
+  };
+  banner.addEventListener('pointerup',finish);
+  banner.addEventListener('pointercancel',finish);
+}
+
 async function refresh(){
 try{const d=await request('/status');el('health').textContent=(d.ffmpeg_ready?'FFmpeg ✓':'FFmpeg отсутствует')+' · '+(d.telegram_configured?'Telegram API ✓':'Telegram API не настроен');
 el('channels').innerHTML=d.channels.map(c=>'<div class="item"><strong>✈ Telegram · @'+safe(c)+'</strong><div class="actions"><label><input type="checkbox" data-tg-toggle="'+safe(c)+'" '+(!(d.channels_disabled||[]).includes(c)?'checked':'')+'> Вкл.</label><button class="danger" data-channel="'+safe(c)+'">Удалить</button></div></div>').join('');
-const bgSignature=JSON.stringify(d.backgrounds);if(bgSignature!==lastBackgroundSignature){lastBackgroundSignature=bgSignature;el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>'<div class="item"><video preload="none" controls data-preview="'+safe(b.name)+'" poster=""></video><button type="button" data-play="'+safe(b.name)+'">▶ Предпросмотр</button><div><strong>'+safe(b.name)+'</strong><div class="muted">'+b.size_mb+' MB</div></div><div class="actions"><label><input type="checkbox" data-toggle="'+safe(b.name)+'" '+(b.enabled?'checked':'')+'> Вкл.</label><button class="danger" data-bg="'+safe(b.name)+'">×</button></div></div>').join('') :'<div class="empty">Добавь хотя бы один фон</div>'; }
+updateDesignBackgroundChoices(d.backgrounds);
+ const bgSignature=JSON.stringify(d.backgrounds);if(bgSignature!==lastBackgroundSignature){lastBackgroundSignature=bgSignature;el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>'<div class="item"><video preload="none" controls data-preview="'+safe(b.name)+'" poster=""></video><button type="button" data-play="'+safe(b.name)+'">▶ Предпросмотр</button><div><strong>'+safe(b.name)+'</strong><div class="muted">'+b.size_mb+' MB</div></div><div class="actions"><label><input type="checkbox" data-toggle="'+safe(b.name)+'" '+(b.enabled?'checked':'')+'> Вкл.</label><button class="danger" data-bg="'+safe(b.name)+'">×</button></div></div>').join('') :'<div class="empty">Добавь хотя бы один фон</div>'; }
 const j=d.job;el('progress').textContent=j.status+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=(j.errors||[]).join('\n');el('run').disabled=j.status==='running';
 }catch(e){el('log').textContent=e.message}}
 el('addChannel').onsubmit=async e=>{e.preventDefault();try{await request('/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:el('channel').value})});el('channel').value='';await refresh()}catch(e){notify(e)}};
@@ -73,7 +245,7 @@ document.addEventListener('click',async e=>{try{if(e.target.dataset.channel){awa
 document.addEventListener('change',async e=>{if(e.target.dataset.toggle){try{await request('/backgrounds/'+encodeURIComponent(e.target.dataset.toggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}catch(err){notify(err)}}});
 async function startLogin(){try{await request('/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:el('phone').value})});el('auth').textContent='Код отправлен'}catch(e){notify(e)}}
 async function finishLogin(){try{const d=await request('/auth/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:el('code').value,password:el('password').value})});el('auth').textContent=d.password_required?'Введи пароль 2FA':'Telegram подключён';el('code').value='';el('password').value=''}catch(e){notify(e)}}
-async function run(){try{await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_channel:Number(el('limit').value),order:el('order').value,date_from:el('dateFrom').value||null,date_to:el('dateTo').value||null})});await refresh()}catch(e){notify(e)}}
+async function run(){try{await designSaveQueue;await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_channel:Number(el('limit').value),order:el('order').value,date_from:el('dateFrom').value||null,date_to:el('dateTo').value||null})});await refresh()}catch(e){notify(e)}}
 async function auth(){try{const d=await request('/auth');el('auth').textContent=d.authorized?'Telegram подключён':'Telegram не авторизован'}catch(e){el('auth').textContent=e.message}}
 let qrPoll=null;
 async function startQR(){
@@ -99,7 +271,7 @@ else if(d.state==='expired'||d.state==='error'){clearInterval(qrPoll);el('qrStat
 async function submitQRPassword(){
 try{await request('/auth/qr/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:el('qrPassword').value})});el('qrPassword').value='';el('qr2fa').style.display='none';el('qrStatus').textContent='Telegram подключён ✓';el('auth').textContent='Telegram подключён';el('qrImage').style.display='none'}catch(e){notify(e)}
 }
-refresh();auth();setInterval(refresh,2500);
+initDesignControls();loadDesign();refresh();auth();setInterval(refresh,2500);
 const igApi='/api/telegram-studio/instagram';
 async function igRequest(path,opts){const r=await fetch(igApi+path,opts);const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));return d}
 async function igRefresh(){try{const d=await igRequest('/status');el('igSessionState').textContent=d.session_connected?'✓ Сессия подключена':'Сессия не подключена';el('igAccounts').innerHTML=d.accounts.map(a=>'<div class="item"><strong>◎ Instagram · @'+safe(a.split('/').filter(Boolean).pop())+'</strong><div class="actions"><label><input type="checkbox" data-ig-toggle="'+safe(a.split('/').filter(Boolean).pop())+'" '+(!(d.disabled||[]).includes(a)?'checked':'')+'> Вкл.</label><button class="danger" data-ig-remove="'+safe(a.split('/').filter(Boolean).pop())+'">Удалить</button></div></div>').join('');el('igProgress').textContent=d.job.status+' · готово '+d.job.done+' / '+d.job.total+' · ранее обработано '+d.processed_count;el('igLog').textContent=(d.job.errors||[]).join('\n');el('igRun').disabled=d.job.status==='running'}catch(e){el('igLog').textContent=e.message}}
