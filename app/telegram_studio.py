@@ -458,34 +458,71 @@ def duration(path):
     return float(p.stdout.strip())
 
 
-def render(source: Path, bg: Path, target: Path):
+def render(
+    source: Path,
+    bg: Path,
+    target: Path,
+    design: RenderDesign | None = None,
+    banner: Path | None = None,
+):
+    """Composite a 9:16 Reel with configurable circle and optional banner."""
+    design = design or RenderDesign()
     seconds = duration(source)
     bg_seconds = duration(bg)
     if seconds <= 0 or bg_seconds <= 0:
         raise ValueError("Некорректная длительность")
     offset = random.uniform(0, max(0, bg_seconds - seconds))
-    # Enlarge circular videos to 980px within the 1080px-wide frame.
-    # Keep the circular clip near the top (150px margin) so the background
-    # artwork/cover remains visible in the lower part of the final Reel.
-    # Overlay square with transparent corners, preserving the original audio.
-    filt = ("[0:v]scale=980:980:force_original_aspect_ratio=increase:flags=lanczos,"
-            "crop=980:980,format=rgba,"
-            "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-            "a='if(lte((X-490)*(X-490)+(Y-490)*(Y-490),240100),255,0)'[circle];"
-            "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-            "crop=1080:1920,setsar=1[bg];"
-            "[bg][circle]overlay=(W-w)/2:150:shortest=1,"
-            "fps=30,format=yuv420p[v]")
-    cmd = ["ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
-           "-ss", str(offset), "-i", str(bg), "-filter_complex", filt,
-           "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
-           "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-           "-profile:v", "high", "-level:v", "4.2", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(target)]
+
+    size = design.circle_size
+    center = size // 2
+    radius_squared = center * center
+    keyed = "chromakey=0x00ff00:0.20:0.07," if design.chromakey_enabled else ""
+    # Preserve the chromakey alpha in the circular mask instead of overwriting
+    # it. Without chromakey, alpha(X,Y) is opaque inside the circle.
+    circle_filter = (
+        f"[0:v]scale={size}:{size}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={size}:{size},format=rgba,{keyed}"
+        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='if(lte((X-{center})*(X-{center})+(Y-{center})*(Y-{center}),"
+        f"{radius_squared}),alpha(X,Y),0)'[circle];"
+    )
+    bg_filter = (
+        "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
+        "crop=1080:1920,setsar=1[bg];"
+    )
+    circle_y = 90
+    # FFmpeg overlays the real circular clip over random background footage.
+    main_filter = f"[bg][circle]overlay=(W-w)/2:{circle_y}:shortest=1[composite];"
+    cmd = [
+        "ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
+        "-ss", str(offset), "-i", str(bg),
+    ]
+    filter_chain = circle_filter + bg_filter + main_filter
+
+    if design.banner_enabled:
+        if not banner or not banner.is_file():
+            raise ValueError("Включён рекламный баннер, но файл не загружен")
+        cmd += ["-loop", "1", "-i", str(banner)]
+        filter_chain += (
+            f"[2:v]format=rgba,scale={design.banner_width}:-1:flags=lanczos[banner];"
+            f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
+            "format=auto:shortest=1,fps=30,format=yuv420p[v]"
+        )
+    else:
+        filter_chain += "[composite]fps=30,format=yuv420p[v]"
+
+    cmd += [
+        "-filter_complex", filter_chain,
+        "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-profile:v", "high", "-level:v", "4.2", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-movflags", "+faststart", str(target),
+    ]
     subprocess.run(cmd, capture_output=True, text=True, check=True)
 
 
-async def process(limit, order="oldest", date_from=None, date_to=None):
+async def process(limit, order="oldest", date_from=None, date_to=None, *, design: RenderDesign, banner: Path | None):
     JOB.update(status="running", total=0, done=0, errors=[])
     try:
         d = config()
@@ -591,7 +628,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None):
                     # Render to a temporary file, publish only after ffprobe validates it.
                     temp_target = target.with_name(target.stem + ".rendering.mp4")
                     try:
-                        await asyncio.to_thread(render, source, next_background(), temp_target)
+                        await asyncio.to_thread(render, source, next_background(), temp_target, design, banner)
                         if duration(temp_target) <= 0:
                             raise ValueError("Готовый ролик не прошёл проверку FFprobe")
                         temp_target.replace(target)
@@ -627,10 +664,19 @@ async def run(body: RenderRequest):
         raise HTTPException(400, "Некорректный порядок")
     if body.date_from and body.date_to and body.date_from > body.date_to:
         raise HTTPException(400, "Начальная дата позже конечной")
+    # Snapshot settings at batch start so every Reel uses one consistent layout.
+    data = config()
+    design = RenderDesign.model_validate(data.get("render_design", {}))
+    banner = current_banner(data)
+    if design.banner_enabled and banner is None:
+        raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
     global JOB_TASK, STOP_REQUESTED
     await LOCK.acquire()
     STOP_REQUESTED = False
-    JOB_TASK = asyncio.create_task(process(body.limit_per_channel, body.order, body.date_from, body.date_to))
+    JOB_TASK = asyncio.create_task(process(
+        body.limit_per_channel, body.order, body.date_from, body.date_to,
+        design=design, banner=banner,
+    ))
     return {"started": True}
 
 
