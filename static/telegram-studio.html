@@ -412,6 +412,8 @@ function loadBannerPreview(){
   video.pause();video.removeAttribute('src');video.load();
   img.removeAttribute('src');
   bannerRatio=.25;
+  bannerChromaReady=false;
+  toggleChromaPicker(false);
   if(!bannerAvailable){updateDesignPreview();return;}
   const src=api+'/banner/preview?t='+Date.now();
   if(bannerKind==='video'){
@@ -460,9 +462,9 @@ async function loadDesign(){
     sampleCircleLoaded=true;sample.style.display='block';
     el('designCirclePlaceholder').style.display='none';
     updateDesignPreview();
-    if(!chromaPicking)sample.play().catch(()=>{});
+    sample.play().catch(()=>{});
   };
-  sample.onerror=()=>{sampleCircleLoaded=false;sample.style.display='none';el('designCirclePlaceholder').style.display='grid';toggleChromaPicker(false);updateDesignPreview();};
+  sample.onerror=()=>{sampleCircleLoaded=false;sample.style.display='none';el('designCirclePlaceholder').style.display='grid';updateDesignPreview();};
   sample.src=api+'/sample-circle/preview';
 }
 function resetBannerPosition(){
@@ -543,18 +545,6 @@ function initDesignControls(){
   });
   el('chromaBlend').addEventListener('change',saveRenderDesign);
   el('chromaPickOverlay').addEventListener('click',pickedChromaColor);
-  el('tgPreviewSampleInput').addEventListener('change',event=>{
-    const file=event.target.files?.[0];
-    if(!file)return;
-    if(tgPreviewSampleURL)URL.revokeObjectURL(tgPreviewSampleURL);
-    tgPreviewSampleURL=URL.createObjectURL(file);
-    toggleChromaPicker(false);
-    sampleCircleLoaded=false;
-    const sample=el('designCircleVideo');
-    sample.src=tgPreviewSampleURL;
-    sample.load();
-    el('chromaPickStatus').textContent='Пример загружается. После загрузки нажми «Пипетка» и выбери цвет.';
-  });
   window.addEventListener('keydown',e=>{
     if(e.key==='Escape'&&chromaPicking)toggleChromaPicker(false);
   });
@@ -582,9 +572,9 @@ function initDesignControls(){
     }catch(err){designStatus('Не удалось загрузить баннер: '+err.message);}
   });
   let start=null;
-  for(const banner of [el('designBanner'),el('designBannerVideo')]){
+  for(const banner of [el('designBanner'),el('designBannerVideo'),el('chromaPreviewCanvas')]){
     banner.addEventListener('pointerdown',e=>{
-      if(!bannerAvailable||!designState.banner_enabled)return;
+      if(!bannerAvailable||!designState.banner_enabled||chromaPicking)return;
       e.preventDefault();
       const rect=el('designPreview').getBoundingClientRect();
       start={pointer:e.pointerId,cx:e.clientX,cy:e.clientY,x:designState.banner_x,y:designState.banner_y,w:rect.width,h:rect.height};
