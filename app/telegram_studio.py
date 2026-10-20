@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 from datetime import date
 from io import BytesIO
+from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -111,7 +112,11 @@ class LoginFinish(BaseModel):
 
 class RenderDesign(BaseModel):
     """Saved design and layout in 1080 x 1920 video pixels."""
-    circle_size: int = Field(default=1040, ge=760, le=1080)
+    circle_size: int = Field(default=1040, ge=400, le=1080)
+    circle_x: int = Field(default=20, ge=0, le=1080)
+    circle_y: int = Field(default=90, ge=0, le=1920)
+    background_mode: Literal["shuffle", "single"] = "shuffle"
+    background_name: str = ""
     chromakey_enabled: bool = False
     banner_enabled: bool = False
     banner_x: int = Field(default=270, ge=0, le=1080)
@@ -121,6 +126,21 @@ class RenderDesign(BaseModel):
 
 def saved_design() -> RenderDesign:
     return RenderDesign.model_validate(config().get("render_design", {}))
+
+
+def choose_backgrounds(design: RenderDesign) -> list[Path]:
+    """Resolve enabled MP4 backgrounds at render time, never stale/deleted files."""
+    active = [BACKGROUNDS / item["name"] for item in backgrounds() if item["enabled"]]
+    if design.background_mode == "single":
+        if not design.background_name:
+            raise ValueError("Выбери один фон в Telegram Studio")
+        selected = BACKGROUNDS / design.background_name
+        if selected not in active:
+            raise ValueError("Выбранный фон Telegram удалён или выключен")
+        return [selected]
+    if not active:
+        raise ValueError("Добавь хотя бы один активный фон")
+    return active
 
 
 def current_banner(data=None) -> Path | None:
@@ -538,9 +558,10 @@ def render(
         "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
         "crop=1080:1920,setsar=1[bg];"
     )
-    circle_y = 90
-    # FFmpeg overlays the real circular clip over random background footage.
-    main_filter = f"[bg][circle]overlay=(W-w)/2:{circle_y}:shortest=1[composite];"
+    x = min(design.circle_x, 1080 - size)
+    y = min(design.circle_y, 1920 - size)
+    # Match preview coordinates: user drags the circular video on the canvas.
+    main_filter = f"[bg][circle]overlay={x}:{y}:shortest=1[composite];"
     cmd = [
         "ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
         "-ss", str(offset), "-i", str(bg),
@@ -583,9 +604,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *, design
         known_hashes = rendered_hashes(d)
         d["rendered_hashes"] = sorted(known_hashes)
         save(d)
-        bgs = [BACKGROUNDS / b["name"] for b in backgrounds() if b["enabled"]]
-        if not bgs:
-            raise ValueError("Добавь хотя бы один активный фон")
+        bgs = choose_backgrounds(design)
         background_queue = []
         previous_bg = None
         def next_background():
@@ -723,6 +742,10 @@ async def run(body: RenderRequest):
     banner = current_banner(data)
     if design.banner_enabled and banner is None:
         raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
+    try:
+        choose_backgrounds(design)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     global JOB_TASK, STOP_REQUESTED
     await LOCK.acquire()
     STOP_REQUESTED = False
