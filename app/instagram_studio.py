@@ -18,7 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Literal
+from fastapi.responses import FileResponse
 from app.config import settings
 from app.telegram_studio import BACKGROUNDS, backgrounds, duration
 
@@ -37,6 +39,58 @@ class Source(BaseModel):
 
 class Run(BaseModel):
     limit_per_account: int = 5
+
+
+class InstagramLayout(BaseModel):
+    """Independent, persisted 9:16 composition for normal Instagram video."""
+    video_x: int = Field(default=65, ge=0, le=1080)
+    video_y: int = Field(default=110, ge=0, le=1920)
+    video_width: int = Field(default=950, ge=240, le=1080)
+    video_height: int = Field(default=1700, ge=300, le=1920)
+    video_opacity: float = Field(default=1.0, ge=0.1, le=1.0)
+    background_mode: Literal["shuffle", "single", "blur", "none"] = "shuffle"
+    background_name: str = ""
+
+
+def current_layout() -> InstagramLayout:
+    return InstagramLayout.model_validate(load().get("layout", {}))
+
+
+@router.get("/layout")
+def get_layout():
+    return {"layout": current_layout().model_dump()}
+
+
+@router.post("/layout")
+def set_layout(body: InstagramLayout):
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Дождись окончания Instagram-рендера")
+    d = load()
+    d["layout"] = body.model_dump()
+    save(d)
+    return {"layout": body.model_dump()}
+
+
+@router.get("/sample/preview")
+def sample_video_preview():
+    cached = [p for p in ROOT.glob("ig_*.mp4") if not p.name.endswith(".rendering.mp4")]
+    cached.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    if not cached:
+        raise HTTPException(404, "Сначала скачай один Instagram-ролик")
+    return FileResponse(cached[0], media_type="video/mp4")
+
+
+def choose_instagram_background(layout: InstagramLayout, pool: list[Path]) -> Path | None:
+    if layout.background_mode in ("blur", "none"):
+        return None
+    if layout.background_mode == "single":
+        if not layout.background_name:
+            raise ValueError("Выбери один фон для Instagram")
+        chosen = BACKGROUNDS / layout.background_name
+        if chosen not in pool:
+            raise ValueError("Фон Instagram удалён или выключен")
+        return chosen
+    return None  # shuffle mode is selected from the rotated pool by process()
 
 class LinkInput(BaseModel):
     url: str
@@ -255,29 +309,53 @@ def download_reel(link: str, source: Path) -> None:
             ) from retry_error
 
 
-def render(source, target, background):
+def render(source, target, background, layout: InstagramLayout | None = None):
+    """Render a normal Instagram Reel using its own 9:16 composition preset."""
+    layout = layout or InstagramLayout()
     seconds = duration(source)
     if seconds <= 0:
         raise ValueError("Видео без корректной длительности")
-    if background is None:
-        filt = ("[0:v]split=2[base][fg];[base]scale=1080:1920:force_original_aspect_ratio=increase,"
-                "crop=1080:1920,boxblur=40:10[bg];[fg]scale=1000:1700:"
-                "force_original_aspect_ratio=decrease[front];"
-                "[bg][front]overlay=(W-w)/2:(H-h)/2:shortest=1,fps=30,format=yuv420p[v]")
-        args = ["ffmpeg", "-y", "-i", str(source), "-filter_complex", filt]
+    w, h = layout.video_width, layout.video_height
+    x = min(layout.video_x, 1080 - w)
+    y = min(layout.video_y, 1920 - h)
+    # Keep original aspect ratio and fill the draggable rectangle with a
+    # transparent canvas, so preview and FFmpeg share the same coordinates.
+    foreground = (
+        f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"format=rgba,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
+        f"format=rgba,colorchannelmixer=aa={layout.video_opacity:.3f}[front];"
+    )
+    args = ["ffmpeg", "-y", "-i", str(source)]
+    if layout.background_mode == "blur":
+        background_filter = (
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,boxblur=40:10[bg];"
+        )
+    elif layout.background_mode == "none":
+        background_filter = "color=c=black:s=1080x1920:r=30[bg];"
     else:
-        filt = ("[1:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-                "crop=1080:1920[bg];[0:v]scale=1000:1700:"
-                "force_original_aspect_ratio=decrease[front];"
-                "[bg][front]overlay=(W-w)/2:(H-h)/2:shortest=1,fps=30,format=yuv420p[v]")
+        if not background:
+            raise ValueError("Не выбран активный Instagram-фон")
         offset = random.uniform(0, max(0, duration(background) - seconds))
-        args = ["ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
-                "-ss", str(offset), "-i", str(background), "-filter_complex", filt]
-    args += ["-map", "[v]", "-map", "0:a?", "-t", str(seconds),
-             "-c:v", "libx264", "-preset", "medium", "-crf", "19",
-             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-             "-movflags", "+faststart", str(target)]
+        args += ["-stream_loop", "-1", "-ss", str(offset), "-i", str(background)]
+        background_filter = (
+            "[1:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,setsar=1[bg];"
+        )
+    filt = (
+        background_filter + foreground
+        + f"[bg][front]overlay={x}:{y}:shortest=1,"
+        "fps=30,format=yuv420p[v]"
+    )
+    args += [
+        "-filter_complex", filt,
+        "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", str(target),
+    ]
     cmd(args, timeout=3600)
+
 
 def discover_edge(account):
     """Read visible reel links from a signed-in Chrome profile; no private API."""
@@ -403,13 +481,34 @@ def is_profile_extraction_error(message):
     return "Unable to extract data" in message and "instagram:user" in message
 
 
-async def process(limit):
+async def process(limit, layout: InstagramLayout):
     JOB.update(status="running", done=0, total=0, errors=[])
     try:
         d = load()
         known = set(d["processed"])
         hashes = set(d["hashes"])
         known_ids = {reel_id(link) for link in known}
+        # One layout snapshot and one rotating background queue for this job.
+        pool = [BACKGROUNDS / bg["name"] for bg in backgrounds() if bg["enabled"]]
+        if layout.background_mode == "single":
+            choose_instagram_background(layout, pool)
+        if layout.background_mode == "shuffle" and not pool:
+            raise ValueError("Добавь хотя бы один активный фон или выбери размытие")
+        background_queue: list[Path] = []
+        previous_background: Path | None = None
+
+        def next_background() -> Path | None:
+            nonlocal previous_background
+            if layout.background_mode != "shuffle":
+                return choose_instagram_background(layout, pool)
+            if not background_queue:
+                background_queue.extend(random.sample(pool, len(pool)))
+                if (previous_background is not None and len(background_queue) > 1
+                        and background_queue[0] == previous_background):
+                    background_queue[0], background_queue[1] = background_queue[1], background_queue[0]
+            previous_background = background_queue.pop(0)
+            return previous_background
+
         candidates = []
         for account in d["accounts"]:
             if account in d["disabled"]:
@@ -471,9 +570,8 @@ async def process(limit):
                     known_ids.add(reel_id(link))
                     record_download(account, link, "duplicate_content", sha256=digest)
                     continue
-                bgs = [BACKGROUNDS / b["name"] for b in backgrounds() if b["enabled"]]
-                bg = random.choice(bgs) if bgs and random.choice([True, False]) else None
-                await asyncio.to_thread(render, source, temp, bg)
+                bg = next_background()
+                await asyncio.to_thread(render, source, temp, bg, layout)
                 if duration(temp) <= 0:
                     raise ValueError("Рендер не прошёл проверку")
                 temp.replace(output)
@@ -510,6 +608,16 @@ async def run(body: Run):
         raise HTTPException(409, "Загрузка Instagram уже запущена")
     if not load()["accounts"] and not load()["links"]:
         raise HTTPException(400, "Добавь Instagram-аккаунт или ссылку на публикацию")
+    layout = current_layout()
+    if layout.background_mode in ("shuffle", "single"):
+        pool = [BACKGROUNDS / bg["name"] for bg in backgrounds() if bg["enabled"]]
+        if layout.background_mode == "single":
+            try:
+                choose_instagram_background(layout, pool)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        elif not pool:
+            raise HTTPException(400, "Добавь фон или выбери режим размытия")
     await LOCK.acquire()
-    TASK = asyncio.create_task(process(body.limit_per_account))
+    TASK = asyncio.create_task(process(body.limit_per_account, layout))
     return {"started": True}
