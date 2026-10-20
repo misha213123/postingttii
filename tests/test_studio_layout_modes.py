@@ -102,8 +102,9 @@ class InstagramSeparateTemplateTests(unittest.TestCase):
 
     def test_blur_and_original_no_background_preserve_audio(self):
         for mode in ("blur","none"):
-            with self.subTest(mode=mode), (
-                patch.object(ig, "duration",return_value=9.0),
+            with (
+                self.subTest(mode=mode),
+                patch.object(ig, "duration", return_value=9.0),
                 patch.object(ig, "cmd") as call,
             ):
                 ig.render(Path("instagram.mp4"),Path("out.mp4"),None,
