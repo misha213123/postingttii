@@ -617,7 +617,9 @@ async def run(body: Run):
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
         elif not pool:
-            raise HTTPException(400, "Добавь фон или выбери режим размытия")
+            # Remain backward compatible with importer runs before any MP4
+            # backgrounds have been uploaded: fall back to blurred source.
+            layout = layout.model_copy(update={"background_mode": "blur"})
     await LOCK.acquire()
     TASK = asyncio.create_task(process(body.limit_per_account, layout))
     return {"started": True}
