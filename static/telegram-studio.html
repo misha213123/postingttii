@@ -193,20 +193,32 @@ function updateDesignPreview(){
     'Каждый кружок получит именно выбранный фон, пока ты не изменишь настройку.';
   el('circleScaleValue').textContent=size;
   el('bannerScaleValue').textContent=designState.banner_width;
-  for(const circle of [el('designCircleVideo'),el('designCirclePlaceholder'),el('chromaPreviewCanvas')]){
+  for(const circle of [el('designCircleVideo'),el('designCirclePlaceholder')]){
     circle.style.width=(size/1080*100)+'%';
     circle.style.top=(designState.circle_y/1920*100)+'%';
     circle.style.left=(designState.circle_x/1080*100)+'%';
     circle.style.transform='none';
   }
   clampBanner();
+  const bannerVisible=designState.banner_enabled&&bannerAvailable;
+  const showKeyedBanner=bannerVisible&&designState.chromakey_enabled&&bannerChromaReady&&!chromaPicking;
+  const bannerCanvas=el('chromaPreviewCanvas');
+  const picker=el('chromaPickOverlay');
+  for(const id of ['designBanner','designBannerVideo','chromaPreviewCanvas','chromaPickOverlay']){
+    const element=el(id);
+    element.style.width=(designState.banner_width/1080*100)+'%';
+    element.style.left=(designState.banner_x/1080*100)+'%';
+    element.style.top=(designState.banner_y/1920*100)+'%';
+  }
+  const bannerHeight=bannerHeightPx()/1920*100+'%';
+  bannerCanvas.style.height=bannerHeight;
+  picker.style.height=bannerHeight;
+  bannerCanvas.style.display=showKeyedBanner?'block':'none';
+  picker.hidden=!chromaPicking;
   for(const id of ['designBanner','designBannerVideo']){
     const banner=el(id);
-    banner.style.display=designState.banner_enabled&&bannerAvailable&&
-      (id==='designBannerVideo'?bannerKind==='video':bannerKind==='image')?'block':'none';
-    banner.style.width=(designState.banner_width/1080*100)+'%';
-    banner.style.left=(designState.banner_x/1080*100)+'%';
-    banner.style.top=(designState.banner_y/1920*100)+'%';
+    banner.style.display=bannerVisible&&(id==='designBannerVideo'?bannerKind==='video':bannerKind==='image')?'block':'none';
+    banner.style.opacity=showKeyedBanner?'0':'1';
   }
   el('bannerEnabled').checked=designState.banner_enabled;
   el('bannerScale').value=designState.banner_width;
@@ -218,110 +230,125 @@ function updateDesignPreview(){
   el('chromaBlend').value=Math.round(designState.chromakey_blend*100);
   el('chromaSimilarityValue').textContent=Math.round(designState.chromakey_similarity*100);
   el('chromaBlendValue').textContent=Math.round(designState.chromakey_blend*100);
-  const previewReady=sampleCircleLoaded&&designState.chromakey_enabled;
-  el('chromaPreviewCanvas').style.display=previewReady?'block':'none';
-  el('designCircleVideo').style.opacity=previewReady?'0':'1';
+
 }
 
 let chromaPicking=false;
 let chromaLastFrame=0;
-let tgPreviewSampleURL=null;
+let bannerChromaReady=false;
 const chromaScratch=document.createElement('canvas');
-chromaScratch.width=320;
-chromaScratch.height=320;
 const chromaScratchCtx=chromaScratch.getContext('2d',{willReadFrequently:true});
 const chromaOnePixel=document.createElement('canvas');
 chromaOnePixel.width=5;chromaOnePixel.height=5;
 const chromaPixelContext=chromaOnePixel.getContext('2d',{willReadFrequently:true});
 
-function chromaVideoSource(){
-  const video=el('designCircleVideo');
-  if(!sampleCircleLoaded||video.readyState<2||!video.videoWidth||!video.videoHeight)return null;
-  const crop=Math.min(video.videoWidth,video.videoHeight);
-  return {video,crop,sx:(video.videoWidth-crop)/2,sy:(video.videoHeight-crop)/2};
+function chromaBannerSource(){
+  if(!bannerAvailable)return null;
+  if(bannerKind==='image'){
+    const img=el('designBanner');
+    return img.complete&&img.naturalWidth&&img.naturalHeight?
+      {element:img,width:img.naturalWidth,height:img.naturalHeight}:null;
+  }
+  const video=el('designBannerVideo');
+  return video.readyState>=2&&video.videoWidth&&video.videoHeight?
+    {element:video,width:video.videoWidth,height:video.videoHeight}:null;
 }
 
 function toggleChromaPicker(force){
   const enable=typeof force==='boolean'?force:!chromaPicking;
-  if(enable&&!chromaVideoSource()){
-    el('chromaPickStatus').textContent='Для пипетки сначала нужен скачанный Telegram-кружок. Если его ещё нет, выбери цвет квадратом вручную.';
+  if(enable&&!chromaBannerSource()){
+    el('chromaPickStatus').textContent='Сначала загрузи рекламный баннер (PNG/JPG/WebP/MP4/WebM) и дождись его отображения.';
     return;
   }
   chromaPicking=enable;
-  el('chromaPickOverlay').hidden=!enable;
   el('chromaPickButton').classList.toggle('active',enable);
   el('chromaPickButton').setAttribute('aria-pressed',String(enable));
-  el('chromaPickButton').textContent=enable?'✕ Отменить выбор':'◉ Пипетка — выбрать на видео';
-  const video=el('designCircleVideo');
-  if(enable){
-    video.pause();
-    el('chromaPickStatus').textContent='Видео остановлено. Нажми на цвет внутри кружка, который нужно убрать.';
-  }else{
-    video.play().catch(()=>{});
+  el('chromaPickButton').textContent=enable?'✕ Отменить выбор':'◉ Пипетка — выбрать на баннере';
+  const video=el('designBannerVideo');
+  if(bannerKind==='video'){
+    if(enable)video.pause();
+    else video.play().catch(()=>{});
   }
+  el('chromaPickStatus').textContent=enable?
+    'Баннер зафиксирован. Нажми по нужному цвету на рекламном баннере.':
+    'Пипетка выключена. Хромакей удаляет цвет только на рекламном баннере.';
+  updateDesignPreview();
 }
 
 function pickedChromaColor(event){
   if(!chromaPicking)return;
-  const src=chromaVideoSource();
+  const src=chromaBannerSource();
   if(!src){toggleChromaPicker(false);return;}
-  const rect=el('designCircleVideo').getBoundingClientRect();
+  const rect=el('chromaPickOverlay').getBoundingClientRect();
   const x=(event.clientX-rect.left)/rect.width;
   const y=(event.clientY-rect.top)/rect.height;
-  if(x<0||x>1||y<0||y>1||Math.hypot(x-.5,y-.5)>.5){
-    el('chromaPickStatus').textContent='Нажми именно внутри Telegram-кружка, а не на фоне или баннере.';
+  if(x<0||x>1||y<0||y>1){
+    el('chromaPickStatus').textContent='Нажми внутри рекламного баннера.';
     return;
   }
-  const sx=Math.max(0,Math.min(src.video.videoWidth-5,Math.round(src.sx+x*src.crop)-2));
-  const sy=Math.max(0,Math.min(src.video.videoHeight-5,Math.round(src.sy+y*src.crop)-2));
-  let pixels;
+  const sampleX=Math.round(x*src.width);
+  const sampleY=Math.round(y*src.height);
+  const sx=Math.max(0,Math.min(Math.max(0,src.width-5),sampleX-2));
+  const sy=Math.max(0,Math.min(Math.max(0,src.height-5),sampleY-2));
   try{
     chromaPixelContext.clearRect(0,0,5,5);
-    chromaPixelContext.drawImage(src.video,sx,sy,5,5,0,0,5,5);
-    pixels=chromaPixelContext.getImageData(0,0,5,5).data;
+    chromaPixelContext.drawImage(src.element,sx,sy,Math.min(5,src.width),Math.min(5,src.height),0,0,5,5);
+    const pixels=chromaPixelContext.getImageData(0,0,5,5).data;
+    const rgb=[0,0,0];
+    for(let i=0;i<pixels.length;i+=4)for(let j=0;j<3;j++)rgb[j]+=pixels[i+j];
+    designState.chromakey_color='#'+rgb.map(v=>Math.round(v/25).toString(16).padStart(2,'0')).join('');
   }catch(err){
-    el('chromaPickStatus').textContent='Не удалось взять цвет с кадра. Попробуй выбрать цвет вручную.';
+    el('chromaPickStatus').textContent='Не удалось прочитать цвет баннера. Попробуй выбрать его вручную.';
     return;
   }
-  const rgb=[0,0,0];
-  for(let i=0;i<pixels.length;i+=4)for(let j=0;j<3;j++)rgb[j]+=pixels[i+j];
-  const toHex=v=>Math.round(v/25).toString(16).padStart(2,'0');
-  designState.chromakey_color='#'+rgb.map(toHex).join('');
   designState.chromakey_enabled=true;
+  designState.banner_enabled=true;
   toggleChromaPicker(false);
   updateDesignPreview();
-  el('chromaPickStatus').textContent='✓ Выбран '+designState.chromakey_color.toUpperCase()+'. Цвет будет удаляться при следующем FFmpeg-рендере.';
+  el('chromaPickStatus').textContent='✓ Цвет '+designState.chromakey_color.toUpperCase()+
+    ' будет удаляться только с рекламного баннера при рендере.';
   saveRenderDesign();
 }
 
 function drawChromaPreview(now){
   requestAnimationFrame(drawChromaPreview);
-  if(now-chromaLastFrame<100||!designState.chromakey_enabled||!sampleCircleLoaded
-       ||el('tgEditor').hidden)return;
-  const src=chromaVideoSource();
-  if(!src)return;
+  if(now-chromaLastFrame<100||!designState.chromakey_enabled||!designState.banner_enabled
+       ||!bannerAvailable||chromaPicking||el('tgEditor').hidden)return;
+  const src=chromaBannerSource();
+  if(!src||!chromaScratchCtx)return;
   chromaLastFrame=now;
   const canvas=el('chromaPreviewCanvas');
-  if(!chromaScratchCtx)return;
+  const width=320;
+  const height=Math.max(8,Math.min(1024,Math.round(width*src.height/src.width)));
   try{
-    chromaScratchCtx.drawImage(src.video,src.sx,src.sy,src.crop,src.crop,0,0,320,320);
-    const frame=chromaScratchCtx.getImageData(0,0,320,320);
+    if(chromaScratch.width!==width||chromaScratch.height!==height){
+      chromaScratch.width=width;chromaScratch.height=height;
+    }
+    if(canvas.width!==width||canvas.height!==height){
+      canvas.width=width;canvas.height=height;
+    }
+    chromaScratchCtx.clearRect(0,0,width,height);
+    chromaScratchCtx.drawImage(src.element,0,0,width,height);
+    const frame=chromaScratchCtx.getImageData(0,0,width,height);
     const pixels=frame.data;
-    const key=designState.chromakey_color;
-    const rgb=[1,3,5].map(offset=>parseInt(key.slice(offset,offset+2),16));
+    const color=designState.chromakey_color;
+    const rgb=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16));
     const threshold=designState.chromakey_similarity;
     const blend=Math.max(.001,designState.chromakey_blend);
     for(let i=0;i<pixels.length;i+=4){
-      // Fast, approximate RGB-distance key for interactive preview.
-      // FFmpeg chromakey uses chroma channels, so edge pixels can differ.
+      // Approximation for the browser. FFmpeg uses chroma channels for the exact render.
       const distance=Math.hypot(pixels[i]-rgb[0],pixels[i+1]-rgb[1],pixels[i+2]-rgb[2])/(255*Math.sqrt(3));
       const alpha=Math.max(0,Math.min(1,(distance-threshold)/blend));
       pixels[i+3]=Math.round(pixels[i+3]*alpha);
     }
-    const ctx=canvas.getContext('2d');
-    ctx.putImageData(frame,0,0);
+    canvas.getContext('2d').putImageData(frame,0,0);
+    if(!bannerChromaReady){
+      bannerChromaReady=true;
+      updateDesignPreview();
+    }
   }catch(err){
-    // Video still loading / browser could not decode a frame; no preview edit.
+    bannerChromaReady=false;
+    updateDesignPreview();
   }
 }
 
