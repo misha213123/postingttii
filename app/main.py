@@ -176,7 +176,8 @@ def _safe_video(filename: str, folder_id: str = "default") -> Path:
     try:
         return video_path(folder_id, filename)
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        status_code = 404 if "не найдено" in str(exc).lower() else 400
+        raise HTTPException(status_code, str(exc)) from exc
 
 
 def _videos(history: dict | None = None, folder_id: str = "default") -> list[dict]:
