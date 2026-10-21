@@ -786,7 +786,9 @@ def render(
 async def process(limit, order="oldest", date_from=None, date_to=None, *,
                   design: RenderDesign, banner: Path | None,
                   output_dir: Path | None = None, target_slot: int = 0,
-                  media_mode: Literal["circles", "videos"] = "circles"):
+                  media_mode: Literal["circles", "videos"] = "circles",
+                  video_layout=None, video_banner: Path | None = None,
+                  video_banner_design: RenderDesign | None = None):
     JOB.update(status="running", total=0, done=0, errors=[], media_mode=media_mode)
     try:
         d = config()
@@ -807,8 +809,8 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
             d["rendered_hashes"] = sorted(known_hashes)
         save(d)
         bgs = choose_backgrounds(design)
-        normal_layout = None
-        if media_mode == "videos":
+        normal_layout = video_layout
+        if media_mode == "videos" and normal_layout is None:
             from app.instagram_studio import current_layout
             normal_layout = current_layout()
         background_queue = []
@@ -921,7 +923,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                             })
                             await asyncio.to_thread(
                                 render_normal_video, source, temp_target, bg, normal_preset,
-                                banner=banner, banner_design=design,
+                                banner=video_banner, banner_design=video_banner_design,
                             )
                         if duration(temp_target) <= 0:
                             raise ValueError("Готовый ролик не прошёл проверку FFprobe")
@@ -938,7 +940,10 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                         "name": target.name,
                         "path": str(target.resolve()),
                         "updated_at": int(time.time()),
-                        "banner_applied": bool(design.banner_enabled),
+                        "banner_applied": bool(
+                            design.banner_enabled if media_mode == "circles"
+                            else (video_banner_design and video_banner_design.banner_enabled)
+                        ),
                     }
                     save(d)
                     JOB["done"] += 1
@@ -987,8 +992,20 @@ async def run(body: RenderRequest):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     banner = current_banner(data)
-    if design.banner_enabled and banner is None:
-        raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
+    video_layout = None
+    video_banner = None
+    video_design = None
+    if body.media_mode == "videos":
+        from app.instagram_studio import (
+            current_layout, video_banner_file, video_banner_design as video_design_from_layout,
+        )
+        video_layout = current_layout()
+        video_banner = video_banner_file()
+        video_design = video_design_from_layout(video_layout)
+        if video_design.banner_enabled and video_banner is None:
+            raise HTTPException(400, "Загрузи баннер во вкладке «Instagram · видео»")
+    elif design.banner_enabled and banner is None:
+        raise HTTPException(400, "Загрузи баннер во вкладке «Telegram · кружки»")
     try:
         choose_backgrounds(design)
     except ValueError as exc:
@@ -999,7 +1016,8 @@ async def run(body: RenderRequest):
     JOB_TASK = asyncio.create_task(process(
         body.limit_per_channel, body.order, body.date_from, body.date_to,
         design=design, banner=banner, output_dir=output_dir, target_slot=body.target_slot,
-        media_mode=body.media_mode,
+        media_mode=body.media_mode, video_layout=video_layout,
+        video_banner=video_banner, video_banner_design=video_design,
     ))
     return {"started": True}
 

@@ -49,6 +49,10 @@
 .chroma-controls code{letter-spacing:1px;font-size:13px;color:#e5f2ff}
 #chromaPickButton.active{background:linear-gradient(125deg,#326d93,#405fcf);border-color:#92d3ff}
 .ig-ad-preview{pointer-events:none!important;border:none!important;box-shadow:none!important;z-index:6!important}
+.banner-drag-frame{position:absolute;z-index:8;border:2px dashed #bbd5ff;box-shadow:0 0 0 2px #05132366;cursor:move;touch-action:none;border-radius:5px}
+.banner-drag-frame[hidden]{display:none}
+.banner-drag-frame>.editor-handle{bottom:-8px;right:-8px;border-radius:5px;cursor:nwse-resize}
+#igBannerMove{z-index:9}
 .latest-render-view{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap}
 .latest-render-view>img,.latest-render-view>video{display:block;width:220px;max-width:100%;aspect-ratio:9/16;object-fit:contain;background:#060d1a;border-radius:14px;border:1px solid #405475}
 .latest-render-details{flex:1;min-width:240px}
@@ -108,6 +112,7 @@
       <img class="preview-banner" id="designBanner" alt="Рекламный баннер" draggable="false">
       <video class="preview-banner" id="designBannerVideo" aria-label="Видео-баннер" autoplay muted playsinline loop preload="metadata"></video>
       <canvas class="preview-banner preview-chroma" id="chromaPreviewCanvas" width="320" height="100" style="display:none" aria-label="Баннер с удалённым фоном"></canvas>
+      <div id="tgBannerMove" class="banner-drag-frame" hidden title="Тяни баннер; меняй размер за правый нижний угол"><span class="editor-handle" data-banner-resize="telegram"></span></div>
       <div id="chromaPickOverlay" class="chroma-pick-overlay" hidden aria-label="Выбери цвет фона на рекламном баннере">
         <div class="tip">Пипетка · нажми по цвету фона НА БАННЕРЕ</div>
       </div>
@@ -122,7 +127,7 @@
     <div class="editor-subtitle">Кружок</div>
     <div class="design-field"><label for="circleScale">Диаметр: <span id="circleScaleValue">1040</span> px</label>
       <input id="circleScale" type="range" min="400" max="1080" step="10" value="1040">
-      <span class="editor-note">Тяни кружок по видео. Размер меняется ползунком или за белый маркер на окружности.</span></div>
+      <span class="editor-note">Тяни кружок по видео. Размер меняется ползунком или за белый маркер на окружности. Баннер тоже можно перемещать и масштабировать за угол.</span></div>
     <label class="design-check"><input type="checkbox" id="bannerEnabled">Добавить рекламный баннер</label>
     <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
     <div class="chroma-panel">
@@ -142,7 +147,8 @@
     </div>
     <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
     <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
-      <input id="bannerScale" type="range" min="100" max="1080" step="10" value="540"></div>
+      <input id="bannerScale" type="range" min="100" max="1080" step="10" value="540">
+      <span class="editor-note">Размер можно менять ползунком или за правый нижний угол баннера на превью.</span></div>
     <div class="inline"><button id="resetBannerPosition" type="button" onclick="resetBannerPosition()">Сбросить позицию</button>
       <button id="removeBanner" type="button" class="danger" onclick="removeDesignBanner()">Убрать баннер</button></div>
     <span class="muted" id="designStatus">Загрузка настроек оформления...</span>
@@ -159,6 +165,7 @@
         <img id="igAdBannerImage" class="preview-banner ig-ad-preview" alt="Рекламный баннер поверх Instagram-видео" draggable="false">
         <video id="igAdBannerVideo" class="preview-banner ig-ad-preview" muted autoplay playsinline loop preload="metadata"></video>
         <canvas id="igAdBannerKeyed" class="preview-banner ig-ad-preview" width="320" height="100" style="display:none" aria-label="Баннер с удалённым фоном поверх обычного видео"></canvas>
+        <div id="igBannerMove" class="banner-drag-frame" hidden title="Тяни видео-баннер или меняй размер за угол"><span class="editor-handle" data-banner-resize="instagram"></span></div>
         <div class="safe-area"></div>
         <div class="editor-video-frame" id="igLayoutDrag" title="Перетащи обычное Instagram-видео или потяни белый маркер">
           <video id="igLayoutVideo" muted playsinline loop preload="metadata"></video>
@@ -180,7 +187,15 @@
       <div class="design-field"><label for="igLayoutBgSelect">Фон / предпросмотр</label><select id="igLayoutBgSelect"></select>
       <span class="editor-note" id="igBgDescription">При смешивании фон меняется для каждого ролика. Прозрачность регулирует видимость обычного видео поверх фона.</span></div>
       <div class="editor-subtitle">Обычное видео</div>
-      <div class="editor-note">Рекламный баннер и хромакей из вкладки «Telegram · кружки» также накладываются на обычные видео. Его положение и размер общие для обоих шаблонов.</div>
+      <div class="editor-note">Баннер обычного видео настраивается отдельно от баннера кружков. Загрузи свой PNG/JPG/WebP/MP4, двигай баннер на превью и меняй размер за нижний угол.</div>
+      <label class="design-check"><input id="igBannerEnabled" type="checkbox"> Добавить баннер к обычным видео</label>
+      <div class="design-field"><label for="igBannerFile">Отдельный баннер обычных видео (PNG, JPG, WEBP, MP4, WebM)</label>
+        <input id="igBannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm">
+        <span class="editor-note" id="igBannerStatus">Загружаем отдельный видео-баннер...</span></div>
+      <div class="design-field"><label for="igBannerScale">Ширина баннера: <span id="igBannerScaleValue">540</span> px</label>
+        <input id="igBannerScale" type="range" min="100" max="1080" step="10" value="540"></div>
+      <div class="inline"><button type="button" onclick="resetVideoBanner()">Сбросить позицию баннера</button>
+        <button type="button" class="danger" onclick="deleteVideoBanner()">Убрать видео-баннер</button></div>
       <div class="design-field"><label for="igVideoScale">Ширина видео: <span id="igVideoScaleValue">950</span> px</label>
         <input id="igVideoScale" type="range" min="240" max="1080" step="10" value="950"></div>
       <div class="design-field"><label for="igVideoOpacity">Прозрачность: <span id="igVideoOpacityValue">100</span>%</label>
@@ -222,29 +237,128 @@ function clampBanner(){
   designState.banner_x=Math.max(0,Math.min(Math.round(designState.banner_x),Math.max(0,1080-designState.banner_width)));
   designState.banner_y=Math.max(0,Math.min(Math.round(designState.banner_y),Math.max(0,1920-bannerHeightPx())));
 }
+const videoBannerState={banner_enabled:false,banner_x:270,banner_y:1550,banner_width:540};
+let videoBannerAvailable=false,videoBannerKind='image',videoBannerRatio=.25,videoBannerURL='';
+let videoBannerChromaReady=false,videoChromaLast=0;
+const videoBannerScratch=document.createElement('canvas');
+function clampVideoBanner(){
+  videoBannerState.banner_width=Math.max(100,Math.min(1080,Math.round(Number(videoBannerState.banner_width)||540)));
+  videoBannerState.banner_x=Math.max(0,Math.min(Math.round(Number(videoBannerState.banner_x)||0),1080-videoBannerState.banner_width));
+  videoBannerState.banner_y=Math.max(0,Math.min(Math.round(Number(videoBannerState.banner_y)||0),
+    Math.max(0,1920-videoBannerState.banner_width*videoBannerRatio)));
+}
 function syncInstagramBannerPreview(){
-  const visible=designState.banner_enabled&&bannerAvailable;
-  const keyed=visible&&designState.chromakey_enabled&&bannerChromaReady&&!chromaPicking;
-  const tgImage=el('designBanner'),tgVideo=el('designBannerVideo');
-  const image=el('igAdBannerImage'),video=el('igAdBannerVideo'),canvas=el('igAdBannerKeyed');
-  const layout=[image,video,canvas];
-  for(const layer of layout){
-    layer.style.width=(designState.banner_width/1080*100)+'%';
-    layer.style.left=(designState.banner_x/1080*100)+'%';
-    layer.style.top=(designState.banner_y/1920*100)+'%';
+  const visible=!!videoBannerState.banner_enabled&&videoBannerAvailable;
+  clampVideoBanner();
+  const img=el('igAdBannerImage'),vid=el('igAdBannerVideo'),canvas=el('igAdBannerKeyed'),frame=el('igBannerMove');
+  for(const layer of [img,vid,canvas,frame]){
+    layer.style.width=(videoBannerState.banner_width/1080*100)+'%';
+    layer.style.left=(videoBannerState.banner_x/1080*100)+'%';
+    layer.style.top=(videoBannerState.banner_y/1920*100)+'%';
   }
-  canvas.style.height=(bannerHeightPx()/1920*100)+'%';
+  const height=(videoBannerState.banner_width*videoBannerRatio/1920*100)+'%';
+  canvas.style.height=height;frame.style.height=height;
+  frame.hidden=!visible;
+  // The video preview has its own banner, never the circle banner.
+  const keyed=visible&&designState.chromakey_enabled&&videoBannerChromaReady;
+  img.style.display=visible&&!keyed&&videoBannerKind==='image'?'block':'none';
+  vid.style.display=visible&&!keyed&&videoBannerKind==='video'?'block':'none';
   canvas.style.display=keyed?'block':'none';
-  image.style.display=visible&&!keyed&&bannerKind==='image'?'block':'none';
-  video.style.display=visible&&!keyed&&bannerKind==='video'?'block':'none';
-  const imageSrc=tgImage.getAttribute('src');
-  if(visible&&bannerKind==='image'&&imageSrc&&image.getAttribute('src')!==imageSrc)image.src=imageSrc;
-  const videoSrc=tgVideo.getAttribute('src');
-  if(visible&&bannerKind==='video'&&videoSrc&&video.getAttribute('src')!==videoSrc){
-    video.src=videoSrc;video.load();
+  if(visible&&videoBannerKind==='video')vid.play().catch(()=>{});
+  else vid.pause();
+  el('igBannerScale').value=videoBannerState.banner_width;
+  el('igBannerScaleValue').textContent=videoBannerState.banner_width;
+  el('igBannerEnabled').checked=!!videoBannerState.banner_enabled;
+}
+function updateVideoBannerRatio(ratio){
+  videoBannerRatio=ratio;
+  const before=videoBannerState.banner_x+':'+videoBannerState.banner_y+':'+videoBannerState.banner_width;
+  syncInstagramBannerPreview();
+  const after=videoBannerState.banner_x+':'+videoBannerState.banner_y+':'+videoBannerState.banner_width;
+  if(before!==after){
+    Object.assign(instagramLayout,videoBannerState);
+    saveInstagramLayout();
   }
-  if(visible&&bannerKind==='video')video.play().catch(()=>{});
-  else video.pause();
+}
+function loadVideoBannerPreview(){
+  const img=el('igAdBannerImage'),vid=el('igAdBannerVideo');
+  img.onload=null;vid.onloadedmetadata=null;
+  img.removeAttribute('src');vid.pause();vid.removeAttribute('src');vid.load();
+  videoBannerRatio=.25;videoBannerChromaReady=false;
+  if(!videoBannerAvailable){syncInstagramBannerPreview();return;}
+  videoBannerURL=igApi+'/banner/preview?t='+Date.now();
+  if(videoBannerKind==='video'){
+    vid.onloadedmetadata=()=>{
+      if(vid.videoWidth&&vid.videoHeight)updateVideoBannerRatio(vid.videoHeight/vid.videoWidth);
+      else syncInstagramBannerPreview();
+    };
+    vid.src=videoBannerURL;vid.load();
+  }else{
+    img.onload=()=>{
+      if(img.naturalWidth&&img.naturalHeight)updateVideoBannerRatio(img.naturalHeight/img.naturalWidth);
+      else syncInstagramBannerPreview();
+    };
+    img.src=videoBannerURL;
+  }
+  syncInstagramBannerPreview();
+}
+function drawVideoBannerChroma(now){
+  requestAnimationFrame(drawVideoBannerChroma);
+  if(now-videoChromaLast<125||!videoBannerAvailable||!videoBannerState.banner_enabled
+     ||!designState.chromakey_enabled)return;
+  const element=videoBannerKind==='video'?el('igAdBannerVideo'):el('igAdBannerImage');
+  const w=videoBannerKind==='video'?element.videoWidth:element.naturalWidth;
+  const h=videoBannerKind==='video'?element.videoHeight:element.naturalHeight;
+  if(!w||!h)return;
+  videoChromaLast=now;
+  const width=320,height=Math.max(8,Math.min(1024,Math.round(width*h/w)));
+  const canvas=el('igAdBannerKeyed'),ctx=videoBannerScratch.getContext('2d',{willReadFrequently:true});
+  try{
+    if(videoBannerScratch.width!==width||videoBannerScratch.height!==height){
+      videoBannerScratch.width=width;videoBannerScratch.height=height;
+    }
+    if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
+    ctx.clearRect(0,0,width,height);ctx.drawImage(element,0,0,width,height);
+    const pixels=ctx.getImageData(0,0,width,height);
+    const key=designState.chromakey_color;
+    const rgb=[1,3,5].map(j=>parseInt(key.slice(j,j+2),16));
+    const sim=designState.chromakey_similarity,blend=Math.max(.001,designState.chromakey_blend);
+    for(let i=0;i<pixels.data.length;i+=4){
+      const distance=Math.hypot(pixels.data[i]-rgb[0],pixels.data[i+1]-rgb[1],pixels.data[i+2]-rgb[2])/(255*Math.sqrt(3));
+      pixels.data[i+3]=Math.round(pixels.data[i+3]*Math.max(0,Math.min(1,(distance-sim)/blend)));
+    }
+    canvas.getContext('2d').putImageData(pixels,0,0);
+    if(!videoBannerChromaReady){videoBannerChromaReady=true;syncInstagramBannerPreview();}
+  }catch(err){videoBannerChromaReady=false;}
+}
+requestAnimationFrame(drawVideoBannerChroma);
+async function uploadVideoBanner(event){
+  const file=event.target.files?.[0];if(!file)return;
+  try{
+    await instagramLayoutSave;
+    const form=new FormData();form.append('file',file);
+    const d=await igRequest('/banner',{method:'POST',body:form});
+    videoBannerAvailable=d.available;videoBannerKind=d.kind||'image';
+    instagramLayout.banner_enabled=true;videoBannerState.banner_enabled=true;
+    await saveInstagramLayout();
+    loadVideoBannerPreview();
+    el('igBannerStatus').textContent='✓ Видео-баннер сохранён отдельно от кружков';
+  }catch(err){el('igBannerStatus').textContent='Ошибка: '+err.message;notify(err);}
+}
+async function deleteVideoBanner(){
+  try{
+    const d=await igRequest('/banner',{method:'DELETE'});
+    videoBannerAvailable=d.available;videoBannerState.banner_enabled=false;
+    instagramLayout.banner_enabled=false;await saveInstagramLayout();
+    loadVideoBannerPreview();
+    el('igBannerStatus').textContent='Баннер обычных видео отключён';
+  }catch(err){notify(err);}
+}
+function resetVideoBanner(){
+  videoBannerState.banner_x=Math.round((1080-videoBannerState.banner_width)/2);
+  videoBannerState.banner_y=Math.round(1920-videoBannerState.banner_width*videoBannerRatio-100);
+  Object.assign(instagramLayout,videoBannerState);
+  syncInstagramBannerPreview();saveInstagramLayout();
 }
 function updateDesignPreview(){
   const size=designState.circle_size;
@@ -300,6 +414,12 @@ function updateDesignPreview(){
   el('chromaBlend').value=Math.round(designState.chromakey_blend*100);
   el('chromaSimilarityValue').textContent=Math.round(designState.chromakey_similarity*100);
   el('chromaBlendValue').textContent=Math.round(designState.chromakey_blend*100);
+  const drag=el('tgBannerMove'),on=designState.banner_enabled&&bannerAvailable&&!chromaPicking;
+  drag.hidden=!on;
+  drag.style.width=(designState.banner_width/1080*100)+'%';
+  drag.style.left=(designState.banner_x/1080*100)+'%';
+  drag.style.top=(designState.banner_y/1920*100)+'%';
+  drag.style.height=bannerHeightPx()/1920*100+'%';
   syncInstagramBannerPreview();
 }
 
@@ -412,12 +532,8 @@ function drawChromaPreview(now){
       pixels[i+3]=Math.round(pixels[i+3]*alpha);
     }
     canvas.getContext('2d').putImageData(frame,0,0);
-    const igCanvas=el('igAdBannerKeyed');
-    if(igCanvas.width!==width||igCanvas.height!==height){
-      igCanvas.width=width;igCanvas.height=height;
-    }
-    igCanvas.getContext('2d').clearRect(0,0,width,height);
-    igCanvas.getContext('2d').drawImage(canvas,0,0);
+    // Normal-video banner has a distinct uploaded source; do not copy the
+    // circle banner pixels into its canvas.
     if(!bannerChromaReady){
       bannerChromaReady=true;
       updateDesignPreview();
@@ -505,8 +621,10 @@ function loadBannerPreview(){
   const src=api+'/banner/preview?t='+Date.now();
   if(bannerKind==='video'){
     video.onloadedmetadata=()=>{
+      const before=designState.banner_x+':'+designState.banner_y;
       if(video.videoWidth&&video.videoHeight)bannerRatio=video.videoHeight/video.videoWidth;
       updateDesignPreview();
+      if(before!==designState.banner_x+':'+designState.banner_y)saveRenderDesign();
       video.play().catch(()=>{});
     };
     video.onerror=()=>{
@@ -517,8 +635,10 @@ function loadBannerPreview(){
     video.play().catch(()=>{});
   }else{
     img.onload=()=>{
+      const before=designState.banner_x+':'+designState.banner_y;
       bannerRatio=img.naturalHeight/img.naturalWidth;
       updateDesignPreview();
+      if(before!==designState.banner_x+':'+designState.banner_y)saveRenderDesign();
     };
     img.onerror=()=>{
       designStatus('Не удалось загрузить миниатюру баннера');
@@ -570,8 +690,48 @@ async function removeDesignBanner(){
     designStatus('Баннер убран');
   }catch(err){notify(err);}
 }
+function bindBannerDrag(frameId,stageId,state,ratio,refresh,save,allowMove){
+  const drag=el(frameId);
+  let active=null;
+  drag.addEventListener('pointerdown',e=>{
+    if(!allowMove())return;
+    e.preventDefault();
+    const rect=el(stageId).getBoundingClientRect();
+    active={
+      id:e.pointerId,resize:!!e.target.closest('[data-banner-resize]'),
+      x:e.clientX,y:e.clientY,
+      bannerX:state.banner_x,bannerY:state.banner_y,width:state.banner_width,
+      rectWidth:rect.width,rectHeight:rect.height
+    };
+    drag.setPointerCapture(e.pointerId);
+  });
+  drag.addEventListener('pointermove',e=>{
+    if(!active||active.id!==e.pointerId)return;
+    const dx=(e.clientX-active.x)*1080/active.rectWidth;
+    const dy=(e.clientY-active.y)*1920/active.rectHeight;
+    if(active.resize){
+      const weightedY=dy/Math.max(.01,ratio());
+      const dimensionChange=Math.abs(dx)>=Math.abs(weightedY)?dx:weightedY;
+      state.banner_width=Math.max(100,Math.min(1080,
+        Math.round((active.width+dimensionChange)/10)*10));
+    }else{
+      state.banner_x=active.bannerX+dx;
+      state.banner_y=active.bannerY+dy;
+    }
+    refresh();
+  });
+  const finish=e=>{
+    if(!active||active.id!==e.pointerId)return;
+    active=null;save();
+  };
+  drag.addEventListener('pointerup',finish);
+  drag.addEventListener('pointercancel',finish);
+}
 function initDesignControls(){
   el('designBgSelect').addEventListener('change',selectDesignBackground);
+  bindBannerDrag('tgBannerMove','designPreview',designState,()=>bannerRatio,
+                 updateDesignPreview,saveRenderDesign,
+                 ()=>bannerAvailable&&designState.banner_enabled&&!chromaPicking);
   el('circleScale').addEventListener('input',e=>{
     designState.circle_size=Number(e.target.value);updateDesignPreview();
   });
@@ -961,6 +1121,13 @@ async function loadInstagramLayout(){
   try{
     const d=await igRequest('/layout');
     Object.assign(instagramLayout,d.layout);
+    Object.assign(videoBannerState,d.banner_design||{});
+    videoBannerAvailable=!!d.banner?.available;
+    videoBannerKind=d.banner?.kind||'image';
+    el('igBannerStatus').textContent=d.banner?.legacy?
+      'Раньше использовался общий баннер кружков. Загрузи свой, чтобы сделать отдельный.':
+      (videoBannerAvailable?'✓ Баннер для обычных видео подключён':'Баннер обычных видео пока не загружен');
+    loadVideoBannerPreview();
     const sel=el('igLayoutBgSelect');
     if([...sel.options].some(o=>o.value===instagramLayout.background_name))
       sel.value=instagramLayout.background_name;
@@ -986,6 +1153,24 @@ function resetInstagramPosition(){
   updateInstagramLayoutPreview();saveInstagramLayout();
 }
 function initInstagramLayoutControls(){
+  bindBannerDrag('igBannerMove','igLayoutStage',videoBannerState,()=>videoBannerRatio,
+    ()=>{Object.assign(instagramLayout,videoBannerState);syncInstagramBannerPreview();},
+    saveInstagramLayout,()=>videoBannerAvailable&&videoBannerState.banner_enabled);
+  el('igBannerEnabled').addEventListener('change',e=>{
+    if(e.target.checked&&!videoBannerAvailable){
+      e.target.checked=false;alert('Сначала загрузи баннер для обычных видео');return;
+    }
+    videoBannerState.banner_enabled=e.target.checked;
+    instagramLayout.banner_enabled=e.target.checked;
+    syncInstagramBannerPreview();saveInstagramLayout();
+  });
+  el('igBannerFile').addEventListener('change',uploadVideoBanner);
+  el('igBannerScale').addEventListener('input',e=>{
+    videoBannerState.banner_width=Number(e.target.value);
+    instagramLayout.banner_width=videoBannerState.banner_width;
+    syncInstagramBannerPreview();
+  });
+  el('igBannerScale').addEventListener('change',saveInstagramLayout);
   const selector=el('igLayoutBgSelect');
   selector.addEventListener('change',()=>{
     instagramLayout.background_name=selector.value;

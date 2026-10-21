@@ -27,7 +27,10 @@ from app.video_folders import folder_path, account_folder, account_background
 from app.telegram_studio import (
     BACKGROUNDS, backgrounds, duration, is_image_background, RenderDesign,
     current_banner, saved_design, banner_input_args, banner_overlay_filter,
+    validate_video_banner,
 )
+from io import BytesIO
+from PIL import Image, UnidentifiedImageError
 
 router = APIRouter(prefix="/api/telegram-studio/instagram", tags=["studio-instagram"])
 ROOT = settings.data_dir / "instagram_studio"
@@ -35,6 +38,8 @@ ROOT.mkdir(parents=True, exist_ok=True)
 CONFIG = ROOT / "sources.json"
 DOWNLOAD_LOG = ROOT / "download_history.jsonl"
 SESSION_FILE = ROOT / "instaloader.session"
+VIDEO_BANNERS = ROOT / "banners"
+VIDEO_BANNERS.mkdir(parents=True, exist_ok=True)
 JOB = {"status": "idle", "done": 0, "total": 0, "errors": []}
 LOCK = asyncio.Lock()
 TASK = None
@@ -57,6 +62,114 @@ class InstagramLayout(BaseModel):
     video_opacity: float = Field(default=1.0, ge=0.1, le=1.0)
     background_mode: Literal["shuffle", "single", "blur", "none"] = "shuffle"
     background_name: str = ""
+    # None means a legacy profile still inherits the Telegram ad settings;
+    # after editing this video template the two are completely independent.
+    banner_enabled: bool | None = None
+    banner_x: int | None = Field(default=None, ge=0, le=1080)
+    banner_y: int | None = Field(default=None, ge=0, le=1920)
+    banner_width: int | None = Field(default=None, ge=100, le=1080)
+
+
+def video_banner_file() -> Path | None:
+    name = load().get("banner_file", None)
+    if name is None:
+        # Migrate legacy ordinary-video renders without silently losing ad.
+        return current_banner()
+    if not name or not re.fullmatch(r"[a-f0-9]{32}\.(?:png|mp4|webm)", name):
+        return None
+    path = VIDEO_BANNERS / name
+    return path if path.is_file() else None
+
+
+def video_banner_design(layout: InstagramLayout | None = None) -> RenderDesign:
+    layout = layout or current_layout()
+    design = saved_design()
+    updates = {}
+    for key in ("banner_enabled", "banner_x", "banner_y", "banner_width"):
+        value = getattr(layout, key)
+        if value is not None:
+            updates[key] = value
+    return design.model_copy(update=updates)
+
+
+def banner_response() -> dict:
+    path = video_banner_file()
+    return {
+        "available": path is not None,
+        "kind": ("video" if path and path.suffix in {".mp4", ".webm"}
+                 else "image" if path else None),
+        "legacy": "banner_file" not in load(),
+    }
+
+
+@router.get("/banner")
+def get_video_banner():
+    return banner_response()
+
+
+@router.get("/banner/preview")
+def video_banner_preview():
+    path = video_banner_file()
+    if path is None:
+        raise HTTPException(404, "Баннер обычных видео не загружен")
+    types = {".png": "image/png", ".mp4": "video/mp4", ".webm": "video/webm"}
+    return FileResponse(path, media_type=types[path.suffix],
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.post("/banner")
+async def upload_video_banner(file: UploadFile = File(...)):
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Дождись окончания рендера Instagram-видео")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".webm"}:
+        raise HTTPException(400, "Загрузи PNG, JPG, WebP, MP4 или WebM")
+    image = suffix in {".png", ".jpg", ".jpeg", ".webp"}
+    name = uuid.uuid4().hex + (".png" if image else suffix)
+    path = VIDEO_BANNERS / name
+    try:
+        if image:
+            raw = await file.read(10 * 1024 * 1024 + 1)
+            if len(raw) > 10 * 1024 * 1024:
+                raise HTTPException(413, "Изображение больше 10 МБ")
+            try:
+                with Image.open(BytesIO(raw)) as first:
+                    first.verify()
+                with Image.open(BytesIO(raw)) as original:
+                    original.load()
+                    if not (16 <= original.width <= 6000 and 16 <= original.height <= 6000):
+                        raise ValueError("Неверные размеры изображения")
+                    original.convert("RGBA").save(path, "PNG")
+            except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError):
+                raise HTTPException(400, "Некорректная фотография баннера")
+        else:
+            count = 0
+            with path.open("wb") as output:
+                while chunk := await file.read(1024 * 1024):
+                    count += len(chunk)
+                    if count > 100 * 1024 * 1024:
+                        raise HTTPException(413, "Видео-баннер больше 100 МБ")
+                    output.write(chunk)
+            validate_video_banner(path)
+        state = load()
+        state["banner_file"] = name
+        state.setdefault("layout", {})["banner_enabled"] = True
+        save(state)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return banner_response()
+
+
+@router.delete("/banner")
+def remove_video_banner():
+    if JOB["status"] == "running":
+        raise HTTPException(409, "Дождись окончания рендера Instagram-видео")
+    state = load()
+    state["banner_file"] = ""
+    state.setdefault("layout", {})["banner_enabled"] = False
+    save(state)
+    return banner_response()
 
 
 def current_layout() -> InstagramLayout:
@@ -65,7 +178,12 @@ def current_layout() -> InstagramLayout:
 
 @router.get("/layout")
 def get_layout():
-    return {"layout": current_layout().model_dump()}
+    layout = current_layout()
+    effective = video_banner_design(layout)
+    return {"layout": layout.model_dump(), "banner_design": {
+        "banner_enabled": effective.banner_enabled, "banner_x": effective.banner_x,
+        "banner_y": effective.banner_y, "banner_width": effective.banner_width,
+    }, "banner": banner_response()}
 
 
 @router.post("/layout")
@@ -680,8 +798,8 @@ async def run(body: Run):
             # Remain backward compatible with importer runs before any MP4
             # backgrounds have been uploaded: fall back to blurred source.
             layout = layout.model_copy(update={"background_mode": "blur"})
-    banner_design = saved_design()
-    banner = current_banner()
+    banner_design = video_banner_design(layout)
+    banner = video_banner_file()
     if banner_design.banner_enabled and banner is None:
         raise HTTPException(400, "Включён рекламный баннер, но файл не загружен")
     await LOCK.acquire()

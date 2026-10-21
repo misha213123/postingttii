@@ -104,12 +104,11 @@ MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
 IG_CIRCLE_CLAIMS: dict[str, str] = {}
 
-# A single Quick Tunnel video fetch can take close to a minute. Previously all
-# eight Instagram Reel containers could fetch MP4 files simultaneously while
-# YouTube and TikTok were uploading too. Limit Meta video processing to one
-# account at a time to avoid saturating the public tunnel. Other platforms
-# continue normally. This does not bypass Meta's content validation.
-INSTAGRAM_META_SEMAPHORE = asyncio.Semaphore(1)
+# The existing batch scheduler uses asyncio.gather across all selected
+# accounts in each round. Per-slot locks protect against overlapping requests
+# for the SAME Instagram account without serializing independent accounts.
+# The existing per-account cool-downs and between-wave pauses remain active.
+INSTAGRAM_META_LOCKS: dict[int, asyncio.Lock] = {}
 
 def _circle_id(filename: str) -> str | None:
     import re
@@ -364,10 +363,10 @@ async def _publish_single_target(
                 slot, video, metadata["description"], title=metadata["title"]
             )
         elif platform == "instagram":
-            # Throttle only Instagram, keeping TikTok/YouTube posting independent.
-            # Keep the media URLs registered while the Meta container is being
-            # created and processed; do not start a second Meta fetch meanwhile.
-            async with INSTAGRAM_META_SEMAPHORE:
+            # The scheduler starts one posting task per account simultaneously.
+            # Hold a separate lock per Instagram slot, not a global Meta lock:
+            # no two uploads overlap on one account, while other slots progress.
+            async with INSTAGRAM_META_LOCKS.setdefault(slot, asyncio.Lock()):
                 cover_path = COVER_DIR / f"{slot}.jpg"
                 if not cover_path.exists():
                     raise HTTPException(400, f"Instagram #{slot}: сначала загрузи обложку на /instagram-covers")
