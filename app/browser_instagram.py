@@ -308,18 +308,23 @@ async def open_account(account_id: str, request: Request):
             CURRENT_JOB is not None and CURRENT_JOB.get("status") == "running"
             and account_id in CURRENT_JOB.get("accounts", [])
         )
-        if active_upload and account_id not in CONTEXTS:
+        existing_context = account_id in CONTEXTS
+        if active_upload and not existing_context:
             raise HTTPException(409, "Этот браузер сейчас готовится к публикации. Открой его после запуска.")
         ctx = await _context(account_id)
         # Reuse an Instagram tab, not an unrelated tab with a 2FA provider.
         page = next((p for p in ctx.pages if "instagram.com" in p.url), None)
         if page is None:
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        if active_upload:
+        if existing_context or active_upload:
+            # Also preserve the failed upload page after the job is stopped:
+            # clicking 'Open Edge' should reveal the error, not erase it.
             await page.bring_to_front()
             return {
-                "ok": True, "message": "В Edge идёт публикация. "
-                                         "Открыл окно без перезагрузки Instagram."
+                "ok": True,
+                "message": ("Публикация выполняется — окно выведено вперёд без обновления."
+                            if active_upload else
+                            "Edge уже открыт. Страница сохранена для проверки ошибки."),
             }
         try:
             await page.goto("https://www.instagram.com/",
