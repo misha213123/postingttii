@@ -27,7 +27,7 @@ from app.video_folders import folder_path, account_folder, account_background
 from app.telegram_studio import (
     BACKGROUNDS, backgrounds, duration, is_image_background, RenderDesign,
     current_banner, saved_design, banner_input_args, banner_overlay_filter,
-    validate_video_banner, BANNERS,
+    validate_video_banner,
 )
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
