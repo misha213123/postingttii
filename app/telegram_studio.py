@@ -615,9 +615,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
         d = config()
         d.setdefault("processed", [])
         output_dir = output_dir or settings.upload_dir
-        if target_slot:
-            completed_keys = d.setdefault("processed_by_target", {}).setdefault(str(target_slot), [])
-            known_hashes = set(d.setdefault("rendered_hashes_by_target", {}).get(str(target_slot), []))
+        render_scope = (str(target_slot) if target_slot else
+                        ("folder:" + str(output_dir.resolve())
+                         if output_dir.resolve() != settings.upload_dir.resolve() else ""))
+        if render_scope:
+            completed_keys = d.setdefault("processed_by_target", {}).setdefault(render_scope, [])
+            known_hashes = set(d.setdefault("rendered_hashes_by_target", {}).get(render_scope, []))
         else:
             completed_keys = d["processed"]
             known_hashes = rendered_hashes(d)
@@ -726,8 +729,8 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     finally:
                         temp_target.unlink(missing_ok=True)
                     known_hashes.add(digest)
-                    if target_slot:
-                        d.setdefault("rendered_hashes_by_target", {})[str(target_slot)] = sorted(known_hashes)
+                    if render_scope:
+                        d.setdefault("rendered_hashes_by_target", {})[render_scope] = sorted(known_hashes)
                     else:
                         d["rendered_hashes"] = sorted(known_hashes)
                     completed_keys.append(key)
