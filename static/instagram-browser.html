@@ -40,14 +40,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
  <p class="muted">Браузерная публикация через Edge, выбор аккаунтов и видео, отдельные сессии</p></div>
  <button class="ghost" onclick="refreshAll()">↻ Обновить</button>
 </header>
-<div class="notice">Этот режим не использует Meta Graph API и не управляет Meta 1 / Meta 2. Первоначальный вход в аккаунты выполняется вручную в окне Edge. Instagram может менять интерфейс или требовать подтверждение — в таком случае проверь публикацию самостоятельно.</div>
+<div class="notice">Этот режим не использует Meta Graph API и не управляет Meta 1 / Meta 2. Первоначальный вход в аккаунты выполняется вручную в окне Edge. Если Instagram запросит подтверждение, пройди его самостоятельно. Instagram может менять интерфейс или требовать подтверждение — в таком случае проверь публикацию самостоятельно.</div>
 <div class="grid" style="margin-top:18px">
  <div>
   <section class="card">
    <h2>01 / Добавить аккаунт</h2>
    <div class="field"><label for="newUsername">Instagram username</label><input id="newUsername" autocomplete="off" placeholder="@instagram_account"></div>
    <div class="row"><button class="primary" onclick="addAccount()">+ Добавить аккаунт</button></div>
-   <p id="newProxyResult" class="muted" aria-live="polite"></p>
+   <p id="accountAddResult" class="muted" aria-live="polite"></p>
   </section>
   <section class="card">
    <div class="row" style="justify-content:space-between"><h2>02 / Аккаунты и сессии</h2><span class="chip" id="accountCount">0</span></div>
@@ -140,8 +140,8 @@ async function addAccount(){
   await json('/account','POST',{username});
   $('newUsername').value='';
   registry=await api('');renderAccounts();
-  message('newProxyResult','Аккаунт добавлен. Теперь нажми «Открыть Edge» для входа.','status');
- }catch(e){message('newProxyResult',e.message,'error');}
+  message('accountAddResult','Аккаунт добавлен. Теперь нажми «Открыть Edge» для входа.','status');
+ }catch(e){message('accountAddResult',e.message,'error');}
 }
 async function loadVideos(){
  try{
