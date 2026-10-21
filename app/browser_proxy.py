@@ -114,25 +114,26 @@ async def check_proxy(raw: str) -> dict:
             follow_redirects=False,
         ) as client:
             response = await client.get(endpoint)
-            if response.status_code == 407:
+            status = int(getattr(response, "status_code", 200))
+            if status == 407:
                 return failure(
                     "auth_required",
                     "Прокси требует авторизацию (HTTP 407). Проверь логин и пароль.",
                     http_status=407,
                 )
-            if response.status_code in (401, 403):
+            if status in (401, 403):
                 return failure(
                     "access_denied",
-                    f"Доступ отклонён (HTTP {response.status_code}). Проверь "
+                    f"Доступ отклонён (HTTP {status}). Проверь "
                     "логин, разрешённые IP и настройки зоны у провайдера.",
-                    http_status=response.status_code,
+                    http_status=status,
                 )
-            if response.status_code >= 400:
+            if status >= 400:
                 return failure(
                     "http_error",
-                    f"Проверочный сервис ответил HTTP {response.status_code}. "
+                    f"Проверочный сервис ответил HTTP {status}. "
                     "Прокси доступен, но запрос не завершился успешно.",
-                    http_status=response.status_code,
+                    http_status=status,
                 )
             try:
                 ip = str(response.json().get("ip") or "")
