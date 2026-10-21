@@ -42,6 +42,27 @@ class BrowserOpenRegressionTests(unittest.IsolatedAsyncioTestCase):
         page.goto.assert_not_awaited()
         page.bring_to_front.assert_awaited_once()
 
+    async def test_open_existing_profile_after_failure_keeps_upload_screen(self):
+        account = "e"*24
+        page = SimpleNamespace(
+            url="https://www.instagram.com/create/details/",
+            goto=AsyncMock(),
+            bring_to_front=AsyncMock(),
+        )
+        ctx = SimpleNamespace(pages=[page])
+        with (
+            patch.dict(browser.CONTEXTS, {account: ctx}, clear=True),
+            patch.object(browser, "CURRENT_JOB", {
+                "status": "stopped", "accounts": [account],
+            }),
+            patch.object(browser, "_context", new=AsyncMock(return_value=ctx)),
+        ):
+            result = await browser.open_account(account, req())
+        self.assertTrue(result["ok"])
+        self.assertIn("сохранена", result["message"])
+        page.goto.assert_not_awaited()
+        page.bring_to_front.assert_awaited_once()
+
     async def test_open_during_launch_does_not_start_another_window(self):
         account = "a"*24
         with (
