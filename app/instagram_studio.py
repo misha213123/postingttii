@@ -14,6 +14,7 @@ import uuid
 import os
 import shutil
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -23,7 +24,10 @@ from typing import Literal
 from fastapi.responses import FileResponse
 from app.config import settings
 from app.video_folders import folder_path, account_folder, account_background
-from app.telegram_studio import BACKGROUNDS, backgrounds, duration, is_image_background
+from app.telegram_studio import (
+    BACKGROUNDS, backgrounds, duration, is_image_background, RenderDesign,
+    current_banner, saved_design, banner_input_args, banner_overlay_filter,
+)
 
 router = APIRouter(prefix="/api/telegram-studio/instagram", tags=["studio-instagram"])
 ROOT = settings.data_dir / "instagram_studio"
@@ -312,7 +316,9 @@ def download_reel(link: str, source: Path) -> None:
             ) from retry_error
 
 
-def render(source, target, background, layout: InstagramLayout | None = None):
+def render(source, target, background, layout: InstagramLayout | None = None,
+           *, banner: Path | None = None,
+           banner_design: RenderDesign | None = None):
     """Render a normal Instagram Reel using its own 9:16 composition preset."""
     layout = layout or InstagramLayout()
     seconds = duration(source)
@@ -348,11 +354,22 @@ def render(source, target, background, layout: InstagramLayout | None = None):
             "[1:v]scale=1080:1920:force_original_aspect_ratio=increase,"
             "crop=1080:1920,setsar=1[bg];"
         )
-    filt = (
-        background_filter + foreground
-        + f"[bg][front]overlay={x}:{y}:shortest=1,"
-        "fps=30,format=yuv420p[v]"
-    )
+    if banner_design is not None and banner_design.banner_enabled:
+        if banner is None or not banner.is_file():
+            raise ValueError("Включён рекламный баннер, но файл не загружен")
+        banner_input_index = 2 if layout.background_mode in ("single", "shuffle") else 1
+        args += banner_input_args(banner)
+        filt = (
+            background_filter + foreground
+            + f"[bg][front]overlay={x}:{y}:shortest=1[composite];"
+            + banner_overlay_filter(banner_design, banner_input_index)
+        )
+    else:
+        filt = (
+            background_filter + foreground
+            + f"[bg][front]overlay={x}:{y}:shortest=1,"
+            "fps=30,format=yuv420p[v]"
+        )
     args += [
         "-filter_complex", filt,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
@@ -488,7 +505,9 @@ def is_profile_extraction_error(message):
 
 
 async def process(limit, layout: InstagramLayout, *,
-                  output_dir: Path | None = None, target_slot: int = 0):
+                  output_dir: Path | None = None, target_slot: int = 0,
+                  banner: Path | None = None,
+                  banner_design: RenderDesign | None = None):
     JOB.update(status="running", done=0, total=0, errors=[])
     try:
         d = load()
@@ -586,7 +605,8 @@ async def process(limit, layout: InstagramLayout, *,
                     record_download(account, link, "duplicate_content", sha256=digest)
                     continue
                 bg = next_background()
-                await asyncio.to_thread(render, source, temp, bg, layout)
+                await asyncio.to_thread(render, source, temp, bg, layout,
+                                        banner=banner, banner_design=banner_design)
                 if duration(temp) <= 0:
                     raise ValueError("Рендер не прошёл проверку")
                 temp.replace(output)
@@ -594,6 +614,11 @@ async def process(limit, layout: InstagramLayout, *,
                 known.add(link)
                 known_ids.add(reel_id(link))
                 record_download(account, link, "downloaded", file=output.name, sha256=digest)
+                d["last_output"] = {
+                    "name": output.name, "path": str(output.resolve()),
+                    "updated_at": int(time.time()),
+                    "banner_applied": bool(banner_design and banner_design.banner_enabled),
+                }
                 JOB["done"] += 1
             except Exception as exc:
                 JOB["errors"].append(f"{link}: {str(exc)[:600]}")
@@ -655,7 +680,14 @@ async def run(body: Run):
             # Remain backward compatible with importer runs before any MP4
             # backgrounds have been uploaded: fall back to blurred source.
             layout = layout.model_copy(update={"background_mode": "blur"})
+    banner_design = saved_design()
+    banner = current_banner()
+    if banner_design.banner_enabled and banner is None:
+        raise HTTPException(400, "Включён рекламный баннер, но файл не загружен")
     await LOCK.acquire()
-    TASK = asyncio.create_task(process(body.limit_per_account, layout,
-                                      output_dir=output_dir, target_slot=body.target_slot))
+    TASK = asyncio.create_task(process(
+        body.limit_per_account, layout,
+        output_dir=output_dir, target_slot=body.target_slot,
+        banner=banner, banner_design=banner_design,
+    ))
     return {"started": True}
