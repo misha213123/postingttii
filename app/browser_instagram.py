@@ -49,7 +49,7 @@ def _brief_error(exc: Exception) -> str:
         # Only our explicitly-authored workflow errors use RuntimeError;
         # external Playwright errors need a generic sanitized explanation.
         message = str(exc)
-        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не нашёл ", "Проверь ", "Не удалось ")):
+        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не найдена ", "Не нашёл ", "Проверь ", "Не удалось ")):
             return message
     return "Ошибка взаимодействия с Edge или Instagram. Проверь браузер, вход и подключение."
 
@@ -372,6 +372,117 @@ async def _click_action(page, text: str, timeout_ms: int = 15000):
         await page.get_by_text(re.compile(r"^(" + text + r")$", re.I)).last.click(timeout=timeout_ms)
 
 
+async def _has_media_input(page, timeout_ms: int = 700) -> bool:
+    """True only after Instagram attached the real media file chooser."""
+    try:
+        await page.locator('input[type="file"]').first.wait_for(
+            state="attached", timeout=timeout_ms
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def _select_create_mode(page) -> bool:
+    """Some layouts open a Create menu (Post / Reel) before the uploader."""
+    choices = [
+        ("menuitem", r"^(Post|Reel|Публикация|Пост|Рилс|Видео Reels)$"),
+        ("button", r"^(Post|Reel|Публикация|Пост|Рилс|Видео Reels)$"),
+    ]
+    for role, label in choices:
+        try:
+            candidate = page.get_by_role(
+                role, name=re.compile(label, re.I)
+            ).first
+            if await candidate.count() and await candidate.is_visible():
+                await candidate.click(timeout=2500)
+                if await _has_media_input(page, 1800):
+                    return True
+        except Exception:
+            continue
+    # Instagram occasionally makes the dropdown items plain divs/text.
+    # Only attempt after the user-visible Create control was clicked.
+    for text in ("Post", "Reel", "Публикация", "Пост", "Рилс"):
+        try:
+            candidate = page.get_by_text(text, exact=True).last
+            if await candidate.count() and await candidate.is_visible():
+                await candidate.click(timeout=2200)
+                if await _has_media_input(page, 1800):
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+async def _open_create_picker(page, item: dict) -> None:
+    """Find Instagram's Create action across known desktop UI variants.
+
+    No direct undocumented Instagram endpoints, hidden API calls, login
+    automation or verification bypasses. All actions use visible controls.
+    """
+    _stage(item, "create", "Ищу «Создать» в интерфейсе Instagram")
+    if await _has_media_input(page, 900):
+        return
+
+    label = re.compile(r"^(Create|Создать|New post|Новая публикация|Create post|Создать публикацию)$", re.I)
+    selectors = [
+        ("create_url", page.locator('a[href="/create/select/"], a[href="/create/"], a[href^="/create/"]')),
+        ("create_link", page.get_by_role("link", name=label)),
+        ("create_button", page.get_by_role("button", name=label)),
+        ("create_menu", page.get_by_role("menuitem", name=label)),
+        ("create_aria", page.locator(
+            '[aria-label="Create"], [aria-label="Создать"], '
+            '[aria-label="New post"], [aria-label="Новая публикация"]'
+        )),
+        ("create_icon", page.locator(
+            'svg[aria-label="New post"], svg[aria-label="Create"], '
+            'svg[aria-label="Создать"], svg[aria-label="Новая публикация"]'
+        )),
+        ("create_text", page.get_by_text(re.compile(r"^(Create|Создать)$", re.I))),
+    ]
+    # DOMContentLoaded precedes React hydration, especially through a
+    # slower residential proxy. Wait for at least one known Create variant.
+    try:
+        await page.locator(
+            'a[href^="/create/"], [aria-label="Create"], '
+            '[aria-label="Создать"], [aria-label="New post"], '
+            'svg[aria-label="New post"]'
+        ).first.wait_for(state="visible", timeout=7000)
+    except Exception:
+        pass
+    if await _has_media_input(page, 700):
+        return
+
+    for method, location in selectors:
+        try:
+            candidate = location.first
+            if not await candidate.count() or not await candidate.is_visible():
+                continue
+            _stage(item, "create", "Открываю «Создать» (" + method + ")")
+            await candidate.click(timeout=4000)
+            if await _has_media_input(page, 1200):
+                return
+            _stage(item, "create_mode", "Выбираю тип публикации")
+            if await _select_create_mode(page):
+                return
+        except Exception as exc:
+            # A locator can time out while Instagram redraws its sidebar.
+            # Do not return raw Playwright errors (may contain proxy data).
+            log.info("IG create locator failed (%s): %s", method, type(exc).__name__)
+
+    url = (getattr(page, "url", "") or "").lower()
+    if any(token in url for token in ("/accounts/login", "/challenge/", "/checkpoint/")):
+        raise RuntimeError(
+            "Требуется ручной вход или проверка Instagram. "
+            "Открой Edge и закончи её самостоятельно."
+        )
+    raise RuntimeError(
+        "Не найдена кнопка «Создать» или окно выбора файла в Instagram. "
+        "Проверь в открытом Edge, видна ли кнопка Create (+) "
+        "и доступна ли публикация этому аккаунту."
+    )
+
+
 async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None = None) -> str:
     """UI-based Instagram upload; stop on ambiguity, never retry Share."""
     item = item if item is not None else {}
@@ -396,24 +507,9 @@ async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None
     if await page.locator('input[name="username"], input[name="password"]').count():
         raise RuntimeError("Требуется ручной вход в Instagram — открой профиль.")
     # Never automate login, additional account verification or CAPTCHA.
-    _stage(item, "create", "Открываю создание публикации")
-    try:
-        create = page.locator('a[href="/create/select/"], a[href="/create/"]').first
-        try:
-            await create.click(timeout=8000)
-        except Exception:
-            await page.get_by_role("link", name=re.compile(r"Create|Создать", re.I)).first.click(timeout=12000)
-    except Exception:
-        raise RuntimeError(
-            "Не найдена кнопка «Создать» в Instagram. Открой Edge и проверь, "
-            "что аккаунт вошёл в систему."
-        ) from None
+    await _open_create_picker(page, item)
 
     _stage(item, "choose_video", "Выбираю файл видео")
-    try:
-        await page.get_by_text(re.compile(r"^Post$|^Публикация$", re.I)).last.click(timeout=2500)
-    except Exception:
-        pass
     try:
         upload = page.locator('input[type="file"]').first
         await upload.wait_for(state="attached", timeout=20000)
