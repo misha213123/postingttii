@@ -283,7 +283,8 @@ async def _context(account_id: str):
         def on_close(*_):
             if CONTEXTS.get(account_id) is context:
                 CONTEXTS.pop(account_id, None)
-        context.on("close", on_close)
+        if callable(getattr(context, "on", None)):
+            context.on("close", on_close)
         return context
 
 
