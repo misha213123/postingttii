@@ -176,11 +176,48 @@ async def check_proxy(raw: str) -> dict:
                     "Через прокси получен ответ, но внешний IP определить "
                     "не удалось. Возможно, ответ изменён прокси-сервером.",
                 )
-    except httpx.ProxyError:
+    except httpx.ProxyError as exc:
+        # HTTPX raises ProxyError when HTTPS CONNECT is rejected, so HTTP
+        # 407/403/502 never reach the response.status_code checks above.
+        # Its diagnostic generally starts with the upstream response code
+        # (e.g. "407 Proxy Authentication Required"). Extract ONLY that code;
+        # raw exception text may contain the user's proxy credentials.
+        match = re.match(r"^\s*(\d{3})(?:\s|$)", str(exc))
+        proxy_status = int(match.group(1)) if match else None
+        if proxy_status == 407:
+            return failure(
+                "auth_required",
+                "Прокси отклонил авторизацию (HTTP 407). Проверь логин и "
+                "пароль, выбранный режим авторизации и активность тарифа.",
+                http_status=407,
+            )
+        if proxy_status in (401, 403):
+            return failure(
+                "access_denied",
+                f"Прокси запретил подключение (HTTP {proxy_status}). "
+                "Проверь разрешённый исходящий IP, доступ и настройки "
+                "аккаунта у провайдера.",
+                http_status=proxy_status,
+            )
+        if proxy_status == 429:
+            return failure(
+                "rate_limited",
+                "Прокси ограничил частоту запросов (HTTP 429). "
+                "Проверь ограничения тарифа у провайдера.",
+                http_status=429,
+            )
+        if proxy_status in (500, 502, 503, 504):
+            return failure(
+                "upstream_failure",
+                f"Прокси-шлюз вернул HTTP {proxy_status}. "
+                "Это ошибка сервера прокси или его соединения с целью.",
+                http_status=proxy_status,
+            )
         return failure(
             "proxy_rejected",
-            "Прокси отклонил соединение. Проверь логин/пароль, "
-            "протокол и разрешённые IP в кабинете провайдера.",
+            "Прокси отклонил HTTPS-соединение (CONNECT), но точный "
+            "HTTP-код не определён. Проверь тип прокси и данные "
+            "подключения у провайдера.",
         )
     except httpx.ConnectTimeout:
         return failure(
