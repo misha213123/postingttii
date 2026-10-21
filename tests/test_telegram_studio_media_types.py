@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -129,3 +131,79 @@ class StillRenderTests(unittest.TestCase):
         cmd = command.call_args.args[0]
         self.assertIn("-stream_loop", cmd)
         self.assertNotIn("-loop", cmd)
+
+
+class TelegramMediaIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_circle_and_regular_video_jobs_use_separate_output_and_renderers(self):
+        messages = [
+            SimpleNamespace(
+                id=11, date=datetime.now(timezone.utc), video_note=object(),
+                video=object(), document=None,
+            ),
+            SimpleNamespace(
+                id=12, date=datetime.now(timezone.utc), video_note=None,
+                video=object(), document=SimpleNamespace(mime_type="video/mp4"),
+            ),
+        ]
+
+        class FakeTelegram:
+            async def is_user_authorized(self):
+                return True
+
+            async def get_entity(self, channel):
+                return channel
+
+            async def iter_messages(self, channel, limit=3000):
+                for item in messages:
+                    yield item
+
+            async def download_media(self, message, file):
+                Path(file).write_bytes(("media_" + str(message.id)).encode())
+
+        @asynccontextmanager
+        async def connected():
+            yield FakeTelegram()
+
+        def write_render(source, background, target, *args):
+            Path(target).write_bytes(b"rendered-mp4")
+            
+        def write_normal(source, target, background, layout):
+            Path(target).write_bytes(b"rendered-mp4")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            original = root / "originals"
+            regular = original / "regular"
+            out = root / "out"
+            for folder in (original, regular, out):
+                folder.mkdir(parents=True, exist_ok=True)
+            memory = {"channels": ["demo_channel"], "processed": [], "rendered_hashes": []}
+            with (
+                patch.object(tg, "ORIGINALS", original),
+                patch.object(tg, "REGULAR_ORIGINALS", regular),
+                patch.object(tg, "config", return_value=memory),
+                patch.object(tg, "save"),
+                patch.object(tg, "duration", return_value=4.0),
+                patch.object(tg, "choose_backgrounds", return_value=[Path("static.jpg")]),
+                patch.object(tg, "connected_telegram_client", side_effect=connected),
+                patch.object(tg, "render", side_effect=write_render) as circle_renderer,
+                patch.object(ig, "render", side_effect=write_normal) as normal_renderer,
+                patch.object(ig, "current_layout", return_value=ig.InstagramLayout()),
+                patch.object(tg, "STOP_REQUESTED", False),
+            ):
+                await tg.LOCK.acquire()
+                await tg.process(1, design=tg.RenderDesign(), banner=None,
+                                 output_dir=out, media_mode="circles")
+                self.assertEqual(tg.JOB["done"], 1)
+                self.assertTrue((out / "tg_demo_channel_11.mp4").exists())
+                self.assertFalse((out / "tgvideo_demo_channel_12.mp4").exists())
+                circle_renderer.assert_called_once()
+                normal_renderer.assert_not_called()
+
+                await tg.LOCK.acquire()
+                await tg.process(1, design=tg.RenderDesign(), banner=None,
+                                 output_dir=out, media_mode="videos")
+                self.assertEqual(tg.JOB["done"], 1)
+                self.assertTrue((out / "tgvideo_demo_channel_12.mp4").exists())
+                self.assertTrue((regular / "demo_channel_12.mp4").exists())
+                normal_renderer.assert_called_once()
