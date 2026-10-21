@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.store import store
 from app.video_folders import folder_path, list_videos, video_path, _read as folder_settings
+from app.browser_proxy import parse_proxy, masked_proxy, check_proxy
 
 router = APIRouter(prefix="/api/browser-instagram", tags=["browser-instagram"])
 DATA_DIR = settings.data_dir / "browser_instagram"
@@ -77,6 +78,8 @@ def _write(data: dict[str, dict]) -> None:
 def _public_account(account_id: str, data: dict) -> dict:
     return {
         "id": account_id, "username": data["username"],
+        "proxy_configured": bool(data.get("proxy")),
+        "proxy_label": masked_proxy(data.get("proxy", "")),
         "browser_open": account_id in CONTEXTS,
         "has_profile": (PROFILES_DIR / account_id).exists(),
     }
@@ -97,6 +100,11 @@ def _profile_dir(account_id: str) -> Path:
 
 class BrowserAccount(BaseModel):
     username: str = Field(min_length=1, max_length=30)
+    proxy: str = Field(default="", max_length=1200)
+
+
+class ProxyInput(BaseModel):
+    proxy: str = Field(default="", max_length=1200)
 
 
 class PublishInput(BaseModel):
@@ -128,14 +136,59 @@ def add_account(body: BrowserAccount, request: Request):
     username = body.username.strip().lstrip("@").lower()
     if not USER_RE.fullmatch(username):
         raise HTTPException(400, "Введи корректный Instagram username")
+    try:
+        parse_proxy(body.proxy)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     data = _read()
     existing = next((key for key, a in data.items() if a["username"] == username), None)
     if existing:
         raise HTTPException(409, "Аккаунт уже добавлен")
     key = secrets.token_hex(12)
-    data[key] = {"username": username}
+    data[key] = {"username": username, "proxy": body.proxy.strip()}
     _write(data)
     return _public_account(key, data[key])
+
+
+@router.put("/account/{account_id}/proxy")
+def set_account_proxy(account_id: str, body: ProxyInput, request: Request):
+    """Proxy changes take effect on next browser launch, never mid-session."""
+    _local(request)
+    if account_id in CONTEXTS:
+        raise HTTPException(409, "Сначала нажми «Закрыть Edge» у аккаунта, чтобы поменять прокси")
+    if CURRENT_JOB and CURRENT_JOB.get("status") == "running":
+        raise HTTPException(409, "Не меняй прокси во время активной публикации")
+    try:
+        parse_proxy(body.proxy)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    data = _read()
+    if account_id not in data:
+        raise HTTPException(404, "Браузерный аккаунт не найден")
+    data[account_id]["proxy"] = body.proxy.strip()
+    _write(data)
+    return _public_account(account_id, data[account_id])
+
+
+@router.post("/proxy/test")
+async def check_new_proxy(body: ProxyInput, request: Request):
+    _local(request)
+    try:
+        return await check_proxy(body.proxy)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/account/{account_id}/proxy/test")
+async def check_saved_proxy(account_id: str, request: Request):
+    _local(request)
+    account = _account(account_id)
+    if not account.get("proxy"):
+        raise HTTPException(400, "У аккаунта ещё не задан прокси")
+    try:
+        return await check_proxy(account["proxy"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.delete("/account/{account_id}")
@@ -187,6 +240,13 @@ async def _context(account_id: str):
         profile.mkdir(parents=True, exist_ok=True)
         opts = dict(headless=False, viewport={"width": 1280, "height": 900},
                     locale="en-US", accept_downloads=False)
+        if account.get("proxy"):
+            try:
+                proxy = parse_proxy(account["proxy"])
+            except ValueError as exc:
+                raise HTTPException(400, "У аккаунта сохранён неверный прокси") from exc
+            if proxy:
+                opts["proxy"] = proxy
         try:
             context = await driver.chromium.launch_persistent_context(
                 str(profile), channel="msedge", **opts

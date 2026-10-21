@@ -70,6 +70,118 @@ class BrowserAccountTests(unittest.TestCase):
             browser._profile_dir("../different-account")
 
 
+class ProxySettingsTests(unittest.TestCase):
+    def test_residential_proxy_host_port_credentials_parsed(self):
+        from app import browser_proxy as proxy
+        parsed = proxy.parse_proxy("res.example.com:9000:hello:s3cret:tail")
+        self.assertEqual(parsed["server"], "http://res.example.com:9000")
+        self.assertEqual(parsed["username"], "hello")
+        self.assertEqual(parsed["password"], "s3cret:tail")
+        self.assertEqual(proxy.parse_proxy("res.example.com:9000")["server"],
+                         "http://res.example.com:9000")
+
+    def test_uri_proxy_and_socks5_no_auth(self):
+        from app import browser_proxy as proxy
+        parsed = proxy.parse_proxy("http://name:pa%40ss@host.example:8080")
+        self.assertEqual(parsed["username"], "name")
+        self.assertEqual(parsed["password"], "pa@ss")
+        self.assertEqual(proxy.parse_proxy("socks5://host.example:1080")["server"],
+                         "socks5://host.example:1080")
+        self.assertIsNone(proxy.parse_proxy(""))
+
+    def test_no_secret_in_displayed_fields(self):
+        from app import browser_proxy as proxy
+        full = "residential.example:10000:user:secret-password"
+        masked = proxy.masked_proxy(full)
+        self.assertEqual(masked, "http://residential.example:10000")
+        self.assertNotIn("user", masked)
+        self.assertNotIn("secret-password", masked)
+        safe = browser._public_account("a"*24, {"username": "mytest", "proxy": full})
+        self.assertTrue(safe["proxy_configured"])
+        self.assertEqual(safe["proxy_label"], masked)
+        self.assertNotIn("secret-password", json.dumps(safe))
+
+    def test_rejects_invalid_and_unsupported_authentication(self):
+        from app import browser_proxy as proxy
+        values = [
+            "residential.example:0",
+            "residential.example:70000",
+            "not-valid",
+            "ftp://host.example:3128",
+            "http://host.example",
+            "socks5://user:password@residential.example:1080",
+            "http://user@residential.example:8000",
+        ]
+        for value in values:
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    proxy.parse_proxy(value)
+
+    def test_proxy_url_encodes_credentials_only_in_memory(self):
+        from app import browser_proxy as proxy
+        spec = proxy.parse_proxy("res.example:9000:hello:p@ss:word")
+        url = proxy.httpx_proxy(spec)
+        self.assertIn("p%40ss%3Aword", url)
+        self.assertEqual(proxy.masked_proxy(url), "http://res.example:9000")
+
+    def test_existing_account_stays_valid_without_proxy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with patch.object(browser, "PROFILES_DIR", root):
+                safe=browser._public_account("a"*24, {"username": "existing"})
+                self.assertFalse(safe["proxy_configured"])
+                self.assertEqual(safe["proxy_label"], "Без прокси")
+
+    def test_saved_proxy_is_encrypted_and_does_not_touch_meta(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with (
+                patch.object(browser, "DATA_DIR", root),
+                patch.object(browser, "ACCOUNTS_FILE", root/"accounts.enc"),
+                patch.object(browser, "PROFILES_DIR", root/"profiles"),
+                patch.object(browser.store, "save") as meta_save,
+            ):
+                created=browser.add_account(browser.BrowserAccount(
+                    username="proxyowner",
+                    proxy="res.example.com:8080:alice:secretpass",
+                ), request("POST"))
+                raw=(root/"accounts.enc").read_bytes()
+                self.assertNotIn(b"secretpass", raw)
+                self.assertNotIn("secretpass", json.dumps(created))
+                self.assertEqual(browser._read()[created["id"]]["proxy"],
+                                 "res.example.com:8080:alice:secretpass")
+                meta_save.assert_not_called()
+
+    def test_proxy_change_requires_closed_profile_and_can_clear(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with (
+                patch.object(browser, "DATA_DIR", root),
+                patch.object(browser, "ACCOUNTS_FILE", root/"accounts.enc"),
+                patch.object(browser, "PROFILES_DIR", root/"profiles"),
+                patch.object(browser, "CURRENT_JOB", None),
+            ):
+                created=browser.add_account(browser.BrowserAccount(username="changeme"), request("POST"))
+                account_id=created["id"]
+                with patch.dict(browser.CONTEXTS, {account_id: object()}, clear=True):
+                    with self.assertRaises(HTTPException) as caught:
+                        browser.set_account_proxy(
+                            account_id,
+                            browser.ProxyInput(proxy="res.example.com:8080"),
+                            request("PUT"),
+                        )
+                    self.assertEqual(caught.exception.status_code, 409)
+                selected=browser.set_account_proxy(
+                    account_id,
+                    browser.ProxyInput(proxy="res.example.com:8080:username:password"),
+                    request("PUT"),
+                )
+                self.assertTrue(selected["proxy_configured"])
+                cleared=browser.set_account_proxy(
+                    account_id,browser.ProxyInput(proxy=""),request("PUT"),
+                )
+                self.assertFalse(cleared["proxy_configured"])
+
 class BrowserPostingTests(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_confirmation_required(self):
         with self.assertRaises(HTTPException) as caught:
@@ -129,3 +241,66 @@ class BrowserPostingTests(unittest.IsolatedAsyncioTestCase):
                 ), request("POST"))
             self.assertEqual(result["total"], 1)
             resolve.assert_called_once_with("custom-folder", "clip.mp4")
+
+
+class BrowserProxyIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_edge_context_uses_correct_per_account_proxy(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        with tempfile.TemporaryDirectory() as folder:
+            context=object()
+            launch=AsyncMock(return_value=context)
+            fake_driver=SimpleNamespace(chromium=SimpleNamespace(
+                launch_persistent_context=launch,
+            ))
+            account_id="a"*24
+            with (
+                patch.object(browser, "PROFILES_DIR", Path(folder)),
+                patch.object(browser, "_driver", new=AsyncMock(return_value=fake_driver)),
+                patch.object(browser, "_account", return_value={
+                    "username":"demo",
+                    "proxy":"res.example.com:8080:user:secret",
+                }),
+                patch.dict(browser.CONTEXTS, {}, clear=True),
+            ):
+                selected=await browser._context(account_id)
+                self.assertIs(selected,context)
+                options=launch.await_args.kwargs
+                self.assertEqual(options["proxy"]["server"],"http://res.example.com:8080")
+                self.assertEqual(options["proxy"]["username"],"user")
+                self.assertEqual(options["proxy"]["password"],"secret")
+
+    async def test_proxy_ip_check_reports_ip_and_latency_without_auth(self):
+        from app import browser_proxy as proxy
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        class FakeResponse:
+            def raise_for_status(self): pass
+            def json(self): return {"ip":"203.0.113.12"}
+        class FakeClient:
+            def __init__(self,**kwargs):
+                self.options=kwargs
+            async def __aenter__(self): return self
+            async def __aexit__(self,*args): pass
+            async def get(self,url):
+                self.called_url=url
+                return FakeResponse()
+        with patch.object(proxy.httpx,"AsyncClient",side_effect=FakeClient) as fake:
+            result=await proxy.check_proxy("res.example:8080:hello:s3cret")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["ip"],"203.0.113.12")
+        self.assertGreaterEqual(result["latency_ms"],0)
+        self.assertNotIn("s3cret",json.dumps(result))
+        self.assertIn("hello:s3cret@", fake.call_args.kwargs["proxy"])
+
+    async def test_proxy_connection_error_does_not_expose_credentials(self):
+        from app import browser_proxy as proxy
+        class BrokenClient:
+            def __init__(self,**kwargs): pass
+            async def __aenter__(self):
+                raise proxy.httpx.ConnectError("proxy user:password@host:80 failed")
+            async def __aexit__(self,*args): pass
+        with patch.object(proxy.httpx,"AsyncClient",side_effect=BrokenClient):
+            result=await proxy.check_proxy("res.example:8080:user:password")
+        self.assertFalse(result["ok"])
+        self.assertNotIn("password",json.dumps(result))
