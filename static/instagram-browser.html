@@ -37,18 +37,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
 </style></head><body><main>
 <header>
  <div><a href="/">← PostingTTII</a><div class="eyebrow" style="margin-top:16px">Отдельный режим · без Meta API</div><h1>Instagram · браузер</h1>
- <p class="muted">Браузерная публикация через Edge, выбор аккаунтов и видео, собственные прокси и отдельные сессии</p></div>
+ <p class="muted">Браузерная публикация через Edge, выбор аккаунтов и видео, отдельные сессии</p></div>
  <button class="ghost" onclick="refreshAll()">↻ Обновить</button>
 </header>
-<div class="notice">Этот режим не использует Meta Graph API и не управляет Meta 1 / Meta 2. Первоначальный вход в аккаунты выполняется вручную в окне Edge. Ввод и проверка прокси доступны только локально. Instagram может менять интерфейс или требовать подтверждение — в таком случае проверь публикацию самостоятельно.</div>
+<div class="notice">Этот режим не использует Meta Graph API и не управляет Meta 1 / Meta 2. Первоначальный вход в аккаунты выполняется вручную в окне Edge. Instagram может менять интерфейс или требовать подтверждение — в таком случае проверь публикацию самостоятельно.</div>
 <div class="grid" style="margin-top:18px">
  <div>
   <section class="card">
    <h2>01 / Добавить аккаунт</h2>
    <div class="field"><label for="newUsername">Instagram username</label><input id="newUsername" autocomplete="off" placeholder="@instagram_account"></div>
-   <div class="field"><label for="newProxy">Резидентский прокси (HTTP/HTTPS/SOCKS5)</label><input id="newProxy" type="password" autocomplete="off" placeholder="host:port:user:password или http://login:password@host:port"></div>
-   <p class="muted">Пароль прокси сохраняется локально в зашифрованном виде и не отображается после сохранения. HTTP(S) с авторизацией поддерживается; SOCKS5 — без логина и пароля.</p>
-   <div class="row"><button class="ghost" id="testNewProxy" onclick="testProxy('newProxy','newProxyResult')">Проверить прокси и IP</button><button class="primary" onclick="addAccount()">+ Добавить аккаунт</button></div>
+   <div class="row"><button class="primary" onclick="addAccount()">+ Добавить аккаунт</button></div>
    <p id="newProxyResult" class="muted" aria-live="polite"></p>
   </section>
   <section class="card">
@@ -113,9 +111,9 @@ function renderAccounts(){
  root.innerHTML=registry.accounts.length?registry.accounts.map(a=>
   '<article class="account-card">'+
    '<label class="check-line"><input type="checkbox" data-account="'+esc(a.id)+'" '+(selectedAccounts.has(a.id)?'checked':'')+'><span class="account-name">@'+esc(a.username)+'</span></label>'+
-   '<div class="account-sub">Прокси: '+esc(a.proxy)+' · '+(a.browser_open?'🟢 Браузер открыт':a.has_profile?'Сессия на диске':'Новый профиль')+'</div>'+
+   '<div class="account-sub">'+(a.browser_open?'🟢 Браузер открыт':a.has_profile?'Сессия на диске':'Новый профиль')+'</div>'+
    '<div class="account-buttons"><button data-open="'+esc(a.id)+'">Открыть Edge</button>'+
-   '<button data-close="'+esc(a.id)+'">Закрыть</button><button data-proxy="'+esc(a.id)+'">Изменить прокси</button>'+
+   '<button data-close="'+esc(a.id)+'">Закрыть</button>'+
    '<button class="danger" data-remove="'+esc(a.id)+'">Удалить из списка</button></div></article>'
   ).join(''):'<p class="muted">Пока нет браузерных Instagram-аккаунтов.</p>';
 }
@@ -125,14 +123,10 @@ $('accountsList').addEventListener('change',e=>{
 $('accountsList').addEventListener('click',async e=>{
  const b=e.target.closest('button');if(!b)return;
  b.disabled=true;
- const id=b.dataset.open||b.dataset.close||b.dataset.proxy||b.dataset.remove;
+ const id=b.dataset.open||b.dataset.close||b.dataset.remove;
  try{
   if(b.dataset.open){await api('/account/'+id+'/open',{method:'POST'});alert('Edge открыт. Войди вручную в нужный Instagram.');}
   if(b.dataset.close)await api('/account/'+id+'/close',{method:'POST'});
-  if(b.dataset.proxy){
-   const value=prompt('Новый прокси для аккаунта (host:port:user:password). Пароль сохраняется зашифрованно:');
-   if(value!==null)await json('/account/'+id+'/proxy','PUT',{proxy:value});
-  }
   if(b.dataset.remove){
    if(!confirm('Удалить аккаунт из браузерного списка? Локальный профиль на диске останется.'))return;
    await api('/account/'+id,{method:'DELETE'});
@@ -141,21 +135,13 @@ $('accountsList').addEventListener('click',async e=>{
  }catch(err){alert('Ошибка: '+err.message);}finally{b.disabled=false;}
 });
 async function addAccount(){
- const username=$('newUsername').value.trim(),proxy=$('newProxy').value.trim();
+ const username=$('newUsername').value.trim();
  try{
-  await json('/account','POST',{username,proxy});
-  $('newUsername').value='';$('newProxy').value='';
+  await json('/account','POST',{username});
+  $('newUsername').value='';
   registry=await api('');renderAccounts();
   message('newProxyResult','Аккаунт добавлен. Теперь нажми «Открыть Edge» для входа.','status');
  }catch(e){message('newProxyResult',e.message,'error');}
-}
-async function testProxy(inputId,resultId){
- const value=$(inputId).value.trim();if(!value){message(resultId,'Введи прокси для проверки','error');return;}
- message(resultId,'Проверяю соединение...');
- try{
-  const d=await json('/proxy/test','POST',{proxy:value});
-  message(resultId,d.ok?'✓ Прокси работает · IP '+d.ip+' · '+d.latency_ms+' мс':d.message,d.ok?'status':'error');
- }catch(e){message(resultId,e.message,'error');}
 }
 async function loadVideos(){
  try{
