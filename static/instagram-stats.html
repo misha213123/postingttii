@@ -56,7 +56,7 @@ button,select{font:inherit;background:#1c2d49;border:1px solid #36547c;border-ra
     </section>
     <section class="card">
       <div class="section-title"><div><h2>Лучшие Reels</h2><div class="muted" style="margin-top:5px">По просмотрам, лайкам и приросту</div></div>
-      <select id="reelsSort" onchange="renderReels()" aria-label="Сортировка Reels"><option value="views">По просмотрам</option><option value="likes">По лайкам</option><option value="growth">По приросту просмотров</option><option value="recent">Сначала новые</option></select></div>
+      <div class="toolbar"><label class="muted" style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="onlyChartAccount" onchange="renderReels()"> Только выбранный аккаунт</label><select id="reelsSort" onchange="renderReels()" aria-label="Сортировка Reels"><option value="views">По просмотрам</option><option value="likes">По лайкам</option><option value="growth">По приросту просмотров</option><option value="recent">Сначала новые</option></select></div></div>
       <div id="reelsList" class="reels"><div class="empty">Загрузка Reels...</div></div>
     </section>
   </div>
@@ -120,6 +120,8 @@ function render(){
     const reels=s.reels||[];
     const known=reels.filter(r=>number(r.views)!==null);
     const views=known.reduce((acc,r)=>acc+r.views,0);
+    const liked=reels.filter(r=>number(r.likes)!==null);
+    const likes=liked.reduce((acc,r)=>acc+r.likes,0);
     const needInsights=s.insights_status==='permission_required';
     const delta=metricDelta(s.history);
     return '<article class="account '+(chartSlot===Number(a.slot)?'selected':'')+'">'+
@@ -131,6 +133,7 @@ function render(){
       '<div><b>'+pretty(number(s.media_count))+'</b><small>Все публикации</small></div>'+
       '<div><b>'+pretty(known.length?views:null)+'</b><small>Просмотры Reels</small></div></div>'+
       '<div class="muted '+(delta>0?'positive':delta<0?'negative':'')+'">'+esc(deltaLabel(delta))+' · '+reels.length+' последних Reels</div>'+
+      '<div class="muted" style="margin-top:7px">♥ '+pretty(liked.length?likes:null)+' лайков · ◉ '+reels.length+' Reels/видео в выборке</div>'+
       (s.error?'<small class="note warning">'+esc(s.error)+'</small>':'')+
       (needInsights?'<small class="note warning">Просмотры недоступны: нужен доступ Insights (или Meta ограничила метрику).</small>':'')+
       '<div class="account-actions" style="margin-top:13px"><button onclick="selectChartAccount('+Number(a.slot)+')">График</button>'+
@@ -182,7 +185,8 @@ function renderChart(){
 function renderReels(){
   if(!dashboard)return;
   const sort=$('reelsSort').value;
-  const all=filtered().flatMap(a=>(a.stats?.reels||[]).map(r=>({...r,account:a.stats?.username||a.label,app:a.meta_app})));
+  const rowsFor=filtered().filter(a=>!$('onlyChartAccount').checked||Number(a.slot)===chartSlot);
+  const all=rowsFor.flatMap(a=>(a.stats?.reels||[]).map(r=>({...r,account:a.stats?.username||a.label,app:a.meta_app})));
   const value=r=>sort==='views'?number(r.views):sort==='likes'?number(r.likes):sort==='growth'?number(r.views_change):Date.parse(r.timestamp||'');
   all.sort((a,b)=>(value(b)??-1)-(value(a)??-1));
   const rows=all.slice(0,25);
