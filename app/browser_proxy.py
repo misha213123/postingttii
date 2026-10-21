@@ -6,14 +6,12 @@ are never reflected by public API fields or exception messages.
 from __future__ import annotations
 
 import ipaddress
-import re
 import time
 from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
 SCHEMES = {"http", "https", "socks5"}
-HOST_PORT = re.compile(r"^[^:/@\s]+:\d{1,5}$")
 
 
 def parse_proxy(value: str) -> dict[str, str] | None:
