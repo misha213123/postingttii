@@ -1,0 +1,223 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Instagram Analytics · PostingTTII</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,"Segoe UI",Arial,sans-serif;--bg:#070c15;--card:#101b2a;--line:#243a50;--text:#f1f5ff;--muted:#95a9bf;--accent:#748aff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 10% 0%,#1f3452,#070c15 57%);color:var(--text);min-height:100vh}main{max-width:1300px;margin:auto;padding:29px 20px 65px}
+header{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:23px}h1{font-size:clamp(26px,4vw,38px);margin:9px 0 7px;letter-spacing:-1.2px}h2{font-size:18px;margin:0}a{color:#bdcbff;text-decoration:none}a:hover{text-decoration:underline}
+.muted{color:var(--muted);font-size:12px;line-height:1.5}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.13em;color:#8eb5ef;font-weight:700}.card{background:#101c2cd9;border:1px solid var(--line);border-radius:19px;padding:20px;box-shadow:0 12px 35px #0002}
+button,select{font:inherit;background:#1c2d49;border:1px solid #36547c;border-radius:10px;padding:10px 14px;color:var(--text);cursor:pointer}button:hover{background:#304775}button:disabled{opacity:.6;cursor:wait}.primary{background:linear-gradient(120deg,#6271ed,#326faa);font-weight:700;border-color:#8290ff}
+.state-pill{border:1px solid #465a78;border-radius:40px;padding:8px 12px;font-size:12px;color:#c4d9ef;display:flex;align-items:center;gap:7px}.dot{width:8px;height:8px;background:#71d3a2;border-radius:50%}.state-pill.busy .dot{background:#eac275;animation:pulse 1s infinite}@keyframes pulse{50%{opacity:.3}}
+.toolbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.grid-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:22px}
+.kpi{display:grid;gap:12px;min-height:119px;background:linear-gradient(138deg,#192a44d9,#111a2acf);border:1px solid #293e60;border-radius:17px;padding:19px}
+.kpi label{font-size:12px;color:#aabbd3}.kpi b{font-size:28px;letter-spacing:-1px;line-height:1}.kpi small{font-size:11px;color:#96aacc}
+.layout{display:grid;grid-template-columns:1fr;gap:18px}.section-title{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:15px}
+.tabs{display:flex;gap:5px;padding:5px;background:#0b1625;border:1px solid #253954;border-radius:13px}.tabs button{flex:1;min-width:77px;padding:8px 13px;background:transparent;border:0;color:#adbed5;font-size:12px}.tabs button.active{background:linear-gradient(120deg,#4b59bd,#3478aa);color:#fff}
+.accounts{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.account{background:linear-gradient(135deg,#152640,#101827);border:1px solid #2c415a;border-radius:14px;padding:17px;position:relative;min-width:0}
+.account.selected{border-color:#7995ff;box-shadow:inset 0 0 0 1px #7995ff40}
+.account h3{font-size:16px;overflow-wrap:anywhere;margin:3px 0 4px}.account .badge{font-size:10px;color:#a5b8d8;background:#1a3053;padding:5px 8px;border-radius:30px;border:1px solid #355480;white-space:nowrap}
+.account-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.account-data{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:16px 0 14px}.account-data>div{border-radius:10px;padding:9px 7px;background:#0c182b}.account-data b{display:block;font-size:18px}.account-data small{display:block;font-size:10px;color:#9cb3cd;margin-top:4px}.account-actions{display:flex;gap:7px;flex-wrap:wrap}.account-actions button{padding:7px 10px;font-size:11px}.account small.note{color:#9cb3cd;display:block;margin-top:10px}
+.positive{color:#5be1ae}.negative{color:#ff9b91}.warning{color:#eaca83}
+.row-two{display:grid;grid-template-columns:minmax(300px,1fr) minmax(310px,1.25fr);gap:17px}.chart-shell{height:230px;position:relative;display:flex;align-items:center;justify-content:center;background:linear-gradient(#101f32,#0a1423);border-radius:13px;overflow:hidden;margin-top:16px}
+#followersChart{height:100%;width:100%;display:block}.chart-info{display:flex;justify-content:space-between;gap:10px;margin-top:8px}
+.reels{display:grid;gap:9px;max-height:660px;overflow:auto;padding-right:3px}.reel{background:#0c192a;border:1px solid #263955;border-radius:12px;padding:13px;display:flex;gap:13px;align-items:center}
+.rank{width:37px;height:37px;display:grid;place-items:center;background:#203456;border:1px solid #355582;border-radius:10px;color:#cbd9fa;font-weight:800;font-size:14px;flex-shrink:0}
+.reel-main{flex:1;min-width:0}.reel-title{font-size:13px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:650}.reel-sub{margin-top:5px;color:#9cb1ce;font-size:11px}.reel-numbers{text-align:right;white-space:nowrap;font-size:13px}.reel-numbers small{display:block;color:#94adc9;font-size:11px;margin-top:5px}
+.reel-link{font-size:11px}.help{background:#0b1828;border:1px dashed #304964;border-radius:13px;padding:15px;margin:14px 0 0;font-size:12px;line-height:1.6;color:#adbdcf}
+.footer-note{font-size:11px;color:#899cb2;line-height:1.6;margin-top:17px}
+.empty{padding:25px 10px;text-align:center;color:#a0b2c9;line-height:1.5;font-size:13px}
+@media(max-width:1020px){.accounts{grid-template-columns:repeat(2,1fr)}.row-two{grid-template-columns:1fr}}
+@media(max-width:680px){main{padding:18px 11px}.grid-summary{grid-template-columns:repeat(2,1fr)}.accounts{grid-template-columns:1fr}.card{padding:16px}.kpi b{font-size:24px}.reel-numbers{font-size:11px}.toolbar{width:100%}.toolbar button{flex:1}}
+</style></head><body><main>
+<header>
+  <div><a href="/">← Вернуться в PostingTTII</a><div class="eyebrow" style="margin-top:13px">Meta 1 + Meta 2 · подключённые аккаунты</div><h1>Instagram Analytics <span style="font-size:24px">↗</span></h1><div class="muted">Подписчики, просмотры, лайки, Reels и рост — в одном месте</div></div>
+  <div class="toolbar"><div class="state-pill" id="refreshState"><span class="dot"></span><span id="refreshLabel">Подключаюсь...</span></div><button class="primary" id="refreshButton" onclick="manualRefresh()">↻ Обновить статистику</button></div>
+</header>
+<section class="grid-summary" aria-label="Общие показатели">
+  <div class="kpi"><label>Подключено аккаунтов</label><b id="kpiAccounts">—</b><small>Meta 1 + Meta 2</small></div>
+  <div class="kpi"><label>Всего подписчиков</label><b id="kpiFollowers">—</b><small id="followerKpiNote">Из доступных профилей</small></div>
+  <div class="kpi"><label>Просмотры Reels</label><b id="kpiViews">—</b><small>Последние доступные ролики</small></div>
+  <div class="kpi"><label>Лайки Reels</label><b id="kpiLikes">—</b><small>Последние доступные ролики</small></div>
+</section>
+<div class="layout">
+  <section class="card">
+    <div class="section-title"><div><h2>Все Instagram-аккаунты</h2><div class="muted" id="accountsHint" style="margin-top:5px">Загрузка...</div></div><div class="tabs" role="group" aria-label="Выбор Meta-приложения"><button id="filterAll" class="active" onclick="setMetaFilter(0)">Все</button><button id="filterOne" onclick="setMetaFilter(1)">Meta 1</button><button id="filterTwo" onclick="setMetaFilter(2)">Meta 2</button></div></div>
+    <div class="accounts" id="accountCards"><div class="empty">Получаю данные...</div></div>
+    <div class="help">**О разрешениях:** просмотры Reels требуют Instagram Insights. Для аккаунтов, у которых такого доступа ещё нет, нажми «Подключить Insights» и открой ссылку в браузерном профиле с нужным Instagram. Действующие публикации через Meta останутся доступны. Данные не появляются мгновенно — приложение сохраняет историю с момента первого успешного замера.</div>
+  </section>
+  <div class="row-two">
+    <section class="card">
+      <div class="section-title"><div><h2>Рост подписчиков</h2><div class="muted" id="chartAccountLabel" style="margin-top:5px">Выбери аккаунт</div></div><select id="chartAccountSelect" onchange="selectChartAccount(this.value)" aria-label="Аккаунт для графика"></select></div>
+      <div class="chart-shell" id="chartShell"><div class="empty">Ожидаем первый замер подписчиков...</div></div>
+      <div class="chart-info"><span class="muted" id="chartFrom">—</span><span class="muted" id="chartTo">—</span></div>
+    </section>
+    <section class="card">
+      <div class="section-title"><div><h2>Лучшие Reels</h2><div class="muted" style="margin-top:5px">По просмотрам, лайкам и приросту</div></div>
+      <select id="reelsSort" onchange="renderReels()" aria-label="Сортировка Reels"><option value="views">По просмотрам</option><option value="likes">По лайкам</option><option value="growth">По приросту просмотров</option><option value="recent">Сначала новые</option></select></div>
+      <div id="reelsList" class="reels"><div class="empty">Загрузка Reels...</div></div>
+    </section>
+  </div>
+</div>
+<div class="footer-note">Статистика обновляется автоматически каждые 30 минут, пока PostingTTII запущен, или вручную по кнопке. Отображаются до 50 последних Reels на аккаунт; Insights просмотров запрашиваются для 30 последних. В суммах участвуют только полученные показатели, а не неизвестные значения. При отключённом компьютере сбор истории останавливается.</div>
+</main>
+<script>
+let dashboard=null;
+let metaFilter=0;
+let chartSlot=null;
+let wasRefreshing=false;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','"':'&quot;'}[c]));
+const pretty=n=>n===null||n===undefined?'—':Intl.NumberFormat('ru-RU').format(n);
+const number=n=>typeof n==='number'&&Number.isFinite(n)?n:null;
+const since=t=>t?new Date(t*1000).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'ещё нет замеров';
+const safeLink=url=>typeof url==='string'&&/^https:\/\/(www\.)?instagram\.com\//.test(url)?url:null;
+const filtered=()=>dashboard?.accounts.filter(a=>!metaFilter||Number(a.meta_app)===metaFilter)||[];
+
+function updateRefreshState(){
+  const busy=!!dashboard?.refreshing;
+  $('refreshState').classList.toggle('busy',busy);
+  $('refreshLabel').textContent=busy?'Собираю показатели...':(dashboard?.last_checked?'Замер: '+since(dashboard.last_checked):'Ожидание первого замера');
+  $('refreshButton').disabled=busy;
+  $('accountsHint').textContent='Обновление раз в '+(dashboard?.interval_minutes||30)+' минут · сохранённые аккаунты: '+filtered().length;
+}
+function setMetaFilter(x){metaFilter=x;render();}
+function selectChartAccount(slot){chartSlot=Number(slot);renderChart();}
+function metricDelta(history){
+  const good=(history||[]).filter(p=>number(p.followers)!==null);
+  if(good.length<2)return null;
+  return good[good.length-1].followers-good[0].followers;
+}
+function deltaLabel(delta){
+  if(delta===null)return 'Рост: —';
+  return (delta>0?'+':'')+pretty(delta)+' с первого замера';
+}
+function connectInsights(slot,app){
+  const url=location.origin+'/connect/instagram/'+slot+'?meta_app='+app+'&insights=true';
+  if(navigator.clipboard&&window.isSecureContext){
+    navigator.clipboard.writeText(url).then(()=>alert('Ссылка скопирована. Открой её в браузере с Instagram-аккаунтом. После входа повторно нажми «Обновить статистику».')).catch(()=>prompt('Скопируй ссылку авторизации Insights:',url));
+  }else prompt('Скопируй ссылку и открой в браузере нужного Instagram-профиля:',url);
+}
+function render(){
+  if(!dashboard)return;
+  const accounts=filtered();
+  for(const app of [0,1,2])$('filter'+(['All','One','Two'][app])).classList.toggle('active',metaFilter===app);
+  updateRefreshState();
+  const stats=accounts.map(a=>a.stats).filter(Boolean);
+  const countKnown=stats.filter(s=>number(s.followers)!==null).length;
+  const reels=stats.flatMap(s=>s.reels||[]);
+  const views=reels.map(r=>number(r.views)).filter(x=>x!==null);
+  const likes=reels.map(r=>number(r.likes)).filter(x=>x!==null);
+  $('kpiAccounts').textContent=pretty(accounts.length);
+  $('kpiFollowers').textContent=countKnown?pretty(stats.reduce((s,a)=>s+(number(a.followers)||0),0)):'—';
+  $('followerKpiNote').textContent='Доступно по '+countKnown+' из '+accounts.length+' аккаунтов';
+  $('kpiViews').textContent=views.length?pretty(views.reduce((a,b)=>a+b,0)):'—';
+  $('kpiLikes').textContent=likes.length?pretty(likes.reduce((a,b)=>a+b,0)):'—';
+  $('accountCards').innerHTML=accounts.length?accounts.map(a=>{
+    const s=a.stats||{};
+    const reels=s.reels||[];
+    const known=reels.filter(r=>number(r.views)!==null);
+    const views=known.reduce((acc,r)=>acc+r.views,0);
+    const needInsights=s.insights_status==='permission_required';
+    const delta=metricDelta(s.history);
+    return '<article class="account '+(chartSlot===Number(a.slot)?'selected':'')+'">'+
+      '<div class="account-head"><span class="badge">Meta '+Number(a.meta_app)+'</span><span class="muted">#'+Number(a.slot)+'</span></div>'+
+      '<h3>@'+esc(s.username||a.label||'Instagram')+'</h3>'+
+      '<div class="muted">'+(s.last_updated?'Обновлено '+since(s.last_updated):'Данные ещё не получены')+'</div>'+
+      '<div class="account-data">'+
+      '<div><b>'+pretty(number(s.followers))+'</b><small>Подписчики</small></div>'+
+      '<div><b>'+pretty(number(s.media_count))+'</b><small>Все публикации</small></div>'+
+      '<div><b>'+pretty(known.length?views:null)+'</b><small>Просмотры Reels</small></div></div>'+
+      '<div class="muted '+(delta>0?'positive':delta<0?'negative':'')+'">'+esc(deltaLabel(delta))+' · '+reels.length+' последних Reels</div>'+
+      (s.error?'<small class="note warning">'+esc(s.error)+'</small>':'')+
+      (needInsights?'<small class="note warning">Просмотры недоступны: нужен доступ Insights (или Meta ограничила метрику).</small>':'')+
+      '<div class="account-actions" style="margin-top:13px"><button onclick="selectChartAccount('+Number(a.slot)+')">График</button>'+
+      (needInsights?'<button onclick="connectInsights('+Number(a.slot)+','+Number(a.meta_app)+')">Подключить Insights</button>':'')+
+      '</div></article>';
+  }).join(''):'<div class="empty">Пока нет подключённых Instagram-аккаунтов в этой вкладке.</div>';
+  renderChartSelect();
+  renderChart();
+  renderReels();
+}
+function renderChartSelect(){
+  const accounts=filtered();
+  if(!accounts.length){chartSlot=null;$('chartAccountSelect').replaceChildren();return;}
+  if(!accounts.some(a=>Number(a.slot)===chartSlot))chartSlot=Number(accounts[0].slot);
+  const sel=$('chartAccountSelect');
+  sel.replaceChildren();
+  for(const a of accounts){const option=document.createElement('option');option.value=a.slot;option.textContent='@'+(a.stats?.username||a.label)+' · Meta '+a.meta_app;sel.appendChild(option);}
+  sel.value=String(chartSlot);
+}
+function renderChart(){
+  const account=filtered().find(a=>Number(a.slot)===chartSlot);
+  const label=account?.stats?.username||account?.label||'Instagram';
+  $('chartAccountLabel').textContent=account?'@'+label:'Нет аккаунта';
+  const series=(account?.stats?.history||[]).filter(p=>number(p.followers)!==null);
+  const shell=$('chartShell');
+  shell.replaceChildren();
+  if(series.length===0){shell.innerHTML='<div class="empty">Нет замеров подписчиков. Дождись первого успешного обновления.</div>';$('chartFrom').textContent='—';$('chartTo').textContent='—';return;}
+  const W=750,H=235,left=48,right=20,top=27,bottom=38;
+  const min=Math.min(...series.map(p=>p.followers)),max=Math.max(...series.map(p=>p.followers));
+  const span=Math.max(1,max-min),t0=series[0].at,t1=series[series.length-1].at;
+  const x=t=>left+(t-t0)/Math.max(1,t1-t0)*(W-left-right);
+  const y=n=>H-bottom-(n-min)/span*(H-bottom-top);
+  const SVG='http://www.w3.org/2000/svg',svg=document.createElementNS(SVG,'svg');
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);svg.setAttribute('preserveAspectRatio','none');svg.id='followersChart';
+  for(let i=0;i<=3;i++){
+    const yy=top+(H-top-bottom)*i/3;
+    const l=document.createElementNS(SVG,'line');l.setAttribute('x1',left);l.setAttribute('x2',W-right);l.setAttribute('y1',yy);l.setAttribute('y2',yy);l.setAttribute('stroke','#30435c');l.setAttribute('stroke-dasharray','5 8');svg.append(l);
+    const t=document.createElementNS(SVG,'text');t.setAttribute('x',left-9);t.setAttribute('y',yy+4);t.setAttribute('text-anchor','end');t.setAttribute('fill','#96aeca');t.setAttribute('font-size','13');
+    t.textContent=pretty(Math.round(max-span*i/3));svg.append(t);
+  }
+  const poly=document.createElementNS(SVG,'polyline');
+  poly.setAttribute('points',series.map(p=>x(p.at)+','+y(p.followers)).join(' '));
+  poly.setAttribute('fill','none');poly.setAttribute('stroke','#7c9bff');poly.setAttribute('stroke-width','3');poly.setAttribute('stroke-linecap','round');poly.setAttribute('stroke-linejoin','round');svg.append(poly);
+  const point=series[series.length-1],dot=document.createElementNS(SVG,'circle');dot.setAttribute('cx',x(point.at));dot.setAttribute('cy',y(point.followers));dot.setAttribute('r','5');dot.setAttribute('fill','#88e0d5');dot.setAttribute('stroke','#101d31');dot.setAttribute('stroke-width','3');svg.append(dot);
+  shell.append(svg);
+  $('chartFrom').textContent=since(t0)+' · '+pretty(series[0].followers);
+  $('chartTo').textContent=since(t1)+' · '+pretty(point.followers);
+}
+function renderReels(){
+  if(!dashboard)return;
+  const sort=$('reelsSort').value;
+  const all=filtered().flatMap(a=>(a.stats?.reels||[]).map(r=>({...r,account:a.stats?.username||a.label,app:a.meta_app})));
+  const value=r=>sort==='views'?number(r.views):sort==='likes'?number(r.likes):sort==='growth'?number(r.views_change):Date.parse(r.timestamp||'');
+  all.sort((a,b)=>(value(b)??-1)-(value(a)??-1));
+  const rows=all.slice(0,25);
+  $('reelsList').innerHTML=rows.length?rows.map((r,i)=>{
+    const link=safeLink(r.permalink);
+    const title=r.caption||'Reel без описания';
+    const extra=sort==='growth'?(number(r.views_change)===null?'—':((r.views_change>0?'+':'')+pretty(r.views_change)+' новых просмотров')):null;
+    return '<div class="reel"><div class="rank">'+String(i+1).padStart(2,'0')+'</div>'+
+      '<div class="reel-main"><div class="reel-title" title="'+esc(title)+'">'+esc(title)+'</div>'+
+      '<div class="reel-sub">@'+esc(r.account)+' · Meta '+Number(r.app)+' · '+esc(r.timestamp?new Date(r.timestamp).toLocaleDateString('ru-RU'):'')+'</div>'+
+      (link?'<a class="reel-link" href="'+esc(link)+'" target="_blank" rel="noopener noreferrer">Открыть Reel ↗</a>':'')+
+      '</div><div class="reel-numbers"><b>'+pretty(number(r.views))+'</b> <span class="muted">просм.</span><small>♥ '+pretty(number(r.likes))+' · ◯ '+pretty(number(r.comments))+'</small>'+
+      (extra?'<small>'+esc(extra)+'</small>':'')+'</div></div>';
+  }).join(''):'<div class="empty">Reels пока не получены. Нажми «Обновить статистику» или дождись фонового сбора данных.</div>';
+}
+async function loadStats(){
+  const response=await fetch('/api/instagram-stats');
+  if(!response.ok)throw new Error('Не удалось получить статистику (HTTP '+response.status+')');
+  dashboard=await response.json();
+  const before=wasRefreshing;
+  wasRefreshing=dashboard.refreshing;
+  render();
+  if(before&&!wasRefreshing)document.title='✓ Обновлено · Instagram Analytics';
+}
+async function manualRefresh(){
+  $('refreshButton').disabled=true;
+  try{
+    const response=await fetch('/api/instagram-stats/refresh',{method:'POST'});
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    await loadStats();
+  }catch(err){alert('Не удалось запустить обновление: '+err.message);$('refreshButton').disabled=false;}
+}
+async function poll(){
+  try{await loadStats();}
+  catch(err){$('refreshLabel').textContent=err.message;$('refreshButton').disabled=false;}
+}
+poll();setInterval(poll,8000);
+</script></body></html>
