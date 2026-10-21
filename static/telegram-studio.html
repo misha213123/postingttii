@@ -270,6 +270,16 @@ function syncInstagramBannerPreview(){
   el('igBannerScaleValue').textContent=videoBannerState.banner_width;
   el('igBannerEnabled').checked=!!videoBannerState.banner_enabled;
 }
+function updateVideoBannerRatio(ratio){
+  videoBannerRatio=ratio;
+  const before=videoBannerState.banner_x+':'+videoBannerState.banner_y+':'+videoBannerState.banner_width;
+  syncInstagramBannerPreview();
+  const after=videoBannerState.banner_x+':'+videoBannerState.banner_y+':'+videoBannerState.banner_width;
+  if(before!==after){
+    Object.assign(instagramLayout,videoBannerState);
+    saveInstagramLayout();
+  }
+}
 function loadVideoBannerPreview(){
   const img=el('igAdBannerImage'),vid=el('igAdBannerVideo');
   img.onload=null;vid.onloadedmetadata=null;
@@ -279,14 +289,14 @@ function loadVideoBannerPreview(){
   videoBannerURL=igApi+'/banner/preview?t='+Date.now();
   if(videoBannerKind==='video'){
     vid.onloadedmetadata=()=>{
-      if(vid.videoWidth&&vid.videoHeight)videoBannerRatio=vid.videoHeight/vid.videoWidth;
-      syncInstagramBannerPreview();
+      if(vid.videoWidth&&vid.videoHeight)updateVideoBannerRatio(vid.videoHeight/vid.videoWidth);
+      else syncInstagramBannerPreview();
     };
     vid.src=videoBannerURL;vid.load();
   }else{
     img.onload=()=>{
-      if(img.naturalWidth&&img.naturalHeight)videoBannerRatio=img.naturalHeight/img.naturalWidth;
-      syncInstagramBannerPreview();
+      if(img.naturalWidth&&img.naturalHeight)updateVideoBannerRatio(img.naturalHeight/img.naturalWidth);
+      else syncInstagramBannerPreview();
     };
     img.src=videoBannerURL;
   }
@@ -611,8 +621,10 @@ function loadBannerPreview(){
   const src=api+'/banner/preview?t='+Date.now();
   if(bannerKind==='video'){
     video.onloadedmetadata=()=>{
+      const before=designState.banner_x+':'+designState.banner_y;
       if(video.videoWidth&&video.videoHeight)bannerRatio=video.videoHeight/video.videoWidth;
       updateDesignPreview();
+      if(before!==designState.banner_x+':'+designState.banner_y)saveRenderDesign();
       video.play().catch(()=>{});
     };
     video.onerror=()=>{
@@ -623,8 +635,10 @@ function loadBannerPreview(){
     video.play().catch(()=>{});
   }else{
     img.onload=()=>{
+      const before=designState.banner_x+':'+designState.banner_y;
       bannerRatio=img.naturalHeight/img.naturalWidth;
       updateDesignPreview();
+      if(before!==designState.banner_x+':'+designState.banner_y)saveRenderDesign();
     };
     img.onerror=()=>{
       designStatus('Не удалось загрузить миниатюру баннера');
