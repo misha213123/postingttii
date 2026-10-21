@@ -380,8 +380,8 @@ async def upload_background(file: UploadFile = File(...)):
                     else:
                         photo = photo.convert("RGB")
                     photo.save(dest, "JPEG", quality=92, optimize=True)
-            except (OSError, ValueError, UnidentifiedImageError):
-                raise HTTPException(400, "Повреждённое или неподдерживаемое изображение")
+            except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError):
+                raise HTTPException(400, "Повреждённое, слишком большое или неподдерживаемое изображение")
         else:
             source.replace(dest)
     except Exception:
