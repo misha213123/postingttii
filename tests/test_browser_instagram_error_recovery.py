@@ -245,6 +245,11 @@ class CreateDialogRegressionTests(unittest.IsolatedAsyncioTestCase):
             return CreateDialogRegressionTests.Locator(self, role)
 
         def get_by_text(self, label, exact=False):
+            if self.kind == "text" and not exact:
+                return CreateDialogRegressionTests.Locator(
+                    self, "create_text", present=True,
+                    on_click=lambda: setattr(self, "file_present", True),
+                )
             return CreateDialogRegressionTests.Locator(self, "text")
 
         async def wait_for_timeout(self, delay):
@@ -276,6 +281,13 @@ class CreateDialogRegressionTests(unittest.IsolatedAsyncioTestCase):
         await browser._open_create_picker(page, item)
         self.assertTrue(page.file_present)
         self.assertIn("create_icon", item["step_label"])
+
+    async def test_plain_text_create_sidebar_starts_picker(self):
+        page = self.Page("text")
+        item = {}
+        await browser._open_create_picker(page, item)
+        self.assertTrue(page.file_present)
+        self.assertIn("create_text", item["step_label"])
 
     async def test_create_menu_post_option_before_file_picker(self):
         page = self.Page("dropdown")
