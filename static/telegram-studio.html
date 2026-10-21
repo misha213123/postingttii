@@ -237,29 +237,85 @@ function clampBanner(){
   designState.banner_x=Math.max(0,Math.min(Math.round(designState.banner_x),Math.max(0,1080-designState.banner_width)));
   designState.banner_y=Math.max(0,Math.min(Math.round(designState.banner_y),Math.max(0,1920-bannerHeightPx())));
 }
+const videoBannerState={banner_enabled:false,banner_x:270,banner_y:1550,banner_width:540};
+let videoBannerAvailable=false,videoBannerKind='image',videoBannerRatio=.25,videoBannerURL='';
+function clampVideoBanner(){
+  videoBannerState.banner_width=Math.max(100,Math.min(1080,Math.round(Number(videoBannerState.banner_width)||540)));
+  videoBannerState.banner_x=Math.max(0,Math.min(Math.round(Number(videoBannerState.banner_x)||0),1080-videoBannerState.banner_width));
+  videoBannerState.banner_y=Math.max(0,Math.min(Math.round(Number(videoBannerState.banner_y)||0),
+    Math.max(0,1920-videoBannerState.banner_width*videoBannerRatio)));
+}
 function syncInstagramBannerPreview(){
-  const visible=designState.banner_enabled&&bannerAvailable;
-  const keyed=visible&&designState.chromakey_enabled&&bannerChromaReady&&!chromaPicking;
-  const tgImage=el('designBanner'),tgVideo=el('designBannerVideo');
-  const image=el('igAdBannerImage'),video=el('igAdBannerVideo'),canvas=el('igAdBannerKeyed');
-  const layout=[image,video,canvas];
-  for(const layer of layout){
-    layer.style.width=(designState.banner_width/1080*100)+'%';
-    layer.style.left=(designState.banner_x/1080*100)+'%';
-    layer.style.top=(designState.banner_y/1920*100)+'%';
+  const visible=!!videoBannerState.banner_enabled&&videoBannerAvailable;
+  clampVideoBanner();
+  const img=el('igAdBannerImage'),vid=el('igAdBannerVideo'),canvas=el('igAdBannerKeyed'),frame=el('igBannerMove');
+  for(const layer of [img,vid,canvas,frame]){
+    layer.style.width=(videoBannerState.banner_width/1080*100)+'%';
+    layer.style.left=(videoBannerState.banner_x/1080*100)+'%';
+    layer.style.top=(videoBannerState.banner_y/1920*100)+'%';
   }
-  canvas.style.height=(bannerHeightPx()/1920*100)+'%';
-  canvas.style.display=keyed?'block':'none';
-  image.style.display=visible&&!keyed&&bannerKind==='image'?'block':'none';
-  video.style.display=visible&&!keyed&&bannerKind==='video'?'block':'none';
-  const imageSrc=tgImage.getAttribute('src');
-  if(visible&&bannerKind==='image'&&imageSrc&&image.getAttribute('src')!==imageSrc)image.src=imageSrc;
-  const videoSrc=tgVideo.getAttribute('src');
-  if(visible&&bannerKind==='video'&&videoSrc&&video.getAttribute('src')!==videoSrc){
-    video.src=videoSrc;video.load();
+  const height=(videoBannerState.banner_width*videoBannerRatio/1920*100)+'%';
+  canvas.style.height=height;frame.style.height=height;
+  frame.hidden=!visible;
+  // The video preview has its own banner, never the circle banner.
+  img.style.display=visible&&videoBannerKind==='image'?'block':'none';
+  vid.style.display=visible&&videoBannerKind==='video'?'block':'none';
+  canvas.style.display='none';
+  if(visible&&videoBannerKind==='video')vid.play().catch(()=>{});
+  else vid.pause();
+  el('igBannerScale').value=videoBannerState.banner_width;
+  el('igBannerScaleValue').textContent=videoBannerState.banner_width;
+  el('igBannerEnabled').checked=!!videoBannerState.banner_enabled;
+}
+function loadVideoBannerPreview(){
+  const img=el('igAdBannerImage'),vid=el('igAdBannerVideo');
+  img.onload=null;vid.onloadedmetadata=null;
+  img.removeAttribute('src');vid.pause();vid.removeAttribute('src');vid.load();
+  videoBannerRatio=.25;
+  if(!videoBannerAvailable){syncInstagramBannerPreview();return;}
+  videoBannerURL=igApi+'/banner/preview?t='+Date.now();
+  if(videoBannerKind==='video'){
+    vid.onloadedmetadata=()=>{
+      if(vid.videoWidth&&vid.videoHeight)videoBannerRatio=vid.videoHeight/vid.videoWidth;
+      syncInstagramBannerPreview();
+    };
+    vid.src=videoBannerURL;vid.load();
+  }else{
+    img.onload=()=>{
+      if(img.naturalWidth&&img.naturalHeight)videoBannerRatio=img.naturalHeight/img.naturalWidth;
+      syncInstagramBannerPreview();
+    };
+    img.src=videoBannerURL;
   }
-  if(visible&&bannerKind==='video')video.play().catch(()=>{});
-  else video.pause();
+  syncInstagramBannerPreview();
+}
+async function uploadVideoBanner(event){
+  const file=event.target.files?.[0];if(!file)return;
+  try{
+    await instagramLayoutSave;
+    const form=new FormData();form.append('file',file);
+    const d=await igRequest('/banner',{method:'POST',body:form});
+    videoBannerAvailable=d.available;videoBannerKind=d.kind||'image';
+    instagramLayout.banner_enabled=true;videoBannerState.banner_enabled=true;
+    await saveInstagramLayout();
+    loadVideoBannerPreview();
+    el('igBannerStatus').textContent='✓ Видео-баннер сохранён отдельно от кружков';
+  }catch(err){el('igBannerStatus').textContent='Ошибка: '+err.message;notify(err);}
+}
+async function deleteVideoBanner(){
+  try{
+    const d=await igRequest('/banner',{method:'DELETE'});
+    videoBannerAvailable=d.available;videoBannerState.banner_enabled=false;
+    instagramLayout.banner_enabled=false;await saveInstagramLayout();
+    loadVideoBannerPreview();
+    el('igBannerStatus').textContent='Баннер обычных видео отключён';
+  }catch(err){notify(err);}
+}
+function resetVideoBanner(){
+  videoBannerState.banner_x=Math.round((1080-videoBannerState.banner_width)/2);
+  videoBannerState.banner_y=Math.round(1920-videoBannerState.banner_width*videoBannerRatio-100);
+  Object.assign(instagramLayout,videoBannerState);
+  syncInstagramBannerPreview();saveInstagramLayout();
 }
 function updateDesignPreview(){
   const size=designState.circle_size;
@@ -315,6 +371,12 @@ function updateDesignPreview(){
   el('chromaBlend').value=Math.round(designState.chromakey_blend*100);
   el('chromaSimilarityValue').textContent=Math.round(designState.chromakey_similarity*100);
   el('chromaBlendValue').textContent=Math.round(designState.chromakey_blend*100);
+  const drag=el('tgBannerMove'),on=designState.banner_enabled&&bannerAvailable&&!chromaPicking;
+  drag.hidden=!on;
+  drag.style.width=(designState.banner_width/1080*100)+'%';
+  drag.style.left=(designState.banner_x/1080*100)+'%';
+  drag.style.top=(designState.banner_y/1920*100)+'%';
+  drag.style.height=bannerHeightPx()/1920*100+'%';
   syncInstagramBannerPreview();
 }
 
@@ -427,12 +489,8 @@ function drawChromaPreview(now){
       pixels[i+3]=Math.round(pixels[i+3]*alpha);
     }
     canvas.getContext('2d').putImageData(frame,0,0);
-    const igCanvas=el('igAdBannerKeyed');
-    if(igCanvas.width!==width||igCanvas.height!==height){
-      igCanvas.width=width;igCanvas.height=height;
-    }
-    igCanvas.getContext('2d').clearRect(0,0,width,height);
-    igCanvas.getContext('2d').drawImage(canvas,0,0);
+    // Normal-video banner has a distinct uploaded source; do not copy the
+    // circle banner pixels into its canvas.
     if(!bannerChromaReady){
       bannerChromaReady=true;
       updateDesignPreview();
