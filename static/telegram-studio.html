@@ -49,6 +49,10 @@
 .chroma-controls code{letter-spacing:1px;font-size:13px;color:#e5f2ff}
 #chromaPickButton.active{background:linear-gradient(125deg,#326d93,#405fcf);border-color:#92d3ff}
 .ig-ad-preview{pointer-events:none!important;border:none!important;box-shadow:none!important;z-index:6!important}
+.banner-drag-frame{position:absolute;z-index:8;border:2px dashed #bbd5ff;box-shadow:0 0 0 2px #05132366;cursor:move;touch-action:none;border-radius:5px}
+.banner-drag-frame[hidden]{display:none}
+.banner-drag-frame>.editor-handle{bottom:-8px;right:-8px;border-radius:5px;cursor:nwse-resize}
+#igBannerMove{z-index:9}
 .latest-render-view{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap}
 .latest-render-view>img,.latest-render-view>video{display:block;width:220px;max-width:100%;aspect-ratio:9/16;object-fit:contain;background:#060d1a;border-radius:14px;border:1px solid #405475}
 .latest-render-details{flex:1;min-width:240px}
@@ -108,6 +112,7 @@
       <img class="preview-banner" id="designBanner" alt="Рекламный баннер" draggable="false">
       <video class="preview-banner" id="designBannerVideo" aria-label="Видео-баннер" autoplay muted playsinline loop preload="metadata"></video>
       <canvas class="preview-banner preview-chroma" id="chromaPreviewCanvas" width="320" height="100" style="display:none" aria-label="Баннер с удалённым фоном"></canvas>
+      <div id="tgBannerMove" class="banner-drag-frame" hidden title="Тяни баннер; меняй размер за правый нижний угол"><span class="editor-handle" data-banner-resize="telegram"></span></div>
       <div id="chromaPickOverlay" class="chroma-pick-overlay" hidden aria-label="Выбери цвет фона на рекламном баннере">
         <div class="tip">Пипетка · нажми по цвету фона НА БАННЕРЕ</div>
       </div>
@@ -122,7 +127,7 @@
     <div class="editor-subtitle">Кружок</div>
     <div class="design-field"><label for="circleScale">Диаметр: <span id="circleScaleValue">1040</span> px</label>
       <input id="circleScale" type="range" min="400" max="1080" step="10" value="1040">
-      <span class="editor-note">Тяни кружок по видео. Размер меняется ползунком или за белый маркер на окружности.</span></div>
+      <span class="editor-note">Тяни кружок по видео. Размер меняется ползунком или за белый маркер на окружности. Баннер тоже можно перемещать и масштабировать за угол.</span></div>
     <label class="design-check"><input type="checkbox" id="bannerEnabled">Добавить рекламный баннер</label>
     <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
     <div class="chroma-panel">
@@ -142,7 +147,8 @@
     </div>
     <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
     <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
-      <input id="bannerScale" type="range" min="100" max="1080" step="10" value="540"></div>
+      <input id="bannerScale" type="range" min="100" max="1080" step="10" value="540">
+      <span class="editor-note">Размер можно менять ползунком или за правый нижний угол баннера на превью.</span></div>
     <div class="inline"><button id="resetBannerPosition" type="button" onclick="resetBannerPosition()">Сбросить позицию</button>
       <button id="removeBanner" type="button" class="danger" onclick="removeDesignBanner()">Убрать баннер</button></div>
     <span class="muted" id="designStatus">Загрузка настроек оформления...</span>
@@ -159,6 +165,7 @@
         <img id="igAdBannerImage" class="preview-banner ig-ad-preview" alt="Рекламный баннер поверх Instagram-видео" draggable="false">
         <video id="igAdBannerVideo" class="preview-banner ig-ad-preview" muted autoplay playsinline loop preload="metadata"></video>
         <canvas id="igAdBannerKeyed" class="preview-banner ig-ad-preview" width="320" height="100" style="display:none" aria-label="Баннер с удалённым фоном поверх обычного видео"></canvas>
+        <div id="igBannerMove" class="banner-drag-frame" hidden title="Тяни видео-баннер или меняй размер за угол"><span class="editor-handle" data-banner-resize="instagram"></span></div>
         <div class="safe-area"></div>
         <div class="editor-video-frame" id="igLayoutDrag" title="Перетащи обычное Instagram-видео или потяни белый маркер">
           <video id="igLayoutVideo" muted playsinline loop preload="metadata"></video>
@@ -180,7 +187,15 @@
       <div class="design-field"><label for="igLayoutBgSelect">Фон / предпросмотр</label><select id="igLayoutBgSelect"></select>
       <span class="editor-note" id="igBgDescription">При смешивании фон меняется для каждого ролика. Прозрачность регулирует видимость обычного видео поверх фона.</span></div>
       <div class="editor-subtitle">Обычное видео</div>
-      <div class="editor-note">Рекламный баннер и хромакей из вкладки «Telegram · кружки» также накладываются на обычные видео. Его положение и размер общие для обоих шаблонов.</div>
+      <div class="editor-note">Баннер обычного видео настраивается отдельно от баннера кружков. Загрузи свой PNG/JPG/WebP/MP4, двигай баннер на превью и меняй размер за нижний угол.</div>
+      <label class="design-check"><input id="igBannerEnabled" type="checkbox"> Добавить баннер к обычным видео</label>
+      <div class="design-field"><label for="igBannerFile">Отдельный баннер обычных видео (PNG, JPG, WEBP, MP4, WebM)</label>
+        <input id="igBannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm">
+        <span class="editor-note" id="igBannerStatus">Загружаем отдельный видео-баннер...</span></div>
+      <div class="design-field"><label for="igBannerScale">Ширина баннера: <span id="igBannerScaleValue">540</span> px</label>
+        <input id="igBannerScale" type="range" min="100" max="1080" step="10" value="540"></div>
+      <div class="inline"><button type="button" onclick="resetVideoBanner()">Сбросить позицию баннера</button>
+        <button type="button" class="danger" onclick="deleteVideoBanner()">Убрать видео-баннер</button></div>
       <div class="design-field"><label for="igVideoScale">Ширина видео: <span id="igVideoScaleValue">950</span> px</label>
         <input id="igVideoScale" type="range" min="240" max="1080" step="10" value="950"></div>
       <div class="design-field"><label for="igVideoOpacity">Прозрачность: <span id="igVideoOpacityValue">100</span>%</label>
