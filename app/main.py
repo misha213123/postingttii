@@ -109,7 +109,7 @@ IG_CIRCLE_CLAIMS: dict[str, str] = {}
 # YouTube and TikTok were uploading too. Limit Meta video processing to one
 # account at a time to avoid saturating the public tunnel. Other platforms
 # continue normally. This does not bypass Meta's content validation.
-INSTAGRAM_META_SEMAPHORE = asyncio.Semaphore(1)
+INSTAGRAM_META_LOCKS: dict[int, asyncio.Lock] = {}
 
 def _circle_id(filename: str) -> str | None:
     import re
@@ -364,10 +364,10 @@ async def _publish_single_target(
                 slot, video, metadata["description"], title=metadata["title"]
             )
         elif platform == "instagram":
-            # Throttle only Instagram, keeping TikTok/YouTube posting independent.
-            # Keep the media URLs registered while the Meta container is being
-            # created and processed; do not start a second Meta fetch meanwhile.
-            async with INSTAGRAM_META_SEMAPHORE:
+            # The scheduler starts one posting task per account simultaneously.
+            # Hold a separate lock per Instagram slot, not a global Meta lock:
+            # no two uploads overlap on one account, while other slots progress.
+            async with INSTAGRAM_META_LOCKS.setdefault(slot, asyncio.Lock()):
                 cover_path = COVER_DIR / f"{slot}.jpg"
                 if not cover_path.exists():
                     raise HTTPException(400, f"Instagram #{slot}: сначала загрузи обложку на /instagram-covers")
