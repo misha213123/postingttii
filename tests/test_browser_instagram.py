@@ -293,6 +293,63 @@ class BrowserProxyIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("s3cret",json.dumps(result))
         self.assertIn("hello:s3cret@", fake.call_args.kwargs["proxy"])
 
+    async def test_proxy_connect_timeout_reports_specific_message_without_secrets(self):
+        from app import browser_proxy as proxy
+        class DelayedClient:
+            def __init__(self,**kwargs): pass
+            async def __aenter__(self):
+                raise proxy.httpx.ConnectTimeout("private credential should not appear")
+            async def __aexit__(self,*args): pass
+        with patch.object(proxy.httpx, "AsyncClient", side_effect=DelayedClient):
+            result=await proxy.check_proxy("res.example:8080:owner:privatepass")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "connect_timeout")
+        self.assertIn("Тайм-аут",result["message"])
+        self.assertNotIn("privatepass",json.dumps(result))
+
+    async def test_proxy_auth_407_is_reported(self):
+        from app import browser_proxy as proxy
+        class AuthFailure:
+            status_code = 407
+        class FakeClient:
+            def __init__(self,**kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self,*args): pass
+            async def get(self,url): return AuthFailure()
+        with patch.object(proxy.httpx, "AsyncClient", side_effect=FakeClient):
+            result=await proxy.check_proxy("res.example:8080:owner:secretpass")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "auth_required")
+        self.assertEqual(result["http_status"], 407)
+        self.assertNotIn("secretpass", json.dumps(result))
+
+    async def test_proxy_read_timeout_is_not_confused_with_bad_credentials(self):
+        from app import browser_proxy as proxy
+        class FakeClient:
+            def __init__(self,**kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self,*args): pass
+            async def get(self,url):
+                raise proxy.httpx.ReadTimeout("proxy owner:password@host")
+        with patch.object(proxy.httpx,"AsyncClient",side_effect=FakeClient):
+            result=await proxy.check_proxy("res.example:8080:owner:password")
+        self.assertEqual(result["code"], "read_timeout")
+        self.assertNotIn("owner:password",json.dumps(result))
+
+    async def test_proxy_invalid_ip_response_has_diagnostic_category(self):
+        from app import browser_proxy as proxy
+        class FakeResponse:
+            status_code = 200
+            def json(self): return {"ip": "not-an-ip"}
+        class FakeClient:
+            def __init__(self,**kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self,*args): pass
+            async def get(self,url): return FakeResponse()
+        with patch.object(proxy.httpx,"AsyncClient",side_effect=FakeClient):
+            result=await proxy.check_proxy("res.example:8080")
+        self.assertEqual(result["code"], "bad_ip_response")
+
     async def test_proxy_connection_error_does_not_expose_credentials(self):
         from app import browser_proxy as proxy
         class BrokenClient:

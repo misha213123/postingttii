@@ -82,35 +82,113 @@ def httpx_proxy(spec: dict[str, str]) -> str:
 
 
 async def check_proxy(raw: str) -> dict:
-    try:
-        spec = parse_proxy(raw)
-        if spec is None:
-            raise ValueError("Введи адрес прокси")
-        url = httpx_proxy(spec)
-    except ValueError as exc:
-        raise ValueError(str(exc)) from None
+    """Check the outgoing proxy connection without disclosing credentials.
 
-    started = time.monotonic()
+    Do not rely on raw exception text: HTTPX sometimes embeds proxy URI
+    userinfo in an error string. Return only curated diagnostic categories.
+    """
+    spec = parse_proxy(raw)
+    if spec is None:
+        raise ValueError("Введи адрес прокси")
+
+    start = time.monotonic()
+    endpoint = "https://api.ipify.org?format=json"
+
+    def failure(code: str, message: str, *, http_status: int | None = None) -> dict:
+        result = {
+            "ok": False,
+            "code": code,
+            "message": message,
+            "latency_ms": round((time.monotonic() - start) * 1000),
+            "proxy": spec["server"],
+        }
+        if http_status is not None:
+            result["http_status"] = http_status
+        return result
+
     try:
         async with httpx.AsyncClient(
-            proxy=url,
+            proxy=httpx_proxy(spec),
             trust_env=False,
-            timeout=httpx.Timeout(16.0, connect=8.0),
+            timeout=httpx.Timeout(18.0, connect=9.0),
             follow_redirects=False,
         ) as client:
-            response = await client.get("https://api.ipify.org?format=json")
-            response.raise_for_status()
-            ip = str(response.json().get("ip") or "")
-            ipaddress.ip_address(ip)
-    except (httpx.HTTPError, ValueError, KeyError, TypeError):
-        # Do not return raw httpx errors: they may echo user:password@proxy.
-        return {
-            "ok": False,
-            "message": "Нет ответа через прокси. Проверь адрес, порт, тип и логин/пароль.",
-        }
+            response = await client.get(endpoint)
+            status = int(getattr(response, "status_code", 200))
+            if status == 407:
+                return failure(
+                    "auth_required",
+                    "Прокси требует авторизацию (HTTP 407). Проверь логин и пароль.",
+                    http_status=407,
+                )
+            if status in (401, 403):
+                return failure(
+                    "access_denied",
+                    f"Доступ отклонён (HTTP {status}). Проверь "
+                    "логин, разрешённые IP и настройки зоны у провайдера.",
+                    http_status=status,
+                )
+            if status >= 400:
+                return failure(
+                    "http_error",
+                    f"Проверочный сервис ответил HTTP {status}. "
+                    "Прокси доступен, но запрос не завершился успешно.",
+                    http_status=status,
+                )
+            try:
+                ip = str(response.json().get("ip") or "")
+                ipaddress.ip_address(ip)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                return failure(
+                    "bad_ip_response",
+                    "Через прокси получен ответ, но внешний IP определить "
+                    "не удалось. Возможно, ответ изменён прокси-сервером.",
+                )
+    except httpx.ProxyError:
+        return failure(
+            "proxy_rejected",
+            "Прокси отклонил соединение. Проверь логин/пароль, "
+            "протокол и разрешённые IP в кабинете провайдера.",
+        )
+    except httpx.ConnectTimeout:
+        return failure(
+            "connect_timeout",
+            "Тайм-аут подключения к прокси. Проверь IP, порт "
+            "и доступность сервера у провайдера.",
+        )
+    except httpx.ReadTimeout:
+        return failure(
+            "read_timeout",
+            "Прокси принял подключение, но не ответил вовремя. "
+            "Попробуй позже или проверь качество соединения.",
+        )
+    except httpx.ConnectError:
+        return failure(
+            "connect_error",
+            "Не удалось установить соединение. Проверь адрес, порт "
+            "и соответствует ли протокол HTTP/HTTPS/SOCKS5 настройкам провайдера.",
+        )
+    except httpx.TimeoutException:
+        return failure(
+            "timeout",
+            "Истекло время ожидания ответа через прокси.",
+        )
+    except httpx.HTTPError:
+        return failure(
+            "network_error",
+            "Сетевая ошибка при проверке через прокси. "
+            "Проверь его протокол, авторизацию и доступность.",
+        )
+    except (ValueError, KeyError, TypeError, OSError):
+        return failure(
+            "test_error",
+            "Не удалось завершить тест прокси. Проверь настройки подключения.",
+        )
+
     return {
         "ok": True,
+        "code": "ok",
         "ip": ip,
-        "latency_ms": round((time.monotonic() - started) * 1000),
+        "latency_ms": round((time.monotonic() - start) * 1000),
         "proxy": spec["server"],
     }
