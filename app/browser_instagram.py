@@ -438,11 +438,16 @@ async def _open_create_picker(page, item: dict) -> None:
             'svg[aria-label="New post"], svg[aria-label="Create"], '
             'svg[aria-label="Создать"], svg[aria-label="Новая публикация"]'
         )),
+        ("create_text", page.get_by_text(re.compile(r"^(Create|Создать)$", re.I))),
     ]
-    # Give Instagram's client-side navigation a chance to hydrate
-    # after the initial DOMContentLoaded page event.
+    # DOMContentLoaded precedes React hydration, especially through a
+    # slower residential proxy. Wait for at least one known Create variant.
     try:
-        await page.wait_for_timeout(1000)
+        await page.locator(
+            'a[href^="/create/"], [aria-label="Create"], '
+            '[aria-label="Создать"], [aria-label="New post"], '
+            'svg[aria-label="New post"]'
+        ).first.wait_for(state="visible", timeout=7000)
     except Exception:
         pass
     if await _has_media_input(page, 700):
