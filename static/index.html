@@ -489,6 +489,101 @@ async function saveCover(slot,input){
  if(!r.ok)throw Error(await r.text());if(el)el.textContent='✓ Сохранена';}
  catch(e){if(el)el.textContent='Ошибка';alert(e.message);}
 }
+
+function folderOptions(selected='default'){
+  return (folderRegistry?.folders||[]).map(f=>'<option value="'+esc(f.id)+'"'+(selected===f.id?' selected':'')+
+    (!f.available?' disabled':'')+'>'+esc(f.label||f.path)+(f.available?'':' (недоступна)')+'</option>').join('');
+}
+function bgOptions(selected=''){
+  return '<option value="">Общий шаблон / случайный фон</option>'+
+    folderBackgrounds.filter(f=>f.enabled).map(f=>
+      '<option value="'+esc(f.name)+'"'+(f.name===selected?' selected':'')+'>'+esc(f.name)+'</option>').join('');
+}
+async function loadFolderRegistry(){
+  const r=await fetch('/api/video-folders');
+  if(!r.ok)throw Error('Настройки папок: HTTP '+r.status);
+  folderRegistry=await r.json();
+  if(!folderBackgrounds.length){
+    try{const response=await fetch('/api/telegram-studio/status');
+      if(response.ok)folderBackgrounds=(await response.json()).backgrounds||[];
+    }catch(e){console.warn(e);}
+  }
+  if(activeVideoFolder!=='linked'&&!folderRegistry.folders.some(f=>f.id===activeVideoFolder&&f.available)){
+    activeVideoFolder='default';
+    localStorage.setItem('postingttii_source_folder','default');
+  }
+  const select=document.getElementById('sourceFolder');
+  select.innerHTML=folderOptions(activeVideoFolder)+
+    '<option value="linked"'+(activeVideoFolder==='linked'?' selected':'')+'>Папки аккаунтов (автоматически)</option>';
+  select.value=activeVideoFolder;
+  document.getElementById('sourceFolderHelp').textContent=activeVideoFolder==='linked'?
+    'Для каждого выбранного Instagram-аккаунта используем его привязанную папку. Выбор видео ручным способом не нужен.':
+    'Файлы из этой папки после успешной публикации перемещаются в posted. По умолчанию используется обычная videos/posted.';
+  renderFolderBindings();
+}
+function renderFolderBindings(){
+  const root=document.getElementById('accountFolderBindings');
+  if(!root||!folderRegistry)return;
+  const accounts=folderRegistry.accounts||[];
+  root.innerHTML=accounts.length?accounts.map(a=>{
+    const slot=Number(a.slot),bind=folderRegistry.bindings[String(slot)]||{},bg=bind.backgrounds||{};
+    return '<div style="padding:12px;border:1px solid #304361;border-radius:12px;background:#0c1828">'+
+      '<strong>@'+esc(a.label||a.id||'Instagram')+'</strong> <small class="muted">Meta '+Number(a.meta_app||1)+'</small>'+
+      '<div class="field"><label>Папка этого аккаунта</label><select data-folder-slot="'+slot+'">'+folderOptions(bind.folder_id||'default')+'</select></div>'+
+      '<div class="field"><label>Фон Telegram Studio</label><select data-bg-slot="'+slot+'" data-bg-studio="telegram">'+bgOptions(bg.telegram||'')+'</select></div>'+
+      '<div class="field"><label>Фон Instagram Studio</label><select data-bg-slot="'+slot+'" data-bg-studio="instagram">'+bgOptions(bg.instagram||'')+'</select></div>'+
+      '</div>';
+  }).join(''):'<div class="muted">Нет подключённых Instagram-аккаунтов.</div>';
+  document.getElementById('folderStatus').textContent='Папок добавлено: '+(folderRegistry.folders.length-1)+
+    '. Список доступных фонов берётся из Telegram Studio.';
+}
+async function setSourceFolder(folderId){
+  activeVideoFolder=folderId;
+  localStorage.setItem('postingttii_source_folder',folderId);
+  selectedVideos.clear();
+  await loadFolderRegistry();
+  await load();
+}
+async function pickNewFolder(){
+  try{
+    const response=await fetch('/api/video-folders/pick',{method:'POST'});
+    const d=await response.json();
+    if(!response.ok)throw Error(d.detail||'Диалог выбора недоступен');
+    if(!d.path)return;
+    document.getElementById('folderPathInput').value=d.path;
+    document.getElementById('folderLabelInput').value=
+      d.path.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||'Видео';
+  }catch(e){document.getElementById('folderStatus').textContent=e.message+
+    ' — укажи путь к папке вручную.';}
+}
+async function registerVideoFolder(){
+  const label=document.getElementById('folderLabelInput').value.trim();
+  const path=document.getElementById('folderPathInput').value.trim();
+  if(!label||!path){alert('Укажи название папки и её путь.');return;}
+  try{
+    const response=await fetch('/api/video-folders',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({label,path})});
+    const d=await response.json();if(!response.ok)throw Error(d.detail||'Ошибка сохранения');
+    await loadFolderRegistry();
+    document.getElementById('folderStatus').textContent='✓ Папка добавлена — теперь выбери её для публикации или привяжи к аккаунту.';
+  }catch(e){alert('Папка: '+e.message);}
+}
+async function saveFolderSetting(slot,body,kind){
+  const route='/api/video-folders/account/'+slot+(kind==='background'?'/background':'');
+  try{
+    const response=await fetch(route,{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    const d=await response.json();if(!response.ok)throw Error(d.detail||'Сохранение не удалось');
+    await loadFolderRegistry();
+  }catch(e){alert('Настройки аккаунта: '+e.message);await loadFolderRegistry();}
+}
+document.addEventListener('change',event=>{
+  const e=event.target;
+  if(e.dataset.folderSlot)saveFolderSetting(Number(e.dataset.folderSlot),{folder_id:e.value},'folder');
+  if(e.dataset.bgSlot)saveFolderSetting(Number(e.dataset.bgSlot),
+    {studio:e.dataset.bgStudio,background_name:e.value},'background');
+});
+
 function renderVideos(){
   const root=document.getElementById('videos');
   if(!state)return;
