@@ -167,7 +167,7 @@ class TelegramMediaIntegrationTests(unittest.IsolatedAsyncioTestCase):
         def write_render(source, background, target, *args):
             Path(target).write_bytes(b"rendered-mp4")
             
-        def write_normal(source, target, background, layout):
+        def write_normal(source, target, background, layout, **kwargs):
             Path(target).write_bytes(b"rendered-mp4")
 
         with tempfile.TemporaryDirectory() as temp:
