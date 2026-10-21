@@ -4,7 +4,7 @@
 /* Optional Telegram circle advertisement layout editor */
 .design-layout{display:grid;grid-template-columns:minmax(240px,330px) minmax(280px,1fr);gap:23px;align-items:start}
 .design-preview{width:100%;max-width:320px;aspect-ratio:9/16;position:relative;overflow:hidden;background:linear-gradient(165deg,#18345a,#101626);border:2px solid #4b6083;border-radius:13px;touch-action:none;margin:auto}
-.design-preview>video.preview-background{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:0;pointer-events:none}
+.design-preview>.preview-background{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:0;pointer-events:none}
 .design-preview>.preview-circle,.design-preview>video.preview-circle{position:absolute;left:50%;top:4.6875%;transform:translateX(-50%);aspect-ratio:1/1;width:96.3%;height:auto;max-width:none;border-radius:50%;object-fit:cover;clip-path:circle(50% at 50% 50%);pointer-events:none;background:#213b5d}
 .preview-placeholder{display:grid;place-items:center;text-align:center;color:#d4e6ff;font-size:12px}
 .design-preview>.preview-banner{position:absolute;max-width:none;max-height:none;display:none;width:50%;height:auto;cursor:grab;touch-action:none;border:1px dashed #a6c8ff;box-shadow:0 2px 10px #0007;user-select:none;z-index:4}
@@ -35,7 +35,7 @@
 .editor-video-frame>video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:0;pointer-events:none}
 .editor-video-frame>.video-fallback{display:grid;place-items:center;height:100%;font-size:13px;color:#e0ecff;text-align:center;pointer-events:none}
 #igLayoutBgBlur{position:absolute;inset:-10%;width:120%;height:120%;object-fit:cover;filter:blur(12px);display:none;border-radius:0;pointer-events:none}
-#igLayoutBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;border-radius:0;pointer-events:none}
+#igLayoutBg,#igLayoutBgImage{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;border-radius:0;pointer-events:none}
 .editor-note{font-size:12px;color:#a6bddd;line-height:1.45}
 .design-preview{box-shadow:0 14px 40px #0009}
 /* Color-key picker; transparent canvas approximates FFmpeg output. */
@@ -48,12 +48,18 @@
 .chroma-controls input[type=color]{width:52px;height:42px;padding:3px;cursor:pointer;border-radius:10px;background:#243e64}
 .chroma-controls code{letter-spacing:1px;font-size:13px;color:#e5f2ff}
 #chromaPickButton.active{background:linear-gradient(125deg,#326d93,#405fcf);border-color:#92d3ff}
+.bg-thumbnail{width:120px;height:150px;object-fit:cover;border-radius:10px;flex-shrink:0}
 
 </style></head><body><main>
 <header><div><a href="/">← Вернуться к PostingTTII</a><h1>◉ Telegram Studio</h1><div class="muted">Кружки Telegram → случайный фон → готовые Reels</div></div><span class="pill" id="health">Проверка системы...</span></header>
 <div class="layout">
-<section class="card"><h2>01 / Источники: Telegram + Instagram</h2><p class="muted">Telegram-каналы и Instagram-аккаунты в одном списке. Каждый источник можно включать и отключать.</p><form id="addChannel" class="inline"><input id="channel" placeholder="@channel или https://t.me/channel" required><button class="primary">+ Добавить</button></form><form id="igAdd" class="inline" style="margin-top:10px"><input id="igUrl" placeholder="https://www.instagram.com/username/" required><button class="primary">+ Instagram</button></form><div id="channels"></div><div id="igAccounts"></div></section>
-<section class="card"><h2>02 / Фоновые видео</h2><p class="muted">Загружай несколько MP4. Для каждого кружка фон и момент выбираются случайно.</p><form id="upload"><input id="files" type="file" accept="video/mp4" multiple required><button class="primary" style="margin-top:10px">Загрузить фоны</button></form><div id="backgrounds"></div></section>
+<section class="card"><h2>01 / Источники: Telegram + Instagram</h2><p class="muted">Telegram-каналы и Instagram-аккаунты в одном списке. Каждый источник можно включать и отключать.</p>
+<div class="design-field" style="margin:10px 0 15px"><label for="tgMediaMode">Какие ролики скачивать из Telegram-каналов?</label>
+<select id="tgMediaMode" onchange="updateTelegramMediaMode()">
+<option value="circles">◉ Только кружки (видеосообщения)</option>
+<option value="videos">▯ Только обычные видео</option></select>
+<span id="tgMediaModeHint" class="editor-note">В выбранном режиме все добавленные Telegram-каналы сканируются только на кружки.</span></div><form id="addChannel" class="inline"><input id="channel" placeholder="@channel или https://t.me/channel" required><button class="primary">+ Добавить</button></form><form id="igAdd" class="inline" style="margin-top:10px"><input id="igUrl" placeholder="https://www.instagram.com/username/" required><button class="primary">+ Instagram</button></form><div id="channels"></div><div id="igAccounts"></div></section>
+<section class="card"><h2>02 / Фоны: видео и фото</h2><p class="muted">Добавляй MP4 или изображения JPG, PNG и WebP. Фото останется неподвижным на всю длительность ролика, MP4 зациклится. В режиме смешивания фоны чередуются между роликами.</p><form id="upload"><input id="files" type="file" accept="video/mp4,image/jpeg,image/png,image/webp" multiple required><button class="primary" style="margin-top:10px">Загрузить фоны</button></form><div id="backgrounds"></div></section>
 <section class="card wide" id="designCard"><h2>✦ Конструктор оформления Reels</h2>
 <p class="muted">Два независимых шаблона: Telegram-кружки и обычные Instagram-видео. Перетаскивай элементы в вертикальном превью 9:16 и меняй их размер прямо на холсте.</p>
 <div class="editor-tabs" role="tablist" aria-label="Шаблон оформления">
@@ -65,6 +71,7 @@
   <div>
     <div class="design-preview" id="designPreview" aria-label="Макет готового вертикального видео 9 на 16">
       <video class="preview-background" id="designBgVideo" muted playsinline loop preload="metadata"></video>
+      <img class="preview-background" id="designBgImage" alt="Фотография-фон Telegram" style="display:none">
       <video class="preview-circle" id="designCircleVideo" muted playsinline loop preload="metadata" style="display:none"></video>
       <div class="preview-circle preview-placeholder" id="designCirclePlaceholder">Telegram<br>кружок</div>
       <div class="safe-area"></div>
@@ -118,6 +125,7 @@
     <div>
       <div class="design-preview" id="igLayoutStage" aria-label="Instagram вертикальное видео 9 на 16">
         <video id="igLayoutBg" muted playsinline loop preload="metadata"></video>
+        <img id="igLayoutBgImage" alt="Фотография-фон Instagram" style="display:none">
         <video id="igLayoutBgBlur" muted playsinline loop preload="metadata"></video>
         <div class="safe-area"></div>
         <div class="editor-video-frame" id="igLayoutDrag" title="Перетащи обычное Instagram-видео или потяни белый маркер">
@@ -150,10 +158,10 @@
   </div>
 </div></section>
 <section class="card"><h2>03 / Подключение Telegram</h2><p class="muted">Нужны TG_API_ID и TG_API_HASH в .env (my.telegram.org). Код приходит в твой Telegram. Никому его не передавай.</p><div style="margin:14px 0;padding:15px;border:1px solid #334769;border-radius:14px;background:#0b1527"><button class="primary" id="qrStart" onclick="startQR()">▦ Войти по QR-коду</button><p class="muted">Открой Telegram на телефоне → Настройки → Устройства → Подключить устройство. Сканируй код только со своего компьютера.</p><div id="qrPanel" style="display:none"><img id="qrImage" alt="QR-код Telegram" style="width:230px;height:230px;max-width:100%;background:white;padding:10px;border-radius:14px"><p id="qrStatus" class="muted">Ожидание сканирования...</p><div id="qr2fa" style="display:none" class="inline"><input id="qrPassword" type="password" placeholder="Пароль двухэтапной проверки"><button onclick="submitQRPassword()">Подтвердить</button></div></div></div><p class="muted">Альтернативный вход по номеру:</p><div class="inline"><input id="phone" placeholder="+48..."><button onclick="startLogin()">Получить код</button></div><div class="inline" style="margin-top:10px"><input id="code" placeholder="Код"><input id="password" type="password" placeholder="2FA, если включён"><button onclick="finishLogin()">Войти</button></div><p class="muted" id="auth">Проверка авторизации...</p></section>
-<section class="card"><h2>04 / Автомонтаж</h2><p class="muted">Скачиваем только Telegram video notes. Обработанные публикации пропускаются. Результат автоматически появится в основной очереди PostingTTII.</p><p class="muted">Сначала старые кружки — по умолчанию. Можно выбрать случайный порядок или новые. Лимит означает число новых кружков на канал, поиск ведётся среди последних 3000 сообщений.</p><div class="inline" style="margin-bottom:10px"><label>Порядок<br><select id="order"><option value="oldest">Сначала старые</option><option value="random">Случайный порядок</option><option value="newest">Сначала новые</option></select></label><label>С даты<br><input id="dateFrom" type="date"></label><label>По дату<br><input id="dateTo" type="date"></label></div><div class="design-field" style="margin-bottom:12px"><label for="tgRenderFolder">Папка для готовых Telegram Reels</label><select id="tgRenderFolder"><option value="default">Стандартная videos/inbox</option></select></div>
+<section class="card"><h2>04 / Автомонтаж Telegram</h2><p class="muted">Скачиваются только выбранные в разделе 01 типы медиа: кружки или обычные видео. Кружки монтируются круглыми, обычные видео — прямоугольными по шаблону «Instagram · видео». Результаты сохраняются в выбранную папку публикации.</p><p class="muted">По умолчанию сначала старые сообщения, но можно выбрать новые или случайный порядок. Лимит действует на каждый канал; поиск ведётся среди последних 3000 сообщений.</p><div class="inline" style="margin-bottom:10px"><label>Порядок<br><select id="order"><option value="oldest">Сначала старые</option><option value="random">Случайный порядок</option><option value="newest">Сначала новые</option></select></label><label>С даты<br><input id="dateFrom" type="date"></label><label>По дату<br><input id="dateTo" type="date"></label></div><div class="design-field" style="margin-bottom:12px"><label for="tgRenderFolder">Папка для готовых Telegram Reels</label><select id="tgRenderFolder"><option value="default">Стандартная videos/inbox</option></select></div>
 <div class="design-field" style="margin-bottom:12px"><label for="tgRenderTarget">Для какого Instagram-аккаунта монтировать</label><select id="tgRenderTarget"><option value="0">Общий монтаж / без аккаунта</option></select>
 <span class="editor-note">Если выберешь аккаунт, при рендере применится его фон, заданный на главной странице. Можно выбрать привязанную к аккаунту папку.</span></div>
-<div class="inline"><input id="limit" type="number" min="1" max="500" value="30" title="Новых кружков на канал"><button class="primary" id="run" onclick="run()">Скачать и смонтировать</button></div><div class="progress"><div id="bar"></div></div><div id="progress" class="muted">Ожидание запуска</div><p class="muted">Оригиналы сохраняются без изменений. Готовые ролики не перезаписываются, повторные сообщения пропускаются.</p><a href="/" target="_blank" rel="noopener">Открыть готовые ролики в очереди PostingTTII ↗</a><pre id="log"></pre></section>
+<div class="inline"><input id="limit" type="number" min="1" max="500" value="30" title="Новых видео выбранного типа на канал"><button class="primary" id="run" onclick="run()">Скачать и смонтировать</button></div><div class="progress"><div id="bar"></div></div><div id="progress" class="muted">Ожидание запуска</div><p class="muted">Оригиналы сохраняются без изменений. Готовые ролики не перезаписываются, повторные сообщения пропускаются.</p><a href="/" target="_blank" rel="noopener">Открыть готовые ролики в очереди PostingTTII ↗</a><pre id="log"></pre></section>
 <section class="card wide"><h2>05 / Instagram-источники</h2><div class="item"><div><strong>Вход в Instagram через Chrome</strong><p class="muted">Откроется отдельный профиль Chrome для PostingTTII. Авторизация останется в этом профиле. После входа закрой отдельное окно Chrome перед запуском сканирования. Программа проверит видимые ссылки Reels на странице профиля; Instagram может ограничивать доступ.</p><button class="primary" onclick="igOpenChrome()">Открыть Instagram в Chrome</button><hr style="border:0;border-top:1px solid #293953;margin:16px 0"><strong>Дополнительно: файл сессии Instaloader</strong><p class="muted">Один раз создай файл сессии через Instaloader на своём ПК и загрузи его сюда. Пароль в студии не вводится.</p><span id="igSessionState">Проверка...</span></div><div class="actions"><input id="igSessionFile" type="file" accept=".session"><button id="igSessionUpload" onclick="igSessionConnect()">Подключить</button><button onclick="igSessionDisconnect()">Отключить</button></div></div><p class="muted">Добавь ссылки на свои публичные Instagram-профили. Студия выбирает более старые ролики среди найденных, не скачивает обработанные повторно и монтирует без титров: размытие либо случайный фон TG Studio. Готовые MP4 появятся в общей очереди.</p><div class="design-field" style="margin-top:15px"><label for="igRenderFolder">Папка готовых Instagram Reels</label><select id="igRenderFolder"><option value="default">Стандартная videos/inbox</option></select></div>
 <div class="design-field" style="margin-top:10px"><label for="igRenderTarget">Аккаунт назначения и его фон</label><select id="igRenderTarget"><option value="0">Общий монтаж / без аккаунта</option></select><span class="editor-note">Фон конкретного аккаунта настраивается на главной странице PostingTTII.</span></div>
 <div class="inline" style="margin-top:15px"><label>Новых видео на аккаунт <input id="igLimit" type="number" min="1" max="100" value="5" style="width:90px"></label><button id="igRun" class="primary" onclick="igRun()">Скачать и смонтировать Instagram</button></div><div id="igProgress" class="muted" style="margin-top:10px">Ожидание запуска</div><pre id="igLog" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><p class="muted">Для скачивания публичных видео используется yt-dlp. Instagram может ограничивать доступ; ошибки будут показаны ниже. Не требует ввода пароля Instagram.</p></section>
@@ -614,7 +622,7 @@ document.addEventListener('click',async e=>{try{if(e.target.dataset.channel){awa
 document.addEventListener('change',async e=>{if(e.target.dataset.toggle){try{await request('/backgrounds/'+encodeURIComponent(e.target.dataset.toggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}catch(err){notify(err)}}});
 async function startLogin(){try{await request('/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:el('phone').value})});el('auth').textContent='Код отправлен'}catch(e){notify(e)}}
 async function finishLogin(){try{const d=await request('/auth/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:el('code').value,password:el('password').value})});el('auth').textContent=d.password_required?'Введи пароль 2FA':'Telegram подключён';el('code').value='';el('password').value=''}catch(e){notify(e)}}
-async function run(){try{await designSaveQueue;await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_channel:Number(el('limit').value),order:el('order').value,date_from:el('dateFrom').value||null,date_to:el('dateTo').value||null,output_folder:el('tgRenderFolder').value,target_slot:Number(el('tgRenderTarget').value)})});await refresh()}catch(e){notify(e)}}
+async function run(){try{await designSaveQueue;await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_channel:Number(el('limit').value),media_mode:el('tgMediaMode').value,order:el('order').value,date_from:el('dateFrom').value||null,date_to:el('dateTo').value||null,output_folder:el('tgRenderFolder').value,target_slot:Number(el('tgRenderTarget').value)})});await refresh()}catch(e){notify(e)}}
 async function auth(){try{const d=await request('/auth');el('auth').textContent=d.authorized?'Telegram подключён':'Telegram не авторизован'}catch(e){el('auth').textContent=e.message}}
 let qrPoll=null;
 async function startQR(){
@@ -717,7 +725,7 @@ function updateInstagramLayoutPreview(){
   const stage=el('igLayoutStage');
   stage.style.background=d.background_mode==='none'?'#050506':'linear-gradient(155deg,#182b43,#080b15)';
   const info={
-    shuffle:'🔀 Фоны чередуются между роликами из всех включённых MP4.',
+    shuffle:'🔀 Фоны чередуются между роликами из всех включённых MP4 и фото.',
     single:'▣ Все обычные Instagram-видео используют только выбранный фон.',
     blur:'◌ Фон создаётся из размытой копии самого Instagram-видео.',
     none:'▯ Без фонового клипа: видео показывается поверх чёрного холста. Для прозрачности используй режим с фоном.'
