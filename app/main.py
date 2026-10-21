@@ -48,6 +48,7 @@ from app.account_creator.api.instagram import router as account_instagram_router
 
 from app.telegram_studio import router as telegram_studio_router, shutdown_telegram_studio
 from app.instagram_studio import router as instagram_reels_router
+from app.instagram_stats import router as instagram_stats_router, periodic_refresh
 
 app = FastAPI(title="PostingTTII", version="0.1.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -61,6 +62,24 @@ app.include_router(account_instagram_router)
 app.include_router(autotok_router)
 app.include_router(telegram_studio_router)
 app.include_router(instagram_reels_router)
+app.include_router(instagram_stats_router)
+
+INSTAGRAM_STATS_TASK: asyncio.Task | None = None
+
+@app.on_event("startup")
+async def start_instagram_stats():
+    global INSTAGRAM_STATS_TASK
+    INSTAGRAM_STATS_TASK = asyncio.create_task(periodic_refresh())
+
+@app.on_event("shutdown")
+async def stop_instagram_stats():
+    if INSTAGRAM_STATS_TASK:
+        INSTAGRAM_STATS_TASK.cancel()
+        try:
+            await INSTAGRAM_STATS_TASK
+        except asyncio.CancelledError:
+            pass
+
 
 @app.on_event("shutdown")
 async def stop_telegram_studio():
@@ -70,8 +89,14 @@ async def stop_telegram_studio():
 async def telegram_studio_page():
     return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
 
+@app.get("/instagram-stats", response_class=HTMLResponse)
+async def instagram_stats_page():
+    return HTMLResponse((STATIC_DIR / "instagram-stats.html").read_text(encoding="utf-8"))
+
+
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 OAUTH_INSTAGRAM_META_APPS: dict[str, int] = {}
+OAUTH_INSTAGRAM_INSIGHTS: dict[str, bool] = {}
 META2_SLOT_LOCK = asyncio.Lock()
 MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
@@ -1161,6 +1186,7 @@ async def connect(
     platform: Literal["youtube", "tiktok", "instagram"],
     slot: int,
     meta_app: int = 1,
+    insights: bool = False,
 ):
     if (platform == "instagram" and slot < 1) or (platform != "instagram" and slot not in (1, 2)):
         raise HTTPException(400, "Недопустимый идентификатор аккаунта")
@@ -1185,7 +1211,8 @@ async def connect(
         url = tiktok_auth_url(state)
     else:
         OAUTH_INSTAGRAM_META_APPS[state] = meta_app
-        url = instagram_auth_url(state, slot, meta_app=meta_app)
+        OAUTH_INSTAGRAM_INSIGHTS[state] = insights
+        url = instagram_auth_url(state, slot, meta_app=meta_app, insights=insights)
     return RedirectResponse(url)
 
 
@@ -1222,9 +1249,11 @@ async def tiktok_callback(code: str, state: str):
 async def instagram_callback(code: str, state: str):
     slot = _consume_state(state, "instagram")
     meta_app = OAUTH_INSTAGRAM_META_APPS.pop(state, 1 if slot <= 5 else 2)
+    insights_requested = OAUTH_INSTAGRAM_INSIGHTS.pop(state, False)
     try:
         account = await instagram_exchange(code, slot, meta_app=meta_app)
         account["meta_app"] = meta_app
+        account["insights_requested"] = insights_requested
         duplicate = next(
             (item for item in store.list_accounts().get("instagram", [])
              if str(item.get("id")) == str(account.get("id")) and int(item["slot"]) != slot),

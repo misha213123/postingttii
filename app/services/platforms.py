@@ -416,13 +416,15 @@ def _instagram_app(slot: int, meta_app: int | None = None) -> tuple[str, str, st
     raise ValueError("Meta App должна быть 1 или 2")
 
 
-def instagram_auth_url(state: str, slot: int = 1, meta_app: int | None = None) -> str:
+def instagram_auth_url(state: str, slot: int = 1, meta_app: int | None = None,
+                       insights: bool = False) -> str:
     client_id, _, redirect_uri = _instagram_app(slot, meta_app)
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": "instagram_business_basic,instagram_business_content_publish",
+        "scope": ("instagram_business_basic,instagram_business_content_publish"
+                  + (",instagram_business_manage_insights" if insights else "")),
         "state": state,
         "enable_fb_login": "0",
         "force_authentication": "1",
