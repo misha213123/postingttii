@@ -696,13 +696,7 @@ async def batch_active():
 async def batch_start(body: BatchPublishRequest):
     if _active_batch_jobs():
         raise HTTPException(409, "Сначала останови или заверши текущую очередь")
-    filenames = list(dict.fromkeys(Path(x).name for x in body.filenames))
-    if body.shuffle_videos:
-        secrets.SystemRandom().shuffle(filenames)
     targets = list(dict.fromkeys(body.targets))
-
-    if not filenames:
-        raise HTTPException(400, "Выбери хотя бы одно видео")
     if not targets:
         raise HTTPException(400, "Выбери хотя бы один аккаунт")
     if any(target.startswith("instagram:") for target in targets):
@@ -714,22 +708,6 @@ async def batch_start(body: BatchPublishRequest):
         raise HTTPException(400, "Пауза должна быть от 60 секунд")
     if not 1 <= body.wave_min_minutes <= body.wave_max_minutes <= 1440:
         raise HTTPException(400, "Некорректная пауза между волнами")
-
-    # The same content can appear under different names; it must never
-    # be assigned to two separate accounts in the same queue.
-    unique_filenames = []
-    duplicate_filenames = []
-    seen_video_keys = set()
-    for filename in filenames:
-        video = _safe_video(filename)
-        video_key = publish_state.video_key(video)
-        if video_key in seen_video_keys:
-            duplicate_filenames.append(filename)
-            continue
-        seen_video_keys.add(video_key)
-        unique_filenames.append(filename)
-    filenames = unique_filenames
-
     allowed_targets = {
         f"{platform}:{account['slot']}"
         for platform in ("youtube", "instagram", "tiktok")
@@ -737,18 +715,73 @@ async def batch_start(body: BatchPublishRequest):
     }
     invalid = [target for target in targets if target not in allowed_targets]
     if invalid:
-        raise HTTPException(
-            400,
-            "Недоступные аккаунты: " + ", ".join(invalid),
-        )
-    if len(filenames) < len(targets):
-        raise HTTPException(
-            400,
-            "Выбрано меньше уникальных видео, чем аккаунтов. "
-            "Часть аккаунтов (в том числе TikTok) не получит ролик. "
-            "Добавь видео или сними лишние галочки аккаунтов.",
-        )
-    # Verify AutoTok sessions before any YouTube or Instagram work starts.
+        raise HTTPException(400, "Недоступные аккаунты: " + ", ".join(invalid))
+
+    duplicate_filenames = []
+    rows: list[dict] = []
+    seen_video_keys: set[str] = set()
+    if body.source_folder == "linked":
+        if any(not t.startswith("instagram:") for t in targets):
+            raise HTTPException(400, "Привязанные папки работают только для Instagram. Сними галочки YouTube/TikTok.")
+        # Every account draws independently from its own registered folder.
+        # A deterministic snapshot of folder assignments is saved with job items.
+        per_target: dict[str, list[Path]] = {}
+        per_target_folder: dict[str, str] = {}
+        for target in targets:
+            try:
+                slot = int(target.split(":", 1)[1])
+                selected_folder = account_folder(slot)
+                per_target_folder[target] = selected_folder
+                videos = list_videos(selected_folder)
+            except (ValueError, OSError) as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if body.shuffle_videos:
+                secrets.SystemRandom().shuffle(videos)
+            per_target[target] = videos
+        max_rounds = max((len(pool) for pool in per_target.values()), default=0)
+        # Max 500 scheduled files per account to avoid runaway batch creation.
+        for index in range(min(max_rounds, 500)):
+            for target in targets:
+                pool = per_target[target]
+                if index >= len(pool):
+                    continue
+                video = pool[index]
+                digest = await asyncio.to_thread(publish_state.video_key, video)
+                if digest in seen_video_keys:
+                    duplicate_filenames.append(video.name)
+                    continue
+                seen_video_keys.add(digest)
+                rows.append({"filename": video.name, "source_folder": per_target_folder[target],
+                             "target": target, "video_key": digest})
+        # Require at least one distinct video per selected Instagram account.
+        assigned = {row["target"] for row in rows}
+        missing = [target for target in targets if target not in assigned]
+        if missing:
+            raise HTTPException(400, "В привязанных папках нет уникальных видео для: " + ", ".join(missing))
+    else:
+        try:
+            folder_path(body.source_folder)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        filenames = list(dict.fromkeys(body.filenames))
+        if body.shuffle_videos:
+            secrets.SystemRandom().shuffle(filenames)
+        if not filenames:
+            raise HTTPException(400, "Выбери хотя бы одно видео")
+        for name in filenames:
+            video = _safe_video(name, body.source_folder)
+            digest = await asyncio.to_thread(publish_state.video_key, video)
+            if digest in seen_video_keys:
+                duplicate_filenames.append(name)
+                continue
+            seen_video_keys.add(digest)
+            rows.append({"filename": name, "source_folder": body.source_folder,
+                         "target": targets[len(rows) % len(targets)], "video_key": digest})
+        if len(rows) < len(targets):
+            raise HTTPException(
+                400, "Меньше уникальных видео, чем аккаунтов. Добавь видео или сними лишние галочки."
+            )
+
     for target in targets:
         if target.startswith("tiktok:"):
             account = store.get("tiktok", int(target.split(":", 1)[1])) or {}
@@ -757,67 +790,45 @@ async def batch_start(body: BatchPublishRequest):
                     await autotok_bridge.check_account(account["autotok_account"])
                 except RuntimeError as exc:
                     raise HTTPException(400, f"{target}: {exc}") from exc
-
+    if not rows:
+        raise HTTPException(400, "Нет доступных видео для выбранных папок")
     job_id = secrets.token_urlsafe(12)
-    # Round-robin: each video is assigned to exactly one account.
-    # Consecutive rounds give each account a different second video.
-    assignments = {
-        filename: [targets[index % len(targets)]]
-        for index, filename in enumerate(filenames)
-    }
     normalized = BatchPublishRequest(
-        filenames=filenames,
+        filenames=[row["filename"] for row in rows],
+        source_folder=body.source_folder,
         targets=targets,
         interval_seconds=body.interval_seconds,
         interval_max_seconds=body.interval_max_seconds,
         wave_min_minutes=body.wave_min_minutes,
         wave_max_minutes=body.wave_max_minutes,
-        shuffle_videos=body.shuffle_videos,
-        hint=body.hint,
-        captions={
-            filename: (body.captions.get(filename) or "").strip()
-            for filename in filenames
-            if (body.captions.get(filename) or "").strip()
-        },
+        shuffle_videos=body.shuffle_videos, hint=body.hint,
+        captions=body.captions,
     )
+    assignments = {
+        row["source_folder"] + "/" + row["filename"]: [row["target"]]
+        for row in rows
+    }
     BATCH_JOBS[job_id] = {
-        "id": job_id,
-        "status": "queued",
+        "id": job_id, "status": "queued",
         "created_at": int(time.time()),
-        "started_at": None,
-        "finished_at": None,
-        "next_video_at": None,
-        "completed_videos": 0,
-        "total_videos": len(filenames),
+        "started_at": None, "finished_at": None,
+        "next_video_at": None, "completed_videos": 0,
+        "total_videos": len(rows),
         "interval_seconds": body.interval_seconds,
         "interval_max_seconds": body.interval_max_seconds,
         "wave_min_minutes": body.wave_min_minutes,
         "wave_max_minutes": body.wave_max_minutes,
-        "targets": targets,
-        "cancel_requested": False,
+        "targets": targets, "cancel_requested": False,
         "assignment_mode": "one_video_one_account",
         "excluded_duplicate_files": duplicate_filenames,
-        "cleanup_pending": [],
-        "archived_count": 0,
-        "error": "",
-        "blocked_targets": {},
-        "assignments": assignments,
-        "claimed_circles": [],
-        "items": [
-            {
-                "filename": filename,
-                "status": "queued",
-                "caption": normalized.captions.get(filename, ""),
-                "error": "",
-                "targets": {
-                    target: {"status": "queued", "message": ""}
-                    for target in assignments[filename]
-                },
-            }
-            for filename in filenames
-        ],
+        "cleanup_pending": [], "archived_count": 0, "error": "",
+        "blocked_targets": {}, "assignments": assignments, "claimed_circles": [],
+        "items": [{
+            "filename": row["filename"], "source_folder": row["source_folder"],
+            "status": "queued", "caption": normalized.captions.get(row["filename"], ""),
+            "error": "", "targets": {row["target"]: {"status": "queued", "message": ""}},
+        } for row in rows],
     }
-
     BATCH_JOBS[job_id]["request"] = normalized.model_dump()
     _save_batch_job(BATCH_JOBS[job_id])
     asyncio.create_task(_run_batch_job(job_id, normalized))
