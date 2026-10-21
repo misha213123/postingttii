@@ -154,16 +154,31 @@ def _safe_video(filename: str) -> Path:
     return path
 
 
-def _videos() -> list[dict]:
+def _videos(history: dict | None = None) -> list[dict]:
+    """List inbox files without repeatedly hashing videos or reading history."""
+    history = publish_state._read() if history is None else history
+    entries = []
+    for path in settings.upload_dir.iterdir():
+        if path.suffix.lower() not in {".mp4", ".mov", ".m4v", ".webm"}:
+            continue
+        try:
+            if path.is_file():
+                entries.append((path, path.stat()))
+        except FileNotFoundError:
+            # Another worker may have just archived a completed upload.
+            continue
+    entries.sort(key=lambda entry: entry[1].st_mtime)
     result = []
-    for path in sorted(settings.upload_dir.iterdir(), key=lambda p: p.stat().st_mtime if p.is_file() else 0):
-        if path.is_file() and path.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}:
+    for path, stats in entries:
+        try:
             video_key = publish_state.video_key(path)
-            result.append({
-                "name": path.name,
-                "size_mb": round(path.stat().st_size / 1024 / 1024, 1),
-                "completed_targets": publish_state.summary(video_key),
-            })
+        except FileNotFoundError:
+            continue
+        result.append({
+            "name": path.name,
+            "size_mb": round(stats.st_size / 1024 / 1024, 1),
+            "completed_targets": sorted(history.get(video_key, {}).get("targets", {}).keys()),
+        })
     return result
 
 
@@ -192,19 +207,31 @@ async def video_preview(filename: str):
 
 @app.get("/api/status")
 async def status():
+    # One snapshot of each local JSON store per request. SHA-256 hashing runs
+    # off the async event loop so the API stays responsive during a cold scan.
+    accounts = await asyncio.to_thread(store.list_accounts)
+    history = await asyncio.to_thread(publish_state._read)
+    videos = await asyncio.to_thread(_videos, history)
+    latest_by_target = {}
+    for item in history.values():
+        for target, details in item.get("targets", {}).items():
+            timestamp = int(details.get("completed_at", 0))
+            latest_by_target[target] = max(latest_by_target.get(target, 0), timestamp)
+    now = int(time.time())
+    cooldowns = {
+        target: max(0, settings.post_cooldown_minutes * 60 -
+                    (now - latest_by_target.get(target, 0)))
+                if latest_by_target.get(target, 0) else 0
+        for platform in ("youtube", "instagram", "tiktok")
+        for account in accounts.get(platform, [])
+        for target in [f"{platform}:{account['slot']}"]
+    }
     return {
-        "accounts": store.list_accounts(),
-        "videos": _videos(),
+        "accounts": accounts,
+        "videos": videos,
         "upload_dir": str(settings.upload_dir),
         "post_cooldown_minutes": settings.post_cooldown_minutes,
-        "cooldowns": {
-            target: publish_state.cooldown_remaining(
-                target, settings.post_cooldown_minutes * 60
-            )
-            for platform in ("youtube", "instagram", "tiktok")
-            for account in store.list_accounts().get(platform, [])
-            for target in [f"{platform}:{account['slot']}"]
-        },
+        "cooldowns": cooldowns,
         "configured": {
             "openai": bool(settings.openai_api_key),
             "youtube": bool(settings.youtube_client_id and settings.youtube_client_secret),
@@ -1219,10 +1246,14 @@ async def instagram_callback(code: str, state: str):
 
 @app.delete("/api/account/{platform}/{slot}")
 async def disconnect(platform: Literal["youtube", "tiktok", "instagram"], slot: int):
-    if (platform == "instagram" and (slot < 1 or not store.get("instagram", slot))) or (platform != "instagram" and slot not in (1, 2)):
-        raise HTTPException(400, "Аккаунт не найден")
+    if (platform == "instagram" and slot < 1) or (platform != "instagram" and slot not in (1, 2)):
+        raise HTTPException(400, "Недопустимый идентификатор аккаунта")
+    # DELETE is idempotent. A repeated click/tab must not produce hundreds
+    # of errors after the account was successfully removed.
+    if not store.get(platform, slot):
+        return {"ok": True, "already_disconnected": True}
     store.delete(platform, slot)
-    return {"ok": True}
+    return {"ok": True, "already_disconnected": False}
 
 
 if __name__ == "__main__":

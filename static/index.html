@@ -197,6 +197,7 @@ let pollTimer=null;
 let lastArchivedCount=0;
 let terminalRefreshed=false;
 let activeInstagramMetaTab=1;
+const pendingDisconnects=new Set();
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function connected(platform,slot){return (state.accounts[platform]||[]).find(a=>Number(a.slot)===slot);}
@@ -261,7 +262,7 @@ function renderPlatforms(){
       html+='<div class="account"><b>'+esc(a.label||a.id||'Instagram')+'</b>';
       html+='<div class="label good">Подключён</div>';
       if(instagram)html+='<button class="btn secondary" style="padding:5px 8px;font-size:10px" onclick="'+(Number(a.meta_app||(slot<=5?1:2))===2?'copyDolphinProfileUrl('+slot+')':'openEdge('+slot+',\'profile\')')+'">'+(Number(a.meta_app||(slot<=5?1:2))===2?'Ссылка для Dolphin':'Открыть Edge')+'</button> ';
-      html+='<button class="danger" style="padding:5px 8px;font-size:10px" onclick="disconnect(\''+platform+'\','+slot+')">Отключить</button>';
+      html+='<button class="danger" style="padding:5px 8px;font-size:10px" data-disconnect="'+platform+':'+slot+'" onclick="disconnect(\''+platform+'\','+slot+')" '+(pendingDisconnects.has(platform+':'+slot)?'disabled':'')+'>Отключить</button>';
       if(instagram)html+='<div style="margin-top:8px"><small>Обложка: <span id="cover-state-'+slot+'">проверка...</span></small><input type="file" accept="image/png,image/jpeg" style="width:100%;font-size:11px" onchange="saveCover('+slot+',this)"></div>';
       html+='</div>';
     }
@@ -708,7 +709,35 @@ async function openEdge(slot,mode,metaApp=1){
   }
 }
 
-async function disconnect(platform,slot){await fetch('/api/account/'+platform+'/'+slot,{method:'DELETE'});await load();}
+async function disconnect(platform,slot){
+  const key=platform+':'+slot;
+  if(pendingDisconnects.has(key))return;
+  pendingDisconnects.add(key);
+  const button=Array.from(document.querySelectorAll('[data-disconnect]'))
+    .find(node=>node.dataset.disconnect===key);
+  if(button){button.disabled=true;button.textContent='Отключаю...';}
+  try{
+    const response=await fetch('/api/account/'+platform+'/'+slot,{method:'DELETE'});
+    if(!response.ok){
+      const info=await response.json().catch(()=>({}));
+      throw new Error(info.detail||'HTTP '+response.status);
+    }
+    // Remove stale account immediately; the server will not keep receiving
+    // DELETE retries while an expensive video-list refresh is in progress.
+    if(state?.accounts && Array.isArray(state.accounts[platform])){
+      state.accounts[platform]=state.accounts[platform]
+        .filter(account=>Number(account.slot)!==Number(slot));
+      renderPlatforms();
+      renderBatchTargets();
+    }
+    await load();
+  }catch(error){
+    alert('Не удалось отключить аккаунт: '+error.message);
+  }finally{
+    pendingDisconnects.delete(key);
+    if(button && button.isConnected){button.disabled=false;button.textContent='Отключить';}
+  }
+}
 
 function openPreview(encoded){
   const name=decodeURIComponent(encoded),modal=document.getElementById('previewModal'),player=document.getElementById('previewPlayer');

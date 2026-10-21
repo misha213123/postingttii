@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -31,12 +32,33 @@ class PublishStateStore:
         os.replace(tmp, self.path)
 
     @staticmethod
-    def video_key(path: Path) -> str:
+    @lru_cache(maxsize=2048)
+    def _cached_file_hash(filename: str, size: int, mtime_ns: int, ctime_ns: int) -> str:
+        """Cache content hashes while the underlying file metadata is unchanged.
+
+        Name, size, nanosecond timestamps are part of the cache key. The hash
+        remains SHA-256 over actual bytes, so publication deduplication keeps
+        the same content-based semantics.
+        """
         h = hashlib.sha256()
-        with path.open("rb") as f:
+        with Path(filename).open("rb") as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(chunk)
         return h.hexdigest()
+
+    @staticmethod
+    def video_key(path: Path) -> str:
+        """Return the exact content hash, without re-reading an unchanged video."""
+        p = path.resolve()
+        while True:
+            before = p.stat()
+            key = (str(p), before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+            content_hash = PublishStateStore._cached_file_hash(*key)
+            after = p.stat()
+            if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) == key[1:]:
+                return content_hash
+            # If a file changes during hashing, rehash using fresh metadata.
+
 
     def completed_targets(self, video_key: str) -> dict[str, Any]:
         data = self._read()
