@@ -301,11 +301,26 @@ async def close_account_context(account_id: str):
 async def open_account(account_id: str, request: Request):
     _local(request)
     try:
+        # Opening a profile during an active upload must NOT navigate the
+        # same tab away from the Share workflow (this previously cancelled
+        # in-progress browser uploads).
+        active_upload = (
+            CURRENT_JOB is not None and CURRENT_JOB.get("status") == "running"
+            and account_id in CURRENT_JOB.get("accounts", [])
+        )
+        if active_upload and account_id not in CONTEXTS:
+            raise HTTPException(409, "Этот браузер сейчас готовится к публикации. Открой его после запуска.")
         ctx = await _context(account_id)
         # Reuse an Instagram tab, not an unrelated tab with a 2FA provider.
         page = next((p for p in ctx.pages if "instagram.com" in p.url), None)
         if page is None:
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        if active_upload:
+            await page.bring_to_front()
+            return {
+                "ok": True, "message": "В Edge идёт публикация. "
+                                         "Открыл окно без перезагрузки Instagram."
+            }
         try:
             await page.goto("https://www.instagram.com/",
                             wait_until="domcontentloaded", timeout=45000)
