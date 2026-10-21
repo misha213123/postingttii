@@ -48,6 +48,15 @@
 .chroma-controls input[type=color]{width:52px;height:42px;padding:3px;cursor:pointer;border-radius:10px;background:#243e64}
 .chroma-controls code{letter-spacing:1px;font-size:13px;color:#e5f2ff}
 #chromaPickButton.active{background:linear-gradient(125deg,#326d93,#405fcf);border-color:#92d3ff}
+.ig-ad-preview{pointer-events:none!important;border:none!important;box-shadow:none!important;z-index:6!important}
+.latest-render-view{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap}
+.latest-render-view>img,.latest-render-view>video{display:block;width:220px;max-width:100%;aspect-ratio:9/16;object-fit:contain;background:#060d1a;border-radius:14px;border:1px solid #405475}
+.latest-render-details{flex:1;min-width:240px}
+.latest-render-name{overflow-wrap:anywhere}
+.latest-render-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.latest-render-tabs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
+.latest-render-tabs button.active{background:#5667e7;border-color:#819aff}
+
 .bg-thumbnail{width:120px;height:150px;object-fit:cover;border-radius:10px;flex-shrink:0}
 
 </style></head><body><main>
@@ -60,6 +69,26 @@
 <option value="videos">▯ Только обычные видео</option></select>
 <span id="tgMediaModeHint" class="editor-note">В выбранном режиме все добавленные Telegram-каналы сканируются только на кружки.</span></div><form id="addChannel" class="inline"><input id="channel" placeholder="@channel или https://t.me/channel" required><button class="primary">+ Добавить</button></form><form id="igAdd" class="inline" style="margin-top:10px"><input id="igUrl" placeholder="https://www.instagram.com/username/" required><button class="primary">+ Instagram</button></form><div id="channels"></div><div id="igAccounts"></div></section>
 <section class="card"><h2>02 / Фоны: видео и фото</h2><p class="muted">Добавляй MP4 или изображения JPG, PNG и WebP. Фото останется неподвижным на всю длительность ролика, MP4 зациклится. В режиме смешивания фоны чередуются между роликами.</p><form id="upload"><input id="files" type="file" accept="video/mp4,image/jpeg,image/png,image/webp" multiple required><button class="primary" style="margin-top:10px">Загрузить фоны</button></form><div id="backgrounds"></div></section>
+<section class="card wide" id="latestRenderCard"><h2>▶ Последние готовые ролики</h2>
+<p class="muted">Здесь показывается результат настоящего FFmpeg-рендера: уже с фоном и рекламным баннером, а не оригинал из Telegram.</p>
+<div class="latest-render-tabs">
+  <button id="lastModeCircles" type="button" class="active" onclick="chooseLastRender('circles')">◉ Telegram · кружки</button>
+  <button id="lastModeVideos" type="button" onclick="chooseLastRender('videos')">▯ Telegram · видео</button>
+  <button id="lastModeInstagram" type="button" onclick="chooseLastRender('instagram')">▯ Instagram · видео</button>
+</div>
+<div class="latest-render-view">
+  <img id="lastRenderThumb" alt="Миниатюра последнего смонтированного ролика" style="display:none">
+  <video id="lastRenderPlayer" controls playsinline preload="none" style="display:none"></video>
+  <div class="latest-render-details">
+    <strong id="lastRenderName" class="latest-render-name">Проверяем готовые ролики...</strong>
+    <p class="muted" id="lastRenderInfo">Миниатюра строится по настоящему MP4.</p>
+    <div class="latest-render-actions">
+      <button id="lastRenderPlay" class="primary" type="button" onclick="playLastRendered()" disabled>▶ Смотреть готовый ролик</button>
+      <button id="lastRenderStill" type="button" onclick="showLastPoster()" disabled>🖼 Миниатюра</button>
+    </div>
+  </div>
+</div>
+</section>
 <section class="card wide" id="designCard"><h2>✦ Конструктор оформления Reels</h2>
 <p class="muted">Два независимых шаблона: Telegram-кружки и обычные Instagram-видео. Перетаскивай элементы в вертикальном превью 9:16 и меняй их размер прямо на холсте.</p>
 <div class="editor-tabs" role="tablist" aria-label="Шаблон оформления">
@@ -127,6 +156,9 @@
         <video id="igLayoutBg" muted playsinline loop preload="metadata"></video>
         <img id="igLayoutBgImage" alt="Фотография-фон Instagram" style="display:none">
         <video id="igLayoutBgBlur" muted playsinline loop preload="metadata"></video>
+        <img id="igAdBannerImage" class="preview-banner ig-ad-preview" alt="Рекламный баннер поверх Instagram-видео" draggable="false">
+        <video id="igAdBannerVideo" class="preview-banner ig-ad-preview" muted autoplay playsinline loop preload="metadata"></video>
+        <canvas id="igAdBannerKeyed" class="preview-banner ig-ad-preview" width="320" height="100" style="display:none" aria-label="Баннер с удалённым фоном поверх обычного видео"></canvas>
         <div class="safe-area"></div>
         <div class="editor-video-frame" id="igLayoutDrag" title="Перетащи обычное Instagram-видео или потяни белый маркер">
           <video id="igLayoutVideo" muted playsinline loop preload="metadata"></video>
@@ -148,6 +180,7 @@
       <div class="design-field"><label for="igLayoutBgSelect">Фон / предпросмотр</label><select id="igLayoutBgSelect"></select>
       <span class="editor-note" id="igBgDescription">При смешивании фон меняется для каждого ролика. Прозрачность регулирует видимость обычного видео поверх фона.</span></div>
       <div class="editor-subtitle">Обычное видео</div>
+      <div class="editor-note">Рекламный баннер и хромакей из вкладки «Telegram · кружки» также накладываются на обычные видео. Его положение и размер общие для обоих шаблонов.</div>
       <div class="design-field"><label for="igVideoScale">Ширина видео: <span id="igVideoScaleValue">950</span> px</label>
         <input id="igVideoScale" type="range" min="240" max="1080" step="10" value="950"></div>
       <div class="design-field"><label for="igVideoOpacity">Прозрачность: <span id="igVideoOpacityValue">100</span>%</label>
