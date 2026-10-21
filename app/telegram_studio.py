@@ -9,6 +9,7 @@ import random
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from datetime import date
@@ -28,9 +29,10 @@ BACKGROUNDS = ROOT / "backgrounds"
 ORIGINALS = ROOT / "originals"
 REGULAR_ORIGINALS = ORIGINALS / "regular"
 BANNERS = ROOT / "banners"
+RENDER_PREVIEWS = ROOT / "render_previews"
 CONFIG = ROOT / "config.json"
 SESSION = ROOT / "telegram"
-for p in (ROOT, BACKGROUNDS, ORIGINALS, REGULAR_ORIGINALS, BANNERS):
+for p in (ROOT, BACKGROUNDS, ORIGINALS, REGULAR_ORIGINALS, BANNERS, RENDER_PREVIEWS):
     p.mkdir(parents=True, exist_ok=True)
 LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
@@ -172,6 +174,32 @@ def choose_backgrounds(design: RenderDesign) -> list[Path]:
     return active
 
 
+def banner_input_args(banner: Path) -> list[str]:
+    """Loop image and video ad overlays to the end of the source media."""
+    if banner.suffix.lower() in {".mp4", ".webm"}:
+        return ["-stream_loop", "-1", "-i", str(banner)]
+    return ["-loop", "1", "-i", str(banner)]
+
+
+def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
+    """Composite an optional transparent ad banner on a finished video layer.
+
+    The chromakey applies only to the banner, never to the Telegram circle
+    or the ordinary Instagram video foreground.
+    """
+    banner_key = (
+        f"chromakey=0x{design.chromakey_color[1:]}:"
+        f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
+        if design.chromakey_enabled else ""
+    )
+    return (
+        f"[{banner_input_index}:v]scale={design.banner_width}:-1:flags=lanczos,"
+        f"format=rgba,{banner_key}format=rgba[banner];"
+        f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
+        "format=auto:shortest=1,fps=30,format=yuv420p[v]"
+    )
+
+
 def current_banner(data=None) -> Path | None:
     d = data if data is not None else config()
     name = d.get("banner_file", "")
@@ -298,6 +326,107 @@ def delete_banner():
     d["render_design"] = design.model_copy(update={"banner_enabled": False}).model_dump()
     save(d)
     return design_response()
+
+
+RenderMode = Literal["circles", "videos", "instagram"]
+
+
+def latest_render_path(mode: RenderMode) -> tuple[Path | None, dict]:
+    """Only serve a renderer-produced MP4, not any user-specified path."""
+    prefixes = {"circles": "tg_", "videos": "tgvideo_", "instagram": "ig_"}
+    if mode == "instagram":
+        from app.instagram_studio import load as instagram_load
+        entry = instagram_load().get("last_output") or {}
+    else:
+        entry = (config().get("last_outputs") or {}).get(mode) or {}
+    value = entry.get("path", "")
+    if value:
+        path = Path(value).resolve()
+        if path.suffix.lower() == ".mp4" and path.name.startswith(prefixes[mode]) and not path.name.endswith(".rendering.mp4"):
+            # Publishing archives completed MP4s: continue previewing them
+            # from posted/ after the file leaves the chosen source folder.
+            possible = [path, path.parent / "posted" / path.name,
+                        settings.posted_dir / path.name]
+            for candidate in possible:
+                if candidate.is_file():
+                    return candidate, entry
+    # Legacy runs predating the latest-render index may live in inbox or
+    # already be archived to posted/ by the regular Meta publishing queue.
+    search_dirs = (settings.upload_dir, settings.posted_dir)
+    paths = sorted(
+        (path for folder in search_dirs
+         for path in folder.glob(prefixes[mode] + "*.mp4")
+         if path.is_file() and not path.name.endswith(".rendering.mp4")),
+        key=lambda path: path.stat().st_mtime_ns, reverse=True,
+    )
+    if paths:
+        path = paths[0]
+        return path, {
+            "name": path.name, "updated_at": int(path.stat().st_mtime),
+            "banner_applied": None,
+        }
+    return None, {}
+
+
+@router.get("/last-render")
+def last_render(mode: RenderMode):
+    path, info = latest_render_path(mode)
+    if path is None:
+        return {"available": False, "mode": mode, "message": "Готового ролика пока нет"}
+    stat = path.stat()
+    return {
+        "available": True, "mode": mode, "name": path.name,
+        "updated_at": info.get("updated_at") or int(stat.st_mtime),
+        "banner_applied": info.get("banner_applied"),
+        "fingerprint": f"{stat.st_mtime_ns}-{stat.st_size}",
+        "video_url": f"/api/telegram-studio/last-render/video?mode={mode}",
+        "poster_url": f"/api/telegram-studio/last-render/poster?mode={mode}",
+    }
+
+
+@router.get("/last-render/video")
+def last_render_video(mode: RenderMode):
+    path, _ = latest_render_path(mode)
+    if path is None:
+        raise HTTPException(404, "Готового ролика пока нет")
+    return FileResponse(path, media_type="video/mp4",
+                        headers={"Cache-Control": "no-store"},
+                        content_disposition_type="inline")
+
+
+@router.get("/last-render/poster")
+def last_render_poster(mode: RenderMode):
+    path, _ = latest_render_path(mode)
+    if path is None:
+        raise HTTPException(404, "Готового ролика пока нет")
+    stat = path.stat()
+    fingerprint = hashlib.sha256(
+        f"{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}".encode()
+    ).hexdigest()[:18]
+    thumb = RENDER_PREVIEWS / f"{mode}_{fingerprint}.jpg"
+    if not thumb.is_file():
+        temp = RENDER_PREVIEWS / f"{mode}_{fingerprint}.working.jpg"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                 "-ss", "0.5", "-i", str(path),
+                 "-frames:v", "1", "-vf", "scale=360:-2",
+                 "-q:v", "3", str(temp)],
+                check=True, capture_output=True, timeout=45,
+            )
+            if not temp.is_file() or temp.stat().st_size == 0:
+                raise ValueError("Пустой кадр")
+            temp.replace(thumb)
+            # Keep a single cached thumbnail per output mode.
+            for old in RENDER_PREVIEWS.glob(f"{mode}_*.jpg"):
+                if old != thumb:
+                    old.unlink(missing_ok=True)
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+            raise HTTPException(503, "Не удалось создать миниатюру из готового видео")
+        finally:
+            temp.unlink(missing_ok=True)
+    return FileResponse(thumb, media_type="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/sample-circle/preview")
@@ -638,23 +767,8 @@ def render(
     if design.banner_enabled:
         if not banner or not banner.is_file():
             raise ValueError("Включён рекламный баннер, но файл не загружен")
-        if banner.suffix.lower() in {".mp4", ".webm"}:
-            # Repeat the ad animation until the original Telegram circle ends.
-            # No banner audio is mapped to the output.
-            cmd += ["-stream_loop", "-1", "-i", str(banner)]
-        else:
-            cmd += ["-loop", "1", "-i", str(banner)]
-        banner_key = (
-            f"chromakey=0x{design.chromakey_color[1:]}:"
-            f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
-            if design.chromakey_enabled else ""
-        )
-        filter_chain += (
-            f"[2:v]scale={design.banner_width}:-1:flags=lanczos,"
-            f"format=rgba,{banner_key}format=rgba[banner];"
-            f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
-            "format=auto:shortest=1,fps=30,format=yuv420p[v]"
-        )
+        cmd += banner_input_args(banner)
+        filter_chain += banner_overlay_filter(design, 2)
     else:
         filter_chain += "[composite]fps=30,format=yuv420p[v]"
 
@@ -805,7 +919,10 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                             normal_preset = normal_layout.model_copy(update={
                                 "background_mode": "single", "background_name": bg.name,
                             })
-                            await asyncio.to_thread(render_normal_video, source, temp_target, bg, normal_preset)
+                            await asyncio.to_thread(
+                                render_normal_video, source, temp_target, bg, normal_preset,
+                                banner=banner, banner_design=design,
+                            )
                         if duration(temp_target) <= 0:
                             raise ValueError("Готовый ролик не прошёл проверку FFprobe")
                         temp_target.replace(target)
@@ -817,6 +934,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     else:
                         d["rendered_hashes"] = sorted(known_hashes)
                     completed_keys.append(key)
+                    d.setdefault("last_outputs", {})[media_mode] = {
+                        "name": target.name,
+                        "path": str(target.resolve()),
+                        "updated_at": int(time.time()),
+                        "banner_applied": bool(design.banner_enabled),
+                    }
                     save(d)
                     JOB["done"] += 1
                 except Exception as exc:
@@ -864,7 +987,7 @@ async def run(body: RenderRequest):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     banner = current_banner(data)
-    if body.media_mode == "circles" and design.banner_enabled and banner is None:
+    if design.banner_enabled and banner is None:
         raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
     try:
         choose_backgrounds(design)
