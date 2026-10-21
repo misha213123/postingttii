@@ -9,6 +9,7 @@ import random
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from datetime import date
@@ -170,6 +171,32 @@ def choose_backgrounds(design: RenderDesign) -> list[Path]:
     if not active:
         raise ValueError("Добавь хотя бы один активный фон")
     return active
+
+
+def banner_input_args(banner: Path) -> list[str]:
+    """Loop image and video ad overlays to the end of the source media."""
+    if banner.suffix.lower() in {".mp4", ".webm"}:
+        return ["-stream_loop", "-1", "-i", str(banner)]
+    return ["-loop", "1", "-i", str(banner)]
+
+
+def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
+    """Composite an optional transparent ad banner on a finished video layer.
+
+    The chromakey applies only to the banner, never to the Telegram circle
+    or the ordinary Instagram video foreground.
+    """
+    banner_key = (
+        f"chromakey=0x{design.chromakey_color[1:]}:"
+        f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
+        if design.chromakey_enabled else ""
+    )
+    return (
+        f"[{banner_input_index}:v]scale={design.banner_width}:-1:flags=lanczos,"
+        f"format=rgba,{banner_key}format=rgba[banner];"
+        f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
+        "format=auto:shortest=1,fps=30,format=yuv420p[v]"
+    )
 
 
 def current_banner(data=None) -> Path | None:
@@ -638,23 +665,8 @@ def render(
     if design.banner_enabled:
         if not banner or not banner.is_file():
             raise ValueError("Включён рекламный баннер, но файл не загружен")
-        if banner.suffix.lower() in {".mp4", ".webm"}:
-            # Repeat the ad animation until the original Telegram circle ends.
-            # No banner audio is mapped to the output.
-            cmd += ["-stream_loop", "-1", "-i", str(banner)]
-        else:
-            cmd += ["-loop", "1", "-i", str(banner)]
-        banner_key = (
-            f"chromakey=0x{design.chromakey_color[1:]}:"
-            f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
-            if design.chromakey_enabled else ""
-        )
-        filter_chain += (
-            f"[2:v]scale={design.banner_width}:-1:flags=lanczos,"
-            f"format=rgba,{banner_key}format=rgba[banner];"
-            f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
-            "format=auto:shortest=1,fps=30,format=yuv420p[v]"
-        )
+        cmd += banner_input_args(banner)
+        filter_chain += banner_overlay_filter(design, 2)
     else:
         filter_chain += "[composite]fps=30,format=yuv420p[v]"
 
@@ -805,7 +817,10 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                             normal_preset = normal_layout.model_copy(update={
                                 "background_mode": "single", "background_name": bg.name,
                             })
-                            await asyncio.to_thread(render_normal_video, source, temp_target, bg, normal_preset)
+                            await asyncio.to_thread(
+                                render_normal_video, source, temp_target, bg, normal_preset,
+                                banner=banner, banner_design=design,
+                            )
                         if duration(temp_target) <= 0:
                             raise ValueError("Готовый ролик не прошёл проверку FFprobe")
                         temp_target.replace(target)
@@ -817,6 +832,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     else:
                         d["rendered_hashes"] = sorted(known_hashes)
                     completed_keys.append(key)
+                    d.setdefault("last_outputs", {})[media_mode] = {
+                        "name": target.name,
+                        "path": str(target.resolve()),
+                        "updated_at": int(time.time()),
+                        "banner_applied": bool(design.banner_enabled),
+                    }
                     save(d)
                     JOB["done"] += 1
                 except Exception as exc:
@@ -864,7 +885,7 @@ async def run(body: RenderRequest):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     banner = current_banner(data)
-    if body.media_mode == "circles" and design.banner_enabled and banner is None:
+    if design.banner_enabled and banner is None:
         raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
     try:
         choose_backgrounds(design)
