@@ -104,11 +104,10 @@ MEDIA_TOKENS: dict[str, Path] = {}
 BATCH_JOBS: dict[str, dict] = {}
 IG_CIRCLE_CLAIMS: dict[str, str] = {}
 
-# A single Quick Tunnel video fetch can take close to a minute. Previously all
-# eight Instagram Reel containers could fetch MP4 files simultaneously while
-# YouTube and TikTok were uploading too. Limit Meta video processing to one
-# account at a time to avoid saturating the public tunnel. Other platforms
-# continue normally. This does not bypass Meta's content validation.
+# The existing batch scheduler uses asyncio.gather across all selected
+# accounts in each round. Per-slot locks protect against overlapping requests
+# for the SAME Instagram account without serializing independent accounts.
+# The existing per-account cool-downs and between-wave pauses remain active.
 INSTAGRAM_META_LOCKS: dict[int, asyncio.Lock] = {}
 
 def _circle_id(filename: str) -> str | None:
