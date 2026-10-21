@@ -91,8 +91,25 @@ let clipList=[];
 const selectedAccounts=new Set(),selectedVideos=new Set();
 async function api(path,options={}){
  const response=await fetch('/api/browser-instagram'+path,options);
- let obj;try{obj=await response.json();}catch(e){obj={detail:'Некорректный ответ сервера'};}
- if(!response.ok)throw new Error(typeof obj.detail==='string'?obj.detail:JSON.stringify(obj.detail||'HTTP '+response.status));
+ const contentType=response.headers.get('content-type')||'';
+ let obj=null;
+ if(contentType.includes('application/json')){
+   try{obj=await response.json();}catch(e){}
+ }else{
+   // An HTML traceback / proxy error is not JSON. Don't repeat private
+   // details from an unexpected server response in the user interface.
+   await response.text().catch(()=>{});
+ }
+ if(!response.ok){
+   const detail=obj&&obj.detail;
+   let cause=(typeof detail==='string'?detail:
+     detail?JSON.stringify(detail):
+     'Сервер вернул ошибку без описания. Посмотри консоль PowerShell приложения.');
+   throw new Error('HTTP '+response.status+' · '+cause);
+ }
+ if(obj===null){
+   throw new Error('HTTP '+response.status+' · сервер вернул не JSON. Проверь консоль PowerShell.');
+ }
  return obj;
 }
 async function json(path,method,payload){return api(path,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}
@@ -173,7 +190,8 @@ $('accountsList').addEventListener('click',async e=>{
    await api('/account/'+id,{method:'DELETE'});
   }
   registry=await api('');renderAccounts();
- }catch(err){alert('Ошибка: '+err.message);}finally{b.disabled=false;}
+ }catch(err){alert('Ошибка действия с аккаунтом: '+err.message);}
+ finally{b.disabled=false;}
 });
 async function addAccount(){
  const username=$('newUsername').value.trim(),proxy=$('newProxy').value.trim();
@@ -235,11 +253,17 @@ function renderJob(){
   stopped:'Остановлено'
  })[j.status]||j.status;
  $('publishBtn').disabled=j.status==='running';
- $('jobHint').textContent=j.status==='needs_review'?'Проверь браузер: публикация могла пройти, повторять нельзя без проверки.':'';
+ $('jobHint').textContent=j.status==='needs_review'?
+   'Проверь браузер: ролик мог опубликоваться. Автоматического повтора нет.':
+   j.status==='stopped'?'Остановлено на ошибке. Проверь этап и открытую страницу Edge перед повтором.':
+   j.status==='running'?'Этап: '+(j.items?.at(-1)?.step_label||'Подготовка'):'';
+
  $('jobList').innerHTML=(j.items||[]).length?j.items.slice(-50).reverse().map(i=>
   '<div class="job-item"><b>@'+esc(i.username)+'</b> · '+esc(i.video)+
   ' · <span class="'+(i.status==='published'?'status':i.status==='error'?'error':'warn')+'">'+esc(i.status)+'</span>'+
-  '<p class="muted">'+esc(i.message||'Ожидание...')+'</p></div>'
+  '<p class="muted">Этап: '+esc(i.step_label||'Подготовка')+
+  (i.step?' ('+esc(i.step)+')':'')+'</p>'+
+  '<p class="muted">'+esc(i.message||'Выполняется...')+'</p></div>'
  ).join(''):'<p class="muted">Ожидание первого ролика...</p>';
 }
 async function stopJob(){
