@@ -627,8 +627,23 @@ try{const d=await request('/status');el('health').textContent=(d.ffmpeg_ready?'F
 el('channels').innerHTML=d.channels.map(c=>'<div class="item"><strong>✈ Telegram · @'+safe(c)+'</strong><div class="actions"><label><input type="checkbox" data-tg-toggle="'+safe(c)+'" '+(!(d.channels_disabled||[]).includes(c)?'checked':'')+'> Вкл.</label><button class="danger" data-channel="'+safe(c)+'">Удалить</button></div></div>').join('');
 updateDesignBackgroundChoices(d.backgrounds);
  updateIgBackgroundChoices(d.backgrounds);
- const bgSignature=JSON.stringify(d.backgrounds);if(bgSignature!==lastBackgroundSignature){lastBackgroundSignature=bgSignature;el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>'<div class="item"><video preload="none" controls data-preview="'+safe(b.name)+'" poster=""></video><button type="button" data-play="'+safe(b.name)+'">▶ Предпросмотр</button><div><strong>'+safe(b.name)+'</strong><div class="muted">'+b.size_mb+' MB</div></div><div class="actions"><label><input type="checkbox" data-toggle="'+safe(b.name)+'" '+(b.enabled?'checked':'')+'> Вкл.</label><button class="danger" data-bg="'+safe(b.name)+'">×</button></div></div>').join('') :'<div class="empty">Добавь хотя бы один фон</div>'; }
-const j=d.job;el('progress').textContent=j.status+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=(j.errors||[]).join('\n');el('run').disabled=j.status==='running';
+ const bgSignature=JSON.stringify(d.backgrounds);
+if(bgSignature!==lastBackgroundSignature){
+  lastBackgroundSignature=bgSignature;
+  el('backgrounds').innerHTML=d.backgrounds.length?d.backgrounds.map(b=>{
+    const name=safe(b.name),url=api+'/backgrounds/'+encodeURIComponent(b.name)+'/preview';
+    const media=b.kind==='image'?
+      '<img class="bg-thumbnail" src="'+url+'" alt="Фотография-фон">':
+      '<video class="bg-thumbnail" preload="none" controls data-preview="'+name+'"></video>'+
+      '<button type="button" data-play="'+name+'">▶ Предпросмотр</button>';
+    return '<div class="item">'+media+
+      '<div><strong>'+name+'</strong><div class="muted">'+(b.kind==='image'?'🖼 Фото':'▶ MP4')+
+      ' · '+b.size_mb+' MB</div></div>'+
+      '<div class="actions"><label><input type="checkbox" data-toggle="'+name+'" '+(b.enabled?'checked':'')+
+      '> Вкл.</label><button class="danger" data-bg="'+name+'">×</button></div></div>';
+  }).join(''):'<div class="empty">Добавь MP4 или фото</div>';
+}
+const j=d.job;el('progress').textContent=j.status+' · '+(j.media_mode==='videos'?'обычные видео':'кружки')+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=(j.errors||[]).join('\n');el('run').disabled=j.status==='running';
 }catch(e){el('log').textContent=e.message}}
 el('addChannel').onsubmit=async e=>{e.preventDefault();try{await request('/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:el('channel').value})});el('channel').value='';await refresh()}catch(e){notify(e)}};
 el('upload').onsubmit=async e=>{e.preventDefault();for(const file of el('files').files){const fd=new FormData();fd.append('file',file);try{await request('/backgrounds',{method:'POST',body:fd})}catch(e){notify(e)}}el('files').value='';await refresh()};
