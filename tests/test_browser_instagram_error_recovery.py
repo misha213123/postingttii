@@ -170,3 +170,127 @@ class BrowserWorkflowRegressionTests(unittest.IsolatedAsyncioTestCase):
         message = browser._brief_error(exc)
         self.assertNotIn("secretpass", message)
         self.assertIn("Edge", message)
+
+
+class CreateDialogRegressionTests(unittest.IsolatedAsyncioTestCase):
+    """Exercise several layouts with simulated Playwright controls."""
+
+    class Locator:
+        def __init__(self, page, name, present=False, on_click=None):
+            self.page = page
+            self.name = name
+            self.present = present
+            self.on_click = on_click
+            self.first = self
+            self.last = self
+
+        async def count(self):
+            return int(self.present)
+
+        async def is_visible(self):
+            return self.present
+
+        async def click(self, **kwargs):
+            if not self.present:
+                raise RuntimeError("No matching control")
+            if self.on_click:
+                self.on_click()
+
+        async def wait_for(self, **kwargs):
+            if self.name == "file" and self.page.file_present:
+                return None
+            raise RuntimeError("Media file input not found")
+
+    class Page:
+        def __init__(self, kind):
+            self.kind = kind
+            self.url = "https://www.instagram.com/"
+            self.file_present = kind == "input"
+            self.create_clicked = False
+            self.mode_clicked = False
+
+        def locator(self, selector):
+            if selector == 'input[type="file"]':
+                return CreateDialogRegressionTests.Locator(self, "file", present=self.file_present)
+            if selector.startswith('a[href="/create/select/"]'):
+                return CreateDialogRegressionTests.Locator(
+                    self, "url", present=self.kind == "href",
+                    on_click=lambda: setattr(self, "file_present", True),
+                )
+            if selector.startswith('[aria-label="Create"]'):
+                return CreateDialogRegressionTests.Locator(self, "aria", present=False)
+            if selector.startswith('svg[aria-label="New post"]'):
+                return CreateDialogRegressionTests.Locator(
+                    self, "icon", present=self.kind == "icon",
+                    on_click=lambda: setattr(self, "file_present", True),
+                )
+            return CreateDialogRegressionTests.Locator(self, "unknown")
+
+        def get_by_role(self, role, name):
+            if role == "button" and self.kind == "button":
+                return CreateDialogRegressionTests.Locator(
+                    self, "create_button", present=True,
+                    on_click=lambda: setattr(self, "file_present", True),
+                )
+            if role == "link" and self.kind == "dropdown":
+                return CreateDialogRegressionTests.Locator(
+                    self, "create_link", present=True,
+                    on_click=lambda: setattr(self, "create_clicked", True),
+                )
+            if role == "menuitem" and self.kind == "dropdown" and self.create_clicked:
+                return CreateDialogRegressionTests.Locator(
+                    self, "Post", present=True,
+                    on_click=lambda: setattr(self, "file_present", True),
+                )
+            return CreateDialogRegressionTests.Locator(self, role)
+
+        def get_by_text(self, label, exact=False):
+            return CreateDialogRegressionTests.Locator(self, "text")
+
+        async def wait_for_timeout(self, delay):
+            pass
+
+    async def test_upload_input_is_already_present(self):
+        page = self.Page("input")
+        item = {}
+        await browser._open_create_picker(page, item)
+        self.assertEqual(item["step"], "create")
+
+    async def test_create_link_starts_file_picker(self):
+        page = self.Page("href")
+        item = {}
+        await browser._open_create_picker(page, item)
+        self.assertTrue(page.file_present)
+        self.assertIn("create_url", item["step_label"])
+
+    async def test_create_button_in_new_navigation_starts_picker(self):
+        page = self.Page("button")
+        item = {}
+        await browser._open_create_picker(page, item)
+        self.assertTrue(page.file_present)
+        self.assertIn("create_button", item["step_label"])
+
+    async def test_icon_only_create_action_starts_picker(self):
+        page = self.Page("icon")
+        item = {}
+        await browser._open_create_picker(page, item)
+        self.assertTrue(page.file_present)
+        self.assertIn("create_icon", item["step_label"])
+
+    async def test_create_menu_post_option_before_file_picker(self):
+        page = self.Page("dropdown")
+        item = {}
+        await browser._open_create_picker(page, item)
+        self.assertTrue(page.create_clicked)
+        self.assertTrue(page.file_present)
+        self.assertEqual(item["step"], "create_mode")
+
+    async def test_no_create_button_explains_without_exposing_browser_exception(self):
+        page = self.Page("missing")
+        item = {}
+        with self.assertRaises(RuntimeError) as error:
+            await browser._open_create_picker(page, item)
+        message = browser._brief_error(error.exception)
+        self.assertIn("Не найдена кнопка", message)
+        self.assertIn("Create", message)
+        self.assertNotIn("Ошибка взаимодействия с Edge", message)
