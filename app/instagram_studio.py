@@ -490,7 +490,7 @@ async def process(limit, layout: InstagramLayout, *,
     try:
         d = load()
         output_dir = output_dir or settings.upload_dir
-        render_scope = (str(target_slot) if target_slot else
+        render_scope = ((str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
                         ("folder:" + str(output_dir.resolve())
                          if output_dir.resolve() != settings.upload_dir.resolve() else ""))
         if render_scope:
