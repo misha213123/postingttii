@@ -1,0 +1,215 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Instagram · браузер — PostingTTII</title>
+<style>
+:root{font-family:Inter,"Segoe UI",Arial,sans-serif;color-scheme:dark;--bg:#080f1c;--card:#121f32;--line:#293b55;--muted:#a4b6cb;--text:#eaf2ff;--blue:#5378ea}
+*{box-sizing:border-box}body{margin:0;color:var(--text);background:radial-gradient(ellipse at 15% 0%,#172e4d,#080f1c 55%);min-height:100vh}
+main{width:min(1250px,calc(100% - 36px));margin:auto;padding:30px 0 70px}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+h1{font-size:clamp(26px,4vw,39px);margin:10px 0 8px;letter-spacing:-1px}h2{font-size:19px;margin:0 0 12px}
+p{line-height:1.6;margin:7px 0}a{color:#c1d1ff;text-decoration:none}a:hover{text-decoration:underline}
+.muted{color:var(--muted);font-size:12px}.eyebrow{font-weight:bold;letter-spacing:.12em;font-size:12px;text-transform:uppercase;color:#a0b8ff}
+.grid{display:grid;grid-template-columns:minmax(320px,.9fr) minmax(420px,1.1fr);gap:17px}
+.card{padding:21px;background:#122034e6;border:1px solid var(--line);border-radius:18px;margin-bottom:17px;box-shadow:0 15px 35px #0002}
+.field{display:flex;flex-direction:column;gap:7px;margin:12px 0}label{font-size:13px;color:#c0d1e8}input,textarea,select{width:100%;border:1px solid #365173;background:#091829;border-radius:10px;padding:11px 12px;color:var(--text);font:inherit;min-width:0}
+textarea{resize:vertical;min-height:105px}input:focus,textarea:focus,select:focus{outline:2px solid #728fff55;border-color:#7b9bef}
+button{border:1px solid #385a89;border-radius:10px;background:#1d3355;color:#e5efff;padding:9px 13px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+button:hover{background:#2b4b76}button:disabled{opacity:.55;cursor:wait}
+button.primary{background:linear-gradient(115deg,#5266df,#2e87bf);border-color:#778def}button.ghost{background:#101e32}button.danger{background:#44202b;border-color:#793c54;color:#ffd9e1}
+.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.row.stretch>*{flex:1}
+.info{border:1px solid #354b68;border-radius:13px;background:#101b2e;padding:13px;color:#b5c6da;font-size:12px;line-height:1.65;margin:12px 0}
+.notice{border-left:3px solid #719aff;padding:9px 12px;background:#132640;border-radius:0 11px 11px 0;font-size:12px;line-height:1.5;color:#bdd0e8}
+.account-card{border:1px solid #345073;border-radius:12px;background:#0d192c;padding:14px;margin:10px 0}
+.account-name{font-size:15px;font-weight:700}.account-sub{font-size:11px;color:#acc1d9;overflow-wrap:anywhere;margin:6px 0 11px}
+.account-buttons{display:flex;gap:6px;flex-wrap:wrap}.account-buttons button{font-size:11px;padding:7px 9px}
+.check-line{display:flex;align-items:center;gap:10px;cursor:pointer;margin:8px 0;font-size:13px}.check-line input{width:17px;height:17px;flex:none}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.video-list{min-height:130px;max-height:325px;overflow:auto;border:1px solid #2a425f;border-radius:12px;padding:8px;background:#0c192b}
+.video-item{display:flex;align-items:center;gap:10px;padding:10px;border-bottom:1px solid #1e344e;cursor:pointer}
+.video-item:last-child{border-bottom:0}.video-item input{width:16px;height:16px;flex-shrink:0}.video-item span{font-size:12px;overflow-wrap:anywhere;flex:1}
+.chip{font-size:10px;color:#c6deff;padding:3px 8px;border:1px solid #47658d;border-radius:30px}
+.status{font-size:13px;color:#a1e8c7}.warn{color:#f2c789}.error{color:#ffadab}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin:14px 0}
+.stat{background:#0b192b;border:1px solid #314562;border-radius:12px;padding:11px}.stat b{font-size:22px;display:block}.stat span{font-size:11px;color:#afc1d7}
+.job-item{padding:11px;border:1px solid #2b4261;background:#0c192b;border-radius:10px;margin:8px 0;font-size:12px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
+@media(max-width:960px){.grid{grid-template-columns:1fr}}@media(max-width:550px){main{width:calc(100% - 20px)}.card{padding:15px}.two{grid-template-columns:1fr}}
+</style></head><body><main>
+<header>
+ <div><a href="/">← PostingTTII</a><div class="eyebrow" style="margin-top:16px">Отдельный режим · без Meta API</div><h1>Instagram · браузер</h1>
+ <p class="muted">Браузерная публикация через Edge, выбор аккаунтов и видео, собственные прокси и отдельные сессии</p></div>
+ <button class="ghost" onclick="refreshAll()">↻ Обновить</button>
+</header>
+<div class="notice">Этот режим не использует Meta Graph API и не управляет Meta 1 / Meta 2. Первоначальный вход в аккаунты выполняется вручную в окне Edge. Ввод и проверка прокси доступны только локально. Instagram может менять интерфейс или требовать подтверждение — в таком случае проверь публикацию самостоятельно.</div>
+<div class="grid" style="margin-top:18px">
+ <div>
+  <section class="card">
+   <h2>01 / Добавить аккаунт</h2>
+   <div class="field"><label for="newUsername">Instagram username</label><input id="newUsername" autocomplete="off" placeholder="@instagram_account"></div>
+   <div class="field"><label for="newProxy">Резидентский прокси (HTTP/HTTPS/SOCKS5)</label><input id="newProxy" type="password" autocomplete="off" placeholder="host:port:user:password или http://login:password@host:port"></div>
+   <p class="muted">Пароль прокси сохраняется локально в зашифрованном виде и не отображается после сохранения. HTTP(S) с авторизацией поддерживается; SOCKS5 — без логина и пароля.</p>
+   <div class="row"><button class="ghost" id="testNewProxy" onclick="testProxy('newProxy','newProxyResult')">Проверить прокси и IP</button><button class="primary" onclick="addAccount()">+ Добавить аккаунт</button></div>
+   <p id="newProxyResult" class="muted" aria-live="polite"></p>
+  </section>
+  <section class="card">
+   <div class="row" style="justify-content:space-between"><h2>02 / Аккаунты и сессии</h2><span class="chip" id="accountCount">0</span></div>
+   <div id="accountsList"><p class="muted">Загружаем...</p></div>
+   <p class="muted">Нажми «Открыть Edge» и войди вручную. Сессия сохраняется для следующих публикаций. Изменить прокси можно после закрытия окна браузера.</p>
+  </section>
+ </div>
+ <div>
+  <section class="card">
+   <h2>03 / Выбрать видео и аккаунты</h2>
+   <div class="field"><label for="folderSelect">Папка с видео</label>
+     <select id="folderSelect" onchange="loadVideos()"><option value="default">Стандартная videos/inbox</option></select></div>
+   <div class="row" style="justify-content:space-between;margin:12px 0">
+     <strong style="font-size:13px">Выбери ролики</strong><div class="row"><button onclick="toggleAllVideos(true)" class="ghost">Все</button><button onclick="toggleAllVideos(false)" class="ghost">Снять</button></div>
+   </div>
+   <div class="video-list" id="videosList"><p class="muted">Загрузка...</p></div>
+   <div class="field"><label for="caption">Подпись к видео (необязательно)</label><textarea id="caption" maxlength="2200" placeholder="Описание и хештеги для выбранных видео"></textarea></div>
+   <div class="info">При запуске каждый выбранный ролик отправляется на каждый отмеченный аккаунт. Публикации выполняются последовательно, через отдельные браузерные сессии. Если Instagram не подтверждает успешный Share, очередь останавливается для ручной проверки — повторной отправки автоматически нет.</div>
+   <label class="check-line"><input id="confirmPublish" type="checkbox"> Подтверждаю публикацию выбранных видео на выбранные аккаунты</label>
+   <div class="row"><button class="primary" id="publishBtn" onclick="publishSelected()">▶ Начать браузерную публикацию</button></div>
+   <p id="publishMessage" class="muted" aria-live="polite"></p>
+  </section>
+  <section class="card">
+   <h2>04 / Ход публикации</h2>
+   <div class="stat-grid"><div class="stat"><b id="jobTotal">0</b><span>Всего</span></div><div class="stat"><b id="jobProgress">0</b><span>Обработано</span></div><div class="stat"><b id="jobStatus">—</b><span>Статус</span></div></div>
+   <div class="row"><button class="danger" onclick="stopJob()">Остановить после текущего ролика</button><span class="muted" id="jobHint"></span></div>
+   <div id="jobList" style="margin-top:14px"><p class="muted">Заданий ещё нет.</p></div>
+  </section>
+ </div>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=text=>String(text??'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','"':'&quot;'}[s]));
+let registry={accounts:[],folders:[],job:null};
+let clipList=[];
+const selectedAccounts=new Set(),selectedVideos=new Set();
+async function api(path,options={}){
+ const response=await fetch('/api/browser-instagram'+path,options);
+ let obj;try{obj=await response.json();}catch(e){obj={detail:'Некорректный ответ сервера'};}
+ if(!response.ok)throw new Error(typeof obj.detail==='string'?obj.detail:JSON.stringify(obj.detail||'HTTP '+response.status));
+ return obj;
+}
+async function json(path,method,payload){return api(path,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}
+function message(id,text,kind='muted'){$(id).textContent=text;$(id).className=kind;}
+async function refreshAll(){
+ try{
+  registry=await api('');
+  const sel=$('folderSelect'),previous=sel.value;
+  sel.replaceChildren();
+  for(const folder of registry.folders){const opt=document.createElement('option');opt.value=folder.id;opt.textContent=folder.label;sel.append(opt);}
+  sel.value=registry.folders.some(f=>f.id===previous)?previous:'default';
+  renderAccounts();renderJob();
+  if(!clipList.length)await loadVideos();
+ }catch(e){message('publishMessage','Ошибка загрузки: '+e.message,'error');}
+}
+function renderAccounts(){
+ const root=$('accountsList');$('accountCount').textContent=String(registry.accounts.length);
+ const present=new Set(registry.accounts.map(a=>a.id));
+ for(const key of [...selectedAccounts])if(!present.has(key))selectedAccounts.delete(key);
+ root.innerHTML=registry.accounts.length?registry.accounts.map(a=>
+  '<article class="account-card">'+
+   '<label class="check-line"><input type="checkbox" data-account="'+esc(a.id)+'" '+(selectedAccounts.has(a.id)?'checked':'')+'><span class="account-name">@'+esc(a.username)+'</span></label>'+
+   '<div class="account-sub">Прокси: '+esc(a.proxy)+' · '+(a.browser_open?'🟢 Браузер открыт':a.has_profile?'Сессия на диске':'Новый профиль')+'</div>'+
+   '<div class="account-buttons"><button data-open="'+esc(a.id)+'">Открыть Edge</button>'+
+   '<button data-close="'+esc(a.id)+'">Закрыть</button><button data-proxy="'+esc(a.id)+'">Изменить прокси</button>'+
+   '<button class="danger" data-remove="'+esc(a.id)+'">Удалить из списка</button></div></article>'
+  ).join(''):'<p class="muted">Пока нет браузерных Instagram-аккаунтов.</p>';
+}
+$('accountsList').addEventListener('change',e=>{
+ if(e.target.dataset.account){const key=e.target.dataset.account;e.target.checked?selectedAccounts.add(key):selectedAccounts.delete(key);}
+});
+$('accountsList').addEventListener('click',async e=>{
+ const b=e.target.closest('button');if(!b)return;
+ b.disabled=true;
+ const id=b.dataset.open||b.dataset.close||b.dataset.proxy||b.dataset.remove;
+ try{
+  if(b.dataset.open){await api('/account/'+id+'/open',{method:'POST'});alert('Edge открыт. Войди вручную в нужный Instagram.');}
+  if(b.dataset.close)await api('/account/'+id+'/close',{method:'POST'});
+  if(b.dataset.proxy){
+   const value=prompt('Новый прокси для аккаунта (host:port:user:password). Пароль сохраняется зашифрованно:');
+   if(value!==null)await json('/account/'+id+'/proxy','PUT',{proxy:value});
+  }
+  if(b.dataset.remove){
+   if(!confirm('Удалить аккаунт из браузерного списка? Локальный профиль на диске останется.'))return;
+   await api('/account/'+id,{method:'DELETE'});
+  }
+  registry=await api('');renderAccounts();
+ }catch(err){alert('Ошибка: '+err.message);}finally{b.disabled=false;}
+});
+async function addAccount(){
+ const username=$('newUsername').value.trim(),proxy=$('newProxy').value.trim();
+ try{
+  await json('/account','POST',{username,proxy});
+  $('newUsername').value='';$('newProxy').value='';
+  registry=await api('');renderAccounts();
+  message('newProxyResult','Аккаунт добавлен. Теперь нажми «Открыть Edge» для входа.','status');
+ }catch(e){message('newProxyResult',e.message,'error');}
+}
+async function testProxy(inputId,resultId){
+ const value=$(inputId).value.trim();if(!value){message(resultId,'Введи прокси для проверки','error');return;}
+ message(resultId,'Проверяю соединение...');
+ try{
+  const d=await json('/proxy/test','POST',{proxy:value});
+  message(resultId,d.ok?'✓ Прокси работает · IP '+d.ip+' · '+d.latency_ms+' мс':d.message,d.ok?'status':'error');
+ }catch(e){message(resultId,e.message,'error');}
+}
+async function loadVideos(){
+ try{
+  const d=await api('/videos?folder_id='+encodeURIComponent($('folderSelect').value));
+  clipList=d.videos;selectedVideos.clear();renderVideos();
+ }catch(e){$('videosList').textContent='Ошибка папки: '+e.message;}
+}
+function renderVideos(){
+ $('videosList').innerHTML=clipList.length?clipList.map(v=>
+  '<label class="video-item"><input type="checkbox" data-video="'+esc(v.name)+'" '+(selectedVideos.has(v.name)?'checked':'')+'><span>'+esc(v.name)+'</span><span class="muted">'+v.size_mb+' МБ</span></label>'
+ ).join(''):'<p class="muted">Нет подходящих MP4/MOV в выбранной папке.</p>';
+}
+$('videosList').addEventListener('change',e=>{
+ const name=e.target.dataset.video;if(name)(e.target.checked?selectedVideos.add(name):selectedVideos.delete(name));
+});
+function toggleAllVideos(value){selectedVideos.clear();if(value)for(const v of clipList)selectedVideos.add(v.name);renderVideos();}
+async function publishSelected(){
+ if(!selectedAccounts.size||!selectedVideos.size){message('publishMessage','Выбери аккаунты и видео','error');return;}
+ if(!$('confirmPublish').checked){message('publishMessage','Подтверди публикацию галочкой','error');return;}
+ if(!confirm('Начать отправку '+selectedVideos.size+' видео на '+selectedAccounts.size+' аккаунтов через браузер?'))return;
+ $('publishBtn').disabled=true;
+ try{
+  const result=await json('/publish','POST',{accounts:[...selectedAccounts],folder_id:$('folderSelect').value,filenames:[...selectedVideos],caption:$('caption').value,confirmed:true});
+  message('publishMessage','Очередь запущена: '+result.total+' публикаций. Открытые окна Edge не закрывай.','status');
+  await refreshAll();
+ }catch(e){message('publishMessage','Ошибка запуска: '+e.message,'error');}
+ finally{$('publishBtn').disabled=false;}
+}
+function renderJob(){
+ const j=registry.job; if(!j){$('jobTotal').textContent='0';$('jobProgress').textContent='0';$('jobStatus').textContent='—';return;}
+ $('jobTotal').textContent=String(j.total);
+ $('jobProgress').textContent=String(j.progress);
+ $('jobStatus').textContent=({
+  running:'Работает',completed:'Готово',needs_review:'Проверка',
+  stopped:'Остановлено'
+ })[j.status]||j.status;
+ $('publishBtn').disabled=j.status==='running';
+ $('jobHint').textContent=j.status==='needs_review'?'Проверь браузер: публикация могла пройти, повторять нельзя без проверки.':'';
+ $('jobList').innerHTML=(j.items||[]).length?j.items.slice(-50).reverse().map(i=>
+  '<div class="job-item"><b>@'+esc(i.username)+'</b> · '+esc(i.video)+
+  ' · <span class="'+(i.status==='published'?'status':i.status==='error'?'error':'warn')+'">'+esc(i.status)+'</span>'+
+  '<p class="muted">'+esc(i.message||'Ожидание...')+'</p></div>'
+ ).join(''):'<p class="muted">Ожидание первого ролика...</p>';
+}
+async function stopJob(){
+ try{await api('/publish/stop',{method:'POST'});message('publishMessage','Остановка запрошена. Текущий ролик должен завершиться.','warn');}
+ catch(err){message('publishMessage',err.message,'error');}
+}
+async function poll(){
+ try{
+  const d=await api('');
+  registry.job=d.job;
+  renderJob();
+ }catch(e){}
+}
+refreshAll();setInterval(poll,4000);
+</script></body></html>
