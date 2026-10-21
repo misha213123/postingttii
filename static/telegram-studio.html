@@ -715,8 +715,8 @@ function bindBannerDrag(frameId,stageId,state,ratio,refresh,save,allowMove){
       state.banner_width=Math.max(100,Math.min(1080,
         Math.round((active.width+dimensionChange)/10)*10));
     }else{
-      state.banner_x=active.bannerX+dx;
-      state.banner_y=active.bannerY+dy;
+      state.banner_x=Math.round(active.bannerX+dx);
+      state.banner_y=Math.round(active.bannerY+dy);
     }
     refresh();
   });
@@ -1072,7 +1072,16 @@ function updateInstagramLayoutPreview(){
   updateInstagramBackgroundPreview();
 }
 function saveInstagramLayout(){
+  // Banner drag distances originate in CSS pixels and become fractional
+  // source pixels after scaling to the 1080x1920 output canvas.
+  // Send integer coordinates to the API and keep the local layout consistent.
   const snapshot={...instagramLayout};
+  for(const key of ['banner_x','banner_y','banner_width']){
+    if(snapshot[key]!==null&&snapshot[key]!==undefined){
+      snapshot[key]=Math.round(Number(snapshot[key]));
+      instagramLayout[key]=snapshot[key];
+    }
+  }
   instagramLayoutSave=instagramLayoutSave.catch(()=>{}).then(async()=>{
     await igRequest('/layout',{
       method:'POST',headers:{'Content-Type':'application/json'},

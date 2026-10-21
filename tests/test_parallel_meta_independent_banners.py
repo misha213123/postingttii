@@ -102,6 +102,28 @@ class SeparateBannerTests(unittest.IsolatedAsyncioTestCase):
                          (760, 230, 870))
         self.assertEqual(tg_layout.banner_width, 470)
 
+    def test_fractional_banner_drag_coordinates_round_to_integer_pixels(self):
+        layout = studio.InstagramLayout.model_validate({
+            "banner_x": 209.40005012511728,
+            "banner_y": 1213.200232388847,
+            "banner_width": 539.8,
+        })
+        self.assertEqual((layout.banner_x, layout.banner_y, layout.banner_width),
+                         (209, 1213, 540))
+        self.assertIsInstance(layout.banner_x, int)
+        self.assertIsInstance(layout.banner_y, int)
+
+    def test_legacy_null_banner_fields_and_geometry_limits_still_validate(self):
+        from pydantic import ValidationError
+        legacy = studio.InstagramLayout()
+        self.assertIsNone(legacy.banner_x)
+        self.assertIsNone(legacy.banner_y)
+        self.assertIsNone(legacy.banner_width)
+        with self.assertRaises(ValidationError):
+            studio.InstagramLayout.model_validate({"banner_x": 1081.5})
+        with self.assertRaises(ValidationError):
+            studio.InstagramLayout.model_validate({"banner_width": 50.4})
+
     def test_previous_video_layout_migrates_without_disabling_existing_banner(self):
         with patch.object(studio, "saved_design", return_value=tg.RenderDesign(
             banner_enabled=True, banner_width=500,
