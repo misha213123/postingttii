@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import random
 import re
 import subprocess
@@ -19,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 from fastapi.responses import FileResponse
 from app.config import settings
@@ -68,6 +69,15 @@ class InstagramLayout(BaseModel):
     banner_x: int | None = Field(default=None, ge=0, le=1080)
     banner_y: int | None = Field(default=None, ge=0, le=1920)
     banner_width: int | None = Field(default=None, ge=100, le=1080)
+
+    @field_validator("banner_x", "banner_y", "banner_width", mode="before")
+    @classmethod
+    def round_banner_pixels(cls, value):
+        # Dragging a banner across a scaled HTML preview produces fractional
+        # pixels. FFmpeg geometry uses whole source-frame pixels.
+        if isinstance(value, float) and math.isfinite(value):
+            return round(value)
+        return value
 
 
 def video_banner_file() -> Path | None:
