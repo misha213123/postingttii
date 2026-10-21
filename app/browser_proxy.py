@@ -6,6 +6,7 @@ are never reflected by public API fields or exception messages.
 from __future__ import annotations
 
 import ipaddress
+import re
 import time
 from urllib.parse import quote, unquote, urlsplit
 
@@ -15,53 +16,84 @@ SCHEMES = {"http", "https", "socks5"}
 
 
 def parse_proxy(value: str) -> dict[str, str] | None:
-    raw = (value or "").strip().strip('"').strip("'")
+    """Accept normal proxy URLs and residential host:port:user:password.
+
+    Supported:
+      host:port
+      host:port:user:password
+      http://host:port:user:password  (common provider copy format)
+      http://user:password@host:port
+      user:password@host:port
+      https://host:port
+      socks5://host:port
+    """
+    raw = (value or "").strip().strip('"').strip("'").strip()
     if not raw:
         return None
     if len(raw) > 1200 or any(c.isspace() for c in raw):
         raise ValueError("Адрес прокси слишком длинный или содержит пробелы")
 
-    if "://" not in raw:
-        # Common residential-provider format: host:port:username:password.
-        # Allow colons in the password, but not in the hostname.
-        if "@" not in raw and raw.count(":") >= 3 and not raw.startswith("["):
-            host, port, username, password = raw.split(":", 3)
-            if not host or not port or not username or not password:
-                raise ValueError("Нужен формат host:port:user:password")
-            raw = (
-                "http://" + quote(username, safe="") + ":"
-                + quote(password, safe="") + "@" + host + ":" + port
-            )
-        else:
-            raw = "http://" + raw
+    if "://" in raw:
+        scheme, address = raw.split("://", 1)
+        scheme = scheme.lower()
+    else:
+        scheme, address = "http", raw
+
+    if scheme not in SCHEMES:
+        raise ValueError("Поддерживаются прокси HTTP, HTTPS и SOCKS5")
+    if not address:
+        raise ValueError("Укажи адрес прокси и порт")
+
+    # Some residential providers supply "http://IP:PORT:LOGIN:PASSWORD"
+    # rather than an RFC 3986 proxy URL. urllib.parse.urlsplit interprets
+    # the extra colon as part of the port and raises ValueError.
+    # Translate that user-friendly format to a proper authenticated URL.
+    # Use the remainder as an opaque password, including any ':', '@',
+    # '#', '?' or '%' characters, and percent-encode it before URL parsing.
+    provider_parts = re.fullmatch(
+        r"([^:/@\[\]\s]+):(\d{1,5}):([^:\s]+):(.+)", address
+    )
+    if provider_parts:
+        host, port, username, password = provider_parts.groups()
+        if not username or not password:
+            raise ValueError("Укажи и логин, и пароль прокси")
+        address = (
+            f"{quote(username, safe='')}:{quote(password, safe='')}@"
+            f"{host}:{port}"
+        )
+    parsed_url = f"{scheme}://{address}"
 
     try:
-        parsed = urlsplit(raw)
-        port = parsed.port
-        hostname = parsed.hostname
+        parsed = urlsplit(parsed_url)
+        hostname, port = parsed.hostname, parsed.port
         username = unquote(parsed.username or "")
         password = unquote(parsed.password or "")
-    except (ValueError, UnicodeError) as exc:
-        raise ValueError("Некорректный порт, адрес или авторизация прокси") from exc
+    except (ValueError, UnicodeError):
+        raise ValueError(
+            "Не удалось прочитать прокси. Используй IP:порт:логин:пароль "
+            "или http://логин:пароль@IP:порт"
+        ) from None
 
-    if parsed.scheme not in SCHEMES or not hostname or port is None:
-        raise ValueError("Укажи HTTP, HTTPS или SOCKS5 прокси с адресом и портом")
-    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
-        raise ValueError("В адресе прокси не допускаются путь и параметры")
+    if not hostname or port is None:
+        raise ValueError("Не указан адрес или числовой порт прокси")
     if not 1 <= port <= 65535:
         raise ValueError("Порт прокси должен быть от 1 до 65535")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ValueError("В адресе прокси не допускаются путь и параметры")
     if (username and not password) or (password and not username):
         raise ValueError("Укажи одновременно логин и пароль прокси")
     if parsed.scheme == "socks5" and username:
-        raise ValueError("SOCKS5 с логином и паролем не поддерживается Edge Playwright; используй HTTP-прокси")
+        raise ValueError(
+            "SOCKS5 с логином и паролем не поддерживается Edge Playwright; "
+            "используй HTTP-прокси"
+        )
 
     host = f"[{hostname}]" if ":" in hostname else hostname
-    result = {"server": f"{parsed.scheme}://{host}:{port}"}
+    result = {"server": f"{scheme}://{host}:{port}"}
     if username:
         result["username"] = username
         result["password"] = password
     return result
-
 
 def masked_proxy(raw: str) -> str:
     if not raw:
