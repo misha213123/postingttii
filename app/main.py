@@ -748,20 +748,28 @@ async def batch_start(body: BatchPublishRequest):
                 secrets.SystemRandom().shuffle(videos)
             per_target[target] = videos
         max_rounds = max((len(pool) for pool in per_target.values()), default=0)
+        cursors = {target: 0 for target in targets}
         # Max 500 scheduled files per account to avoid runaway batch creation.
-        for index in range(min(max_rounds, 500)):
+        # Advance each account's cursor until a truly unique video is found,
+        # so two accounts sharing one folder still get distinct files.
+        for _ in range(min(max_rounds, 500)):
+            any_new = False
             for target in targets:
                 pool = per_target[target]
-                if index >= len(pool):
-                    continue
-                video = pool[index]
-                digest = await asyncio.to_thread(publish_state.video_key, video)
-                if digest in seen_video_keys:
-                    duplicate_filenames.append(video.name)
-                    continue
-                seen_video_keys.add(digest)
-                rows.append({"filename": video.name, "source_folder": per_target_folder[target],
-                             "target": target, "video_key": digest})
+                while cursors[target] < len(pool):
+                    video = pool[cursors[target]]
+                    cursors[target] += 1
+                    digest = await asyncio.to_thread(publish_state.video_key, video)
+                    if digest in seen_video_keys:
+                        duplicate_filenames.append(video.name)
+                        continue
+                    seen_video_keys.add(digest)
+                    rows.append({"filename": video.name, "source_folder": per_target_folder[target],
+                                 "target": target, "video_key": digest})
+                    any_new = True
+                    break
+            if not any_new:
+                break
         # Require at least one distinct video per selected Instagram account.
         assigned = {row["target"] for row in rows}
         missing = [target for target in targets if target not in assigned]
