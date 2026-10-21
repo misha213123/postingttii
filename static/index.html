@@ -638,7 +638,7 @@ function renderBatchTargets(){
   for(const platform of ['youtube','instagram','tiktok']){
     for(const a of (state.accounts[platform]||[])){
       const target=platform+':'+a.slot,cooldown=Number((state.cooldowns||{})[target]||0);
-      html+='<label class="target"><input type="checkbox" class="batch-target" value="'+esc(target)+'" checked><span><b>'+prettyTarget(target)+'</b><br><small>'+esc(a.label||'')+'</small>'+(cooldown>0?'<br><span class="warn" style="font-size:10px">пауза '+fmtTime(cooldown)+'</span>':'')+'</span></label>';
+      html+='<label class="target"><input type="checkbox" class="batch-target" value="'+esc(target)+'" '+(activeVideoFolder==='linked'&&platform!=='instagram'?'':'checked')+'><span><b>'+prettyTarget(target)+'</b><br><small>'+esc(a.label||'')+'</small>'+(cooldown>0?'<br><span class="warn" style="font-size:10px">пауза '+fmtTime(cooldown)+'</span>':'')+'</span></label>';
     }
   }
   root.innerHTML=html||'<div class="muted">Нет подключённых аккаунтов.</div>';
