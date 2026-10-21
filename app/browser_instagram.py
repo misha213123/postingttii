@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import secrets
@@ -37,6 +38,27 @@ CURRENT_JOB: dict[str, Any] | None = None
 CURRENT_TASK: asyncio.Task | None = None
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v"}
 USER_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+log = logging.getLogger(__name__)
+
+
+def _brief_error(exc: Exception) -> str:
+    """Never expose Playwright proxy URLs, cookie data or credentials."""
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    if isinstance(exc, RuntimeError):
+        # Only our explicitly-authored workflow errors use RuntimeError;
+        # external Playwright errors need a generic sanitized explanation.
+        message = str(exc)
+        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не нашёл ", "Проверь ", "Не удалось ")):
+            return message
+    return "Ошибка взаимодействия с Edge или Instagram. Проверь браузер, вход и подключение."
+
+
+def _stage(item: dict, stage: str, label: str) -> None:
+    item["step"] = stage
+    item["step_label"] = label
+
+
 
 
 def _local(request: Request) -> None:
@@ -254,6 +276,14 @@ async def _context(account_id: str):
         except Exception as exc:
             raise HTTPException(503, "Не удалось открыть Edge. Закрой старый профиль и проверь Playwright.") from exc
         CONTEXTS[account_id] = context
+
+        # When user closes the visible Edge window manually, Playwright
+        # closes the persistent context. Evict its stale handle immediately:
+        # otherwise subsequent Open/Publish calls use a dead session.
+        def on_close(*_):
+            if CONTEXTS.get(account_id) is context:
+                CONTEXTS.pop(account_id, None)
+        context.on("close", on_close)
         return context
 
 
@@ -269,18 +299,34 @@ async def close_account_context(account_id: str):
 @router.post("/account/{account_id}/open")
 async def open_account(account_id: str, request: Request):
     _local(request)
-    ctx = await _context(account_id)
-    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
     try:
-        await page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=40000)
-    except Exception:
-        # User may need to complete login in the visible browser.
-        pass
-    try:
+        ctx = await _context(account_id)
+        # Reuse an Instagram tab, not an unrelated tab with a 2FA provider.
+        page = next((p for p in ctx.pages if "instagram.com" in p.url), None)
+        if page is None:
+            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        try:
+            await page.goto("https://www.instagram.com/",
+                            wait_until="domcontentloaded", timeout=45000)
+        except Exception as exc:
+            log.warning("Browser IG page navigation failed for profile %s: %s",
+                        account_id[:8], type(exc).__name__)
+            raise HTTPException(
+                502, "Edge открыт, но Instagram не загрузился. Проверь прокси, "
+                     "подключение и страницу в окне Edge.",
+            ) from None
         await page.bring_to_front()
-    except Exception:
-        pass
-    return {"ok": True, "message": "Открыл Edge с отдельным профилем. Войди в Instagram вручную."}
+        return {"ok": True, "message": "Edge открыл Instagram. Проверь вход и свою страницу."}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("Browser IG Open action failed for profile %s: %s",
+                  account_id[:8], type(exc).__name__)
+        await close_account_context(account_id)
+        raise HTTPException(
+            503, "Не удалось открыть профиль Edge. Возможно, окно было закрыто "
+                 "вручную — попробуй открыть снова.",
+        ) from None
 
 
 @router.post("/account/{account_id}/close")
@@ -305,61 +351,96 @@ async def _click_action(page, text: str, timeout_ms: int = 15000):
         await page.get_by_text(re.compile(r"^(" + text + r")$", re.I)).last.click(timeout=timeout_ms)
 
 
-async def _publish_via_browser(ctx, video: Path, caption: str) -> str:
-    """Best-effort Instagram web UI workflow, no Graph API or bypass.
+async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None = None) -> str:
+    """UI-based Instagram upload; stop on ambiguity, never retry Share."""
+    item = item if item is not None else {}
+    _stage(item, "open_instagram", "Открываю Instagram")
+    try:
+        pages = ctx.pages
+        page = next((p for p in pages if "instagram.com" in p.url), None)
+        if page is None:
+            page = pages[0] if pages else await ctx.new_page()
+    except Exception:
+        raise RuntimeError("Не удалось подключиться к окну Edge. Закрой профиль и открой заново.") from None
+    try:
+        await page.goto("https://www.instagram.com/",
+                        wait_until="domcontentloaded", timeout=45000)
+    except Exception:
+        raise RuntimeError(
+            "Не удалось загрузить instagram.com. Проверь страницу в Edge "
+            "и подключение через свой прокси."
+        ) from None
 
-    If verification/login is required, stop and let the user complete it.
-    Never retry Share automatically after uncertain confirmation.
-    """
-    pages = ctx.pages
-    page = pages[0] if pages else await ctx.new_page()
-    await page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=60000)
+    _stage(item, "login", "Проверяю вход")
     if await page.locator('input[name="username"], input[name="password"]').count():
         raise RuntimeError("Требуется ручной вход в Instagram — открой профиль.")
-    # Instagram desktop can surface Create as a sidebar link or navigation item.
-    create = page.locator('a[href="/create/select/"], a[href="/create/"]').first
+    # Never automate login, additional account verification or CAPTCHA.
+    _stage(item, "create", "Открываю создание публикации")
     try:
-        await create.click(timeout=12000)
-    except Exception:
-        await _locator_first(page, "link", r"Create|Создать").click(timeout=15000)
-    await page.wait_for_timeout(650)
-    if await page.get_by_text(re.compile(r"^Post$|^Публикация$", re.I)).count():
+        create = page.locator('a[href="/create/select/"], a[href="/create/"]').first
         try:
-            await page.get_by_text(re.compile(r"^Post$|^Публикация$", re.I)).last.click(timeout=3500)
+            await create.click(timeout=8000)
         except Exception:
-            pass
-    # Input might be hidden: Playwright can assign a local file to it directly.
-    upload = page.locator('input[type="file"]').first
+            await page.get_by_role("link", name=re.compile(r"Create|Создать", re.I)).first.click(timeout=12000)
+    except Exception:
+        raise RuntimeError(
+            "Не найдена кнопка «Создать» в Instagram. Открой Edge и проверь, "
+            "что аккаунт вошёл в систему."
+        ) from None
+
+    _stage(item, "choose_video", "Выбираю файл видео")
     try:
-        await upload.wait_for(state="attached", timeout=18000)
-    except Exception as exc:
-        raise RuntimeError("Instagram изменил окно загрузки. Открой профиль и проверь Create.") from exc
-    await upload.set_input_files(str(video), timeout=30000)
-    for _ in range(2):
+        await page.get_by_text(re.compile(r"^Post$|^Публикация$", re.I)).last.click(timeout=2500)
+    except Exception:
+        pass
+    try:
+        upload = page.locator('input[type="file"]').first
+        await upload.wait_for(state="attached", timeout=20000)
+        await upload.set_input_files(str(video), timeout=35000)
+    except Exception:
+        raise RuntimeError(
+            "Не удалось выбрать видео в Instagram. Проверь окно загрузки "
+            "и поддерживаемый формат файла."
+        ) from None
+
+    for i in range(2):
+        _stage(item, "next_" + str(i + 1), f"Подготавливаю видео — шаг {i + 1}/2")
         try:
-            await _click_action(page, r"Next|Далее", timeout_ms=60000)
-        except Exception as exc:
-            raise RuntimeError("Не найден шаг «Далее». Проверь открытое окно браузера.") from exc
-    textbox = page.locator('textarea[aria-label*="caption" i], [contenteditable="true"][role="textbox"]').first
-    try:
-        await textbox.wait_for(state="visible", timeout=20000)
-        if caption:
+            await _click_action(page, r"Next|Далее", timeout_ms=65000)
+        except Exception:
+            raise RuntimeError(
+                f"Не найден шаг «Далее» ({i + 1}/2). Проверь окно публикации в Edge."
+            ) from None
+
+    _stage(item, "caption", "Добавляю описание")
+    if caption:
+        textbox = page.locator(
+            'textarea[aria-label*="caption" i], [contenteditable="true"][role="textbox"]'
+        ).first
+        try:
+            await textbox.wait_for(state="visible", timeout=20000)
             await textbox.fill(caption)
-    except Exception:
-        if caption:
-            raise RuntimeError("Не нашёл поле описания. Публикация не запущена.")
+        except Exception:
+            raise RuntimeError(
+                "Не нашёл поле описания. Проверь форму публикации в Edge."
+            ) from None
+
+    _stage(item, "share", "Отправляю видео")
     try:
-        await _click_action(page, r"Share|Поделиться|Опубликовать", timeout_ms=15000)
+        await _click_action(page, r"Share|Поделиться|Опубликовать", timeout_ms=20000)
     except Exception:
-        # A timeout after a click could mean Share succeeded; halt and check.
+        # A click may have succeeded before Playwright timed out.
+        _stage(item, "verify", "Проверь вручную — результат отправки неизвестен")
         return "needs_review"
-    # A timeout after clicking Share is AMBIGUOUS: do not retry the upload
-    # because that could create a duplicate post.
+
+    _stage(item, "verify", "Жду подтверждения Instagram")
     try:
         await page.get_by_text(re.compile(
-            r"Your post has been shared|Post shared|Публикация опубликована|Your reel has been shared",
+            r"Your post has been shared|Post shared|Публикация опубликована|"
+            r"Your reel has been shared|Your reel has been posted",
             re.I,
         )).first.wait_for(state="visible", timeout=110000)
+        _stage(item, "done", "Подтверждено Instagram")
         return "published"
     except Exception:
         return "needs_review"
@@ -376,16 +457,19 @@ async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str):
             job["items"].append(item)
             job["progress"] = index
             try:
+                _stage(item, "open_profile", "Подключаю профиль Edge")
                 ctx = await _context(account_id)
-                result = await _publish_via_browser(ctx, path, caption)
+                result = await _publish_via_browser(ctx, path, caption, item=item)
                 item["status"] = result
                 item["message"] = ("✓ Опубликовано" if result == "published" else
-                                   "Нужно проверить результат в открытом браузере. Повторно автоматически не отправляю.")
+                                   "Результат отправки не подтверждён. Проверь ролик "
+                                   "в аккаунте; автоматического повтора нет.")
             except Exception as exc:
+                log.error("Browser IG upload error (account=%s, stage=%s): %s",
+                          account_id[:8], item.get("step", "?"),
+                          type(exc).__name__)
                 item["status"] = "error"
-                item["message"] = str(exc) if isinstance(exc, RuntimeError) else (
-                    "Ошибка браузерной публикации. Проверь профиль и Instagram."
-                )
+                item["message"] = _brief_error(exc)
             job["progress"] = index + 1
             # On an uncertain Share result, stop the queue to avoid duplicates.
             if item["status"] in ("needs_review", "error"):
