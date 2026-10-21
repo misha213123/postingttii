@@ -50,6 +50,7 @@ from app.telegram_studio import router as telegram_studio_router, shutdown_teleg
 from app.instagram_studio import router as instagram_reels_router
 from app.instagram_stats import router as instagram_stats_router, periodic_refresh
 from app.video_folders import router as video_folders_router, folder_path, list_videos, video_path, account_folder
+from app.browser_instagram import router as browser_instagram_router, shutdown_browser_instagram
 
 app = FastAPI(title="PostingTTII", version="0.1.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -65,6 +66,7 @@ app.include_router(telegram_studio_router)
 app.include_router(instagram_reels_router)
 app.include_router(instagram_stats_router)
 app.include_router(video_folders_router)
+app.include_router(browser_instagram_router)
 
 INSTAGRAM_STATS_TASK: asyncio.Task | None = None
 
@@ -84,12 +86,22 @@ async def stop_instagram_stats():
 
 
 @app.on_event("shutdown")
+async def stop_browser_instagram():
+    await shutdown_browser_instagram()
+
+
+@app.on_event("shutdown")
 async def stop_telegram_studio():
     await shutdown_telegram_studio()
 
 @app.get("/telegram-studio", response_class=HTMLResponse)
 async def telegram_studio_page():
     return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
+
+@app.get("/instagram-browser", response_class=HTMLResponse)
+async def instagram_browser_page():
+    return HTMLResponse((STATIC_DIR / "instagram-browser.html").read_text(encoding="utf-8"))
+
 
 @app.get("/instagram-stats", response_class=HTMLResponse)
 async def instagram_stats_page():
