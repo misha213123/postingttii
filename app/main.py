@@ -173,6 +173,21 @@ class BatchPublishRequest(BaseModel):
 
 
 def _safe_video(filename: str, folder_id: str = "default") -> Path:
+    # Preserve the legacy default inbox resolver, including tests that
+    # override main.settings, while custom folders must be registered first.
+    if folder_id == "default":
+        name = Path(filename).name
+        if not filename or name != filename or "/" in filename or "\\" in filename:
+            raise HTTPException(400, "Некорректное имя файла")
+        root = settings.upload_dir.resolve()
+        path = (root / filename).resolve()
+        if path.parent != root:
+            raise HTTPException(400, "Видео вне выбранной папки")
+        if not path.is_file():
+            raise HTTPException(404, "Видео не найдено")
+        if path.suffix.lower() not in {".mp4", ".mov", ".m4v", ".webm"}:
+            raise HTTPException(400, "Формат видео не поддерживается")
+        return path
     try:
         return video_path(folder_id, filename)
     except ValueError as exc:
