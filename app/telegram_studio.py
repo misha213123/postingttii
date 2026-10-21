@@ -602,10 +602,16 @@ def render(
     """Composite a 9:16 Reel with configurable circle and optional banner."""
     design = design or RenderDesign()
     seconds = duration(source)
-    bg_seconds = duration(bg)
-    if seconds <= 0 or bg_seconds <= 0:
-        raise ValueError("Некорректная длительность")
-    offset = random.uniform(0, max(0, bg_seconds - seconds))
+    if seconds <= 0:
+        raise ValueError("Некорректная длительность исходника")
+    if is_image_background(bg):
+        bg_input = ["-loop", "1", "-i", str(bg)]
+    else:
+        bg_seconds = duration(bg)
+        if bg_seconds <= 0:
+            raise ValueError("Некорректная длительность фона")
+        offset = random.uniform(0, max(0, bg_seconds - seconds))
+        bg_input = ["-stream_loop", "-1", "-ss", str(offset), "-i", str(bg)]
 
     size = design.circle_size
     center = size // 2
@@ -627,10 +633,7 @@ def render(
     y = min(design.circle_y, 1920 - size)
     # Match preview coordinates: user drags the circular video on the canvas.
     main_filter = f"[bg][circle]overlay={x}:{y}:shortest=1[composite];"
-    cmd = [
-        "ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
-        "-ss", str(offset), "-i", str(bg),
-    ]
+    cmd = ["ffmpeg", "-y", "-i", str(source), *bg_input]
     filter_chain = circle_filter + bg_filter + main_filter
 
     if design.banner_enabled:
@@ -669,15 +672,19 @@ def render(
 
 async def process(limit, order="oldest", date_from=None, date_to=None, *,
                   design: RenderDesign, banner: Path | None,
-                  output_dir: Path | None = None, target_slot: int = 0):
-    JOB.update(status="running", total=0, done=0, errors=[])
+                  output_dir: Path | None = None, target_slot: int = 0,
+                  media_mode: Literal["circles", "videos"] = "circles"):
+    JOB.update(status="running", total=0, done=0, errors=[], media_mode=media_mode)
     try:
         d = config()
         d.setdefault("processed", [])
         output_dir = output_dir or settings.upload_dir
-        render_scope = ((str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
-                        ("folder:" + str(output_dir.resolve())
-                         if output_dir.resolve() != settings.upload_dir.resolve() else ""))
+        media_namespace = "" if media_mode == "circles" else "videos:"
+        render_scope = media_namespace + (
+            (str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
+            ("folder:" + str(output_dir.resolve())
+             if output_dir.resolve() != settings.upload_dir.resolve() else "")
+        )
         if render_scope:
             completed_keys = d.setdefault("processed_by_target", {}).setdefault(render_scope, [])
             known_hashes = set(d.setdefault("rendered_hashes_by_target", {}).get(render_scope, []))
@@ -687,6 +694,10 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
             d["rendered_hashes"] = sorted(known_hashes)
         save(d)
         bgs = choose_backgrounds(design)
+        normal_layout = None
+        if media_mode == "videos":
+            from app.instagram_studio import current_layout
+            normal_layout = current_layout()
         background_queue = []
         previous_bg = None
         def next_background():
@@ -717,10 +728,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                             break
                         if date_to and message.date.date() > date_to:
                             continue
-                        if not message.video_note:
+                        if not telegram_media_matches(message, media_mode):
                             continue
-                        key = f"{channel}:{message.id}"
-                        target = output_dir / f"tg_{channel}_{message.id}.mp4"
+                        key = (f"{channel}:{message.id}" if media_mode == "circles"
+                               else f"video:{channel}:{message.id}")
+                        filename_prefix = "tg" if media_mode == "circles" else "tgvideo"
+                        target = output_dir / f"{filename_prefix}_{channel}_{message.id}.mp4"
                         if key in completed_keys:
                             continue
                         if target.is_file() and target.stat().st_size > 0:
@@ -744,10 +757,13 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
             for channel, message in selected:
                 if STOP_REQUESTED:
                     break
-                key = f"{channel}:{message.id}"
+                key = (f"{channel}:{message.id}" if media_mode == "circles"
+                       else f"video:{channel}:{message.id}")
                 JOB["total"] += 1
-                source = ORIGINALS / f"{channel}_{message.id}.mp4"
-                target = output_dir / f"tg_{channel}_{message.id}.mp4"
+                source_prefix = "" if media_mode == "circles" else "video_"
+                target_prefix = "tg" if media_mode == "circles" else "tgvideo"
+                source = ORIGINALS / f"{source_prefix}{channel}_{message.id}.mp4"
+                target = output_dir / f"{target_prefix}_{channel}_{message.id}.mp4"
                 try:
                     # Never overwrite a previously rendered or queued reel.
                     if target.exists() and target.stat().st_size > 0:
@@ -782,7 +798,15 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     # Render to a temporary file, publish only after ffprobe validates it.
                     temp_target = target.with_name(target.stem + ".rendering.mp4")
                     try:
-                        await asyncio.to_thread(render, source, next_background(), temp_target, design, banner)
+                        bg = next_background()
+                        if media_mode == "circles":
+                            await asyncio.to_thread(render, source, bg, temp_target, design, banner)
+                        else:
+                            from app.instagram_studio import render as render_normal_video
+                            normal_preset = normal_layout.model_copy(update={
+                                "background_mode": "single", "background_name": bg.name,
+                            })
+                            await asyncio.to_thread(render_normal_video, source, temp_target, bg, normal_preset)
                         if duration(temp_target) <= 0:
                             raise ValueError("Готовый ролик не прошёл проверку FFprobe")
                         temp_target.replace(target)
@@ -853,6 +877,7 @@ async def run(body: RenderRequest):
     JOB_TASK = asyncio.create_task(process(
         body.limit_per_channel, body.order, body.date_from, body.date_to,
         design=design, banner=banner, output_dir=output_dir, target_slot=body.target_slot,
+        media_mode=body.media_mode,
     ))
     return {"started": True}
 
