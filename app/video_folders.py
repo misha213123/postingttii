@@ -60,7 +60,9 @@ def folder_path(folder_id: str = "default", *, writable: bool = False) -> Path:
 
 def list_videos(folder_id: str = "default") -> list[Path]:
     folder = folder_path(folder_id)
-    return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS),
+    return sorted((p for p in folder.iterdir()
+                   if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+                   and p.resolve().parent == folder),
                   key=lambda p: p.stat().st_mtime)
 
 
