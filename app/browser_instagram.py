@@ -1,7 +1,7 @@
 """Opt-in direct browser Instagram posting with local account profiles.
 
 Independent from Meta Graph; users log in interactively using a normal,
-visible browser. No credential harvesting, captcha solving, or bypass of
+visible browser. No credential harvesting, captcha solving, proxy-based evasion, or bypass of
 Instagram verification. All configuration and browser state is local to the PC.
 """
 from __future__ import annotations
@@ -14,9 +14,7 @@ import secrets
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote, urlsplit
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -38,7 +36,6 @@ CURRENT_JOB: dict[str, Any] | None = None
 CURRENT_TASK: asyncio.Task | None = None
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v"}
 USER_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
-PROXY_SCHEMES = {"http", "https", "socks5"}
 
 
 def _local(request: Request) -> None:
@@ -70,64 +67,9 @@ def _write(data: dict[str, dict]) -> None:
         pass
 
 
-def _parse_proxy(value: str) -> dict[str, str] | None:
-    """Parse URI or host:port:user:password without reflecting secrets.
-
-    Username/password are passed as separate Playwright proxy parameters.
-    HTTPX receives a correctly URL-escaped authenticated proxy URI.
-    """
-    text = value.strip()
-    if not text:
-        return None
-    if "://" not in text:
-        parts = text.split(":")
-        if len(parts) == 2:
-            text = "http://" + text
-        elif len(parts) >= 4:
-            host, port, user = parts[:3]
-            password = ":".join(parts[3:])
-            text = ("http://" + quote(user, safe="") + ":" +
-                    quote(password, safe="") + "@" + host + ":" + port)
-        else:
-            raise ValueError("Формат прокси: host:port или host:port:user:password")
-    u = urlsplit(text)
-    if u.scheme not in PROXY_SCHEMES or not u.hostname or not u.port:
-        raise ValueError("Прокси: поддерживаются HTTP, HTTPS, SOCKS5 с адресом и портом")
-    if not 1 <= u.port <= 65535 or u.path not in ("", "/") or u.query or u.fragment:
-        raise ValueError("Неправильный адрес прокси")
-    if u.username and u.scheme == "socks5":
-        # Playwright Chromium does not uniformly support SOCKS auth.
-        raise ValueError("SOCKS5 с логином/паролем не поддерживается. Используй HTTP-прокси.")
-    return {
-        "server": f"{u.scheme}://{u.hostname}:{u.port}",
-        "username": unquote(u.username or ""),
-        "password": unquote(u.password or ""),
-    }
-
-
-def _masked_proxy(value: str) -> str:
-    try:
-        proxy = _parse_proxy(value)
-        return proxy["server"] if proxy else "Не задан"
-    except (ValueError, TypeError):
-        return "Некорректный прокси"
-
-
-def _httpx_proxy_url(spec: dict[str, str]) -> str:
-    if not spec.get("username"):
-        return spec["server"]
-    u = urlsplit(spec["server"])
-    return (
-        f"{u.scheme}://{quote(spec['username'],safe='')}:"
-        f"{quote(spec['password'],safe='')}@{u.netloc}"
-    )
-
-
 def _public_account(account_id: str, data: dict) -> dict:
     return {
         "id": account_id, "username": data["username"],
-        "proxy": _masked_proxy(data.get("proxy", "")),
-        "proxy_configured": bool(data.get("proxy", "")),
         "browser_open": account_id in CONTEXTS,
         "has_profile": (PROFILES_DIR / account_id).exists(),
     }
@@ -148,11 +90,6 @@ def _profile_dir(account_id: str) -> Path:
 
 class BrowserAccount(BaseModel):
     username: str = Field(min_length=1, max_length=30)
-    proxy: str = Field(default="", max_length=1200)
-
-
-class ProxyInput(BaseModel):
-    proxy: str = Field(min_length=4, max_length=1200)
 
 
 class PublishInput(BaseModel):
@@ -184,35 +121,14 @@ def add_account(body: BrowserAccount, request: Request):
     username = body.username.strip().lstrip("@").lower()
     if not USER_RE.fullmatch(username):
         raise HTTPException(400, "Введи корректный Instagram username")
-    try:
-        _parse_proxy(body.proxy)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
     data = _read()
     existing = next((key for key, a in data.items() if a["username"] == username), None)
     if existing:
         raise HTTPException(409, "Аккаунт уже добавлен")
     key = secrets.token_hex(12)
-    data[key] = {"username": username, "proxy": body.proxy.strip()}
+    data[key] = {"username": username}
     _write(data)
     return _public_account(key, data[key])
-
-
-@router.put("/account/{account_id}/proxy")
-def set_proxy(account_id: str, body: ProxyInput, request: Request):
-    _local(request)
-    if account_id in CONTEXTS:
-        raise HTTPException(409, "Сначала закрой браузер аккаунта, чтобы сменить прокси")
-    try:
-        _parse_proxy(body.proxy)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    data = _read()
-    if account_id not in data:
-        raise HTTPException(404, "Аккаунт не найден")
-    data[account_id]["proxy"] = body.proxy.strip()
-    _write(data)
-    return _public_account(account_id, data[account_id])
 
 
 @router.delete("/account/{account_id}")
@@ -227,33 +143,6 @@ async def delete_account(account_id: str, request: Request):
     # Saved Chrome profiles are deliberately retained unless user deletes
     # data/browser_instagram/profiles manually. Avoid losing browser login.
     return {"ok": True}
-
-
-@router.post("/proxy/test")
-async def test_proxy(body: ProxyInput, request: Request):
-    _local(request)
-    try:
-        spec = _parse_proxy(body.proxy)
-        if spec is None:
-            raise ValueError("Укажи адрес прокси")
-        url = _httpx_proxy_url(spec)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    start = time.monotonic()
-    try:
-        async with httpx.AsyncClient(
-            proxy=url, timeout=httpx.Timeout(16.0, connect=8.0),
-            follow_redirects=False, trust_env=False,
-        ) as client:
-            response = await client.get("https://api.ipify.org?format=json")
-            response.raise_for_status()
-            ip = str(response.json().get("ip") or "")
-            if not re.fullmatch(r"[0-9A-Fa-f:.]{3,50}", ip):
-                raise ValueError("Не удалось определить внешний IP")
-    except (httpx.HTTPError, ValueError, json.JSONDecodeError):
-        # No raw error: httpx exceptions can contain proxy credentials.
-        return {"ok": False, "message": "Прокси не ответил. Проверь IP, порт, протокол и логин/пароль."}
-    return {"ok": True, "ip": ip, "latency_ms": round((time.monotonic()-start)*1000)}
 
 
 @router.get("/videos")
@@ -289,20 +178,13 @@ async def _context(account_id: str):
         driver = await _driver()
         profile = _profile_dir(account_id)
         profile.mkdir(parents=True, exist_ok=True)
-        try:
-            proxy = _parse_proxy(account.get("proxy") or "")
-        except ValueError:
-            raise HTTPException(400, "Сохранённый прокси некорректен")
         opts = dict(headless=False, viewport={"width": 1280, "height": 900},
                     locale="en-US", accept_downloads=False)
-        if proxy:
-            opts["proxy"] = proxy
         try:
             context = await driver.chromium.launch_persistent_context(
                 str(profile), channel="msedge", **opts
             )
         except Exception as exc:
-            # Do not echo exception text (might contain a proxy URL).
             raise HTTPException(503, "Не удалось открыть Edge. Закрой старый профиль и проверь Playwright.") from exc
         CONTEXTS[account_id] = context
         return context
@@ -433,8 +315,6 @@ async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str):
                                    "Нужно проверить результат в открытом браузере. Повторно автоматически не отправляю.")
             except Exception as exc:
                 item["status"] = "error"
-                # Do not expose unexpected Playwright messages containing proxy
-                # URLs or browser internals. Known workflow errors are safe.
                 item["message"] = str(exc) if isinstance(exc, RuntimeError) else (
                     "Ошибка браузерной публикации. Проверь профиль и Instagram."
                 )
