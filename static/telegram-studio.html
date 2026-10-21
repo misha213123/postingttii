@@ -406,9 +406,15 @@ function selectDesignBackground(){
 function updateDesignBackgroundChoices(bgs){
   const sel=el('designBgSelect');
   const names=bgs.filter(b=>b.enabled).map(b=>b.name);
-  const current=sel.value||designState.background_name;
+  const current=designState.background_name||sel.value;
   const signature=names.join('|');
-  if(sel.dataset.signature===signature)return;
+  if(sel.dataset.signature===signature){
+    if(names.includes(current)&&sel.value!==current){
+      sel.value=current;
+      setStillOrVideoBackground('designBgVideo','designBgImage',current);
+    }
+    return;
+  }
   sel.dataset.signature=signature;
   sel.replaceChildren();
   if(!names.length){
