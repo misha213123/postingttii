@@ -18,7 +18,7 @@ from typing import Literal
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from app.config import settings
 from app.video_folders import folder_path, account_folder, account_background
 
@@ -35,6 +35,27 @@ LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
 JOB_TASK = None
 STOP_REQUESTED = False
+BACKGROUND_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+BACKGROUND_SUFFIXES = BACKGROUND_IMAGE_SUFFIXES | {".mp4"}
+
+
+def is_image_background(path: Path) -> bool:
+    return path.suffix.lower() in BACKGROUND_IMAGE_SUFFIXES
+
+
+def telegram_media_matches(message, media_mode: str) -> bool:
+    """Select Telegram round video notes or ordinary videos, never both."""
+    if media_mode == "circles":
+        return bool(message.video_note)
+    if media_mode == "videos":
+        if message.video_note:
+            return False
+        return bool(message.video) or (
+            message.document is not None
+            and str(getattr(message.document, "mime_type", "")).lower().startswith("video/")
+        )
+    return False
+
 
 
 def config():
@@ -57,6 +78,8 @@ def rendered_hashes(data):
     hashes = set(data.get("rendered_hashes", []))
     processed = set(data.get("processed", []))
     for source in ORIGINALS.glob("*.mp4"):
+        if source.stem.startswith("video_"):
+            continue
         stem = source.stem
         if "_" not in stem:
             continue
@@ -89,9 +112,12 @@ def normalize(value):
 
 def backgrounds():
     data = config()
-    return [{"name": p.name, "enabled": p.name not in data["backgrounds_disabled"],
-             "size_mb": round(p.stat().st_size / 1048576, 1)}
-            for p in sorted(BACKGROUNDS.glob("*.mp4"))]
+    return [{"name": p.name,
+             "kind": "image" if is_image_background(p) else "video",
+             "enabled": p.name not in data.get("backgrounds_disabled", []),
+             "size_mb": round(p.stat().st_size / 1048576, 2)}
+            for p in sorted(BACKGROUNDS.iterdir())
+            if p.is_file() and p.suffix.lower() in BACKGROUND_SUFFIXES]
 
 
 class ChannelInput(BaseModel):
@@ -133,7 +159,7 @@ def saved_design() -> RenderDesign:
 
 
 def choose_backgrounds(design: RenderDesign) -> list[Path]:
-    """Resolve enabled MP4 backgrounds at render time, never stale/deleted files."""
+    """Resolve enabled video and image backgrounds at render time."""
     active = [BACKGROUNDS / item["name"] for item in backgrounds() if item["enabled"]]
     if design.background_mode == "single":
         if not design.background_name:
@@ -286,6 +312,7 @@ def sample_circle_preview():
 
 class RenderRequest(BaseModel):
     limit_per_channel: int = 30
+    media_mode: Literal["circles", "videos"] = "circles"
     output_folder: str = "default"
     target_slot: int = 0
     order: str = "oldest"
@@ -322,27 +349,53 @@ def remove_channel(channel: str):
 
 @router.post("/backgrounds")
 async def upload_background(file: UploadFile = File(...)):
-    if not file.filename or Path(file.filename).suffix.lower() != ".mp4":
-        raise HTTPException(400, "Поддерживаются только MP4")
-    name = uuid.uuid4().hex[:10] + ".mp4"
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in BACKGROUND_SUFFIXES:
+        raise HTTPException(400, "Поддерживаются MP4, JPG, JPEG, PNG и WebP")
+    image = suffix in BACKGROUND_IMAGE_SUFFIXES
+    name = uuid.uuid4().hex[:10] + (".jpg" if image else ".mp4")
     dest = BACKGROUNDS / name
+    source = BACKGROUNDS / (uuid.uuid4().hex + ".upload")
     size = 0
+    limit = 25 * 1024 * 1024 if image else 1024 * 1024 * 1024
     try:
-        with dest.open("wb") as out:
+        with source.open("wb") as out:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
-                if size > 1024 * 1024 * 1024:
-                    raise HTTPException(413, "Максимум 1 ГБ на фон")
+                if size > limit:
+                    raise HTTPException(413, "Фон слишком большой (фото до 25 МБ, MP4 до 1 ГБ)")
                 out.write(chunk)
+        if image:
+            try:
+                with Image.open(source) as original:
+                    original.verify()
+                with Image.open(source) as original:
+                    if original.width * original.height > 60_000_000:
+                        raise HTTPException(413, "Слишком большое разрешение изображения")
+                    photo = ImageOps.exif_transpose(original)
+                    if photo.mode in ("RGBA", "LA") or (photo.mode == "P" and "transparency" in photo.info):
+                        rgba = photo.convert("RGBA")
+                        rgb = Image.new("RGB", rgba.size, "#101827")
+                        rgb.paste(rgba, mask=rgba.getchannel("A"))
+                        photo = rgb
+                    else:
+                        photo = photo.convert("RGB")
+                    photo.save(dest, "JPEG", quality=92, optimize=True)
+            except (OSError, ValueError, UnidentifiedImageError):
+                raise HTTPException(400, "Повреждённое или неподдерживаемое изображение")
+        else:
+            source.replace(dest)
     except Exception:
         dest.unlink(missing_ok=True)
         raise
+    finally:
+        source.unlink(missing_ok=True)
     return {"name": name, "backgrounds": backgrounds()}
 
 
 @router.delete("/backgrounds/{name}")
 def remove_background(name: str):
-    if Path(name).name != name:
+    if Path(name).name != name or Path(name).suffix.lower() not in BACKGROUND_SUFFIXES:
         raise HTTPException(400, "Некорректный файл")
     (BACKGROUNDS / name).unlink(missing_ok=True)
     d = config()
@@ -353,6 +406,8 @@ def remove_background(name: str):
 
 @router.post("/backgrounds/{name}/toggle")
 def toggle_background(name: str, body: ToggleInput):
+    if Path(name).name != name or Path(name).suffix.lower() not in BACKGROUND_SUFFIXES:
+        raise HTTPException(400, "Некорректное имя фона")
     if not (BACKGROUNDS / name).is_file():
         raise HTTPException(404, "Фон не найден")
     d = config()
@@ -368,9 +423,14 @@ def toggle_background(name: str, body: ToggleInput):
 
 @router.get("/backgrounds/{name}/preview")
 def background_preview(name: str):
-    if Path(name).name != name or not (BACKGROUNDS / name).is_file():
+    if (Path(name).name != name or Path(name).suffix.lower() not in BACKGROUND_SUFFIXES
+            or not (BACKGROUNDS / name).is_file()):
         raise HTTPException(404, "Фон не найден")
-    return FileResponse(BACKGROUNDS / name, media_type="video/mp4")
+    suffix = Path(name).suffix.lower()
+    return FileResponse(BACKGROUNDS / name, media_type={
+        ".mp4": "video/mp4", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".webp": "image/webp",
+    }[suffix])
 
 
 def telegram_client():
