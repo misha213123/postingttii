@@ -18,7 +18,7 @@ from typing import Literal
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from app.config import settings
 from app.video_folders import folder_path, account_folder, account_background
 
@@ -26,15 +26,37 @@ router = APIRouter(prefix="/api/telegram-studio", tags=["telegram-studio"])
 ROOT = settings.data_dir / "telegram_studio"
 BACKGROUNDS = ROOT / "backgrounds"
 ORIGINALS = ROOT / "originals"
+REGULAR_ORIGINALS = ORIGINALS / "regular"
 BANNERS = ROOT / "banners"
 CONFIG = ROOT / "config.json"
 SESSION = ROOT / "telegram"
-for p in (ROOT, BACKGROUNDS, ORIGINALS, BANNERS):
+for p in (ROOT, BACKGROUNDS, ORIGINALS, REGULAR_ORIGINALS, BANNERS):
     p.mkdir(parents=True, exist_ok=True)
 LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
 JOB_TASK = None
 STOP_REQUESTED = False
+BACKGROUND_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+BACKGROUND_SUFFIXES = BACKGROUND_IMAGE_SUFFIXES | {".mp4"}
+
+
+def is_image_background(path: Path) -> bool:
+    return path.suffix.lower() in BACKGROUND_IMAGE_SUFFIXES
+
+
+def telegram_media_matches(message, media_mode: str) -> bool:
+    """Select Telegram round video notes or ordinary videos, never both."""
+    if media_mode == "circles":
+        return bool(message.video_note)
+    if media_mode == "videos":
+        if message.video_note:
+            return False
+        return bool(message.video) or (
+            message.document is not None
+            and str(getattr(message.document, "mime_type", "")).lower().startswith("video/")
+        )
+    return False
+
 
 
 def config():
@@ -89,9 +111,12 @@ def normalize(value):
 
 def backgrounds():
     data = config()
-    return [{"name": p.name, "enabled": p.name not in data["backgrounds_disabled"],
-             "size_mb": round(p.stat().st_size / 1048576, 1)}
-            for p in sorted(BACKGROUNDS.glob("*.mp4"))]
+    return [{"name": p.name,
+             "kind": "image" if is_image_background(p) else "video",
+             "enabled": p.name not in data.get("backgrounds_disabled", []),
+             "size_mb": round(p.stat().st_size / 1048576, 2)}
+            for p in sorted(BACKGROUNDS.iterdir())
+            if p.is_file() and p.suffix.lower() in BACKGROUND_SUFFIXES]
 
 
 class ChannelInput(BaseModel):
@@ -133,7 +158,7 @@ def saved_design() -> RenderDesign:
 
 
 def choose_backgrounds(design: RenderDesign) -> list[Path]:
-    """Resolve enabled MP4 backgrounds at render time, never stale/deleted files."""
+    """Resolve enabled video and image backgrounds at render time."""
     active = [BACKGROUNDS / item["name"] for item in backgrounds() if item["enabled"]]
     if design.background_mode == "single":
         if not design.background_name:
@@ -286,6 +311,7 @@ def sample_circle_preview():
 
 class RenderRequest(BaseModel):
     limit_per_channel: int = 30
+    media_mode: Literal["circles", "videos"] = "circles"
     output_folder: str = "default"
     target_slot: int = 0
     order: str = "oldest"
@@ -322,27 +348,53 @@ def remove_channel(channel: str):
 
 @router.post("/backgrounds")
 async def upload_background(file: UploadFile = File(...)):
-    if not file.filename or Path(file.filename).suffix.lower() != ".mp4":
-        raise HTTPException(400, "Поддерживаются только MP4")
-    name = uuid.uuid4().hex[:10] + ".mp4"
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in BACKGROUND_SUFFIXES:
+        raise HTTPException(400, "Поддерживаются MP4, JPG, JPEG, PNG и WebP")
+    image = suffix in BACKGROUND_IMAGE_SUFFIXES
+    name = uuid.uuid4().hex[:10] + (".jpg" if image else ".mp4")
     dest = BACKGROUNDS / name
+    source = BACKGROUNDS / (uuid.uuid4().hex + ".upload")
     size = 0
+    limit = 25 * 1024 * 1024 if image else 1024 * 1024 * 1024
     try:
-        with dest.open("wb") as out:
+        with source.open("wb") as out:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
-                if size > 1024 * 1024 * 1024:
-                    raise HTTPException(413, "Максимум 1 ГБ на фон")
+                if size > limit:
+                    raise HTTPException(413, "Фон слишком большой (фото до 25 МБ, MP4 до 1 ГБ)")
                 out.write(chunk)
+        if image:
+            try:
+                with Image.open(source) as original:
+                    original.verify()
+                with Image.open(source) as original:
+                    if original.width * original.height > 60_000_000:
+                        raise HTTPException(413, "Слишком большое разрешение изображения")
+                    photo = ImageOps.exif_transpose(original)
+                    if photo.mode in ("RGBA", "LA") or (photo.mode == "P" and "transparency" in photo.info):
+                        rgba = photo.convert("RGBA")
+                        rgb = Image.new("RGB", rgba.size, "#101827")
+                        rgb.paste(rgba, mask=rgba.getchannel("A"))
+                        photo = rgb
+                    else:
+                        photo = photo.convert("RGB")
+                    photo.save(dest, "JPEG", quality=92, optimize=True)
+            except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError):
+                raise HTTPException(400, "Повреждённое, слишком большое или неподдерживаемое изображение")
+        else:
+            source.replace(dest)
     except Exception:
         dest.unlink(missing_ok=True)
         raise
+    finally:
+        source.unlink(missing_ok=True)
     return {"name": name, "backgrounds": backgrounds()}
 
 
 @router.delete("/backgrounds/{name}")
 def remove_background(name: str):
-    if Path(name).name != name:
+    if Path(name).name != name or Path(name).suffix.lower() not in BACKGROUND_SUFFIXES:
         raise HTTPException(400, "Некорректный файл")
     (BACKGROUNDS / name).unlink(missing_ok=True)
     d = config()
@@ -353,6 +405,8 @@ def remove_background(name: str):
 
 @router.post("/backgrounds/{name}/toggle")
 def toggle_background(name: str, body: ToggleInput):
+    if Path(name).name != name or Path(name).suffix.lower() not in BACKGROUND_SUFFIXES:
+        raise HTTPException(400, "Некорректное имя фона")
     if not (BACKGROUNDS / name).is_file():
         raise HTTPException(404, "Фон не найден")
     d = config()
@@ -368,9 +422,14 @@ def toggle_background(name: str, body: ToggleInput):
 
 @router.get("/backgrounds/{name}/preview")
 def background_preview(name: str):
-    if Path(name).name != name or not (BACKGROUNDS / name).is_file():
+    if (Path(name).name != name or Path(name).suffix.lower() not in BACKGROUND_SUFFIXES
+            or not (BACKGROUNDS / name).is_file()):
         raise HTTPException(404, "Фон не найден")
-    return FileResponse(BACKGROUNDS / name, media_type="video/mp4")
+    suffix = Path(name).suffix.lower()
+    return FileResponse(BACKGROUNDS / name, media_type={
+        ".mp4": "video/mp4", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".webp": "image/webp",
+    }[suffix])
 
 
 def telegram_client():
@@ -542,10 +601,16 @@ def render(
     """Composite a 9:16 Reel with configurable circle and optional banner."""
     design = design or RenderDesign()
     seconds = duration(source)
-    bg_seconds = duration(bg)
-    if seconds <= 0 or bg_seconds <= 0:
-        raise ValueError("Некорректная длительность")
-    offset = random.uniform(0, max(0, bg_seconds - seconds))
+    if seconds <= 0:
+        raise ValueError("Некорректная длительность исходника")
+    if is_image_background(bg):
+        bg_input = ["-loop", "1", "-i", str(bg)]
+    else:
+        bg_seconds = duration(bg)
+        if bg_seconds <= 0:
+            raise ValueError("Некорректная длительность фона")
+        offset = random.uniform(0, max(0, bg_seconds - seconds))
+        bg_input = ["-stream_loop", "-1", "-ss", str(offset), "-i", str(bg)]
 
     size = design.circle_size
     center = size // 2
@@ -567,10 +632,7 @@ def render(
     y = min(design.circle_y, 1920 - size)
     # Match preview coordinates: user drags the circular video on the canvas.
     main_filter = f"[bg][circle]overlay={x}:{y}:shortest=1[composite];"
-    cmd = [
-        "ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1",
-        "-ss", str(offset), "-i", str(bg),
-    ]
+    cmd = ["ffmpeg", "-y", "-i", str(source), *bg_input]
     filter_chain = circle_filter + bg_filter + main_filter
 
     if design.banner_enabled:
@@ -609,15 +671,19 @@ def render(
 
 async def process(limit, order="oldest", date_from=None, date_to=None, *,
                   design: RenderDesign, banner: Path | None,
-                  output_dir: Path | None = None, target_slot: int = 0):
-    JOB.update(status="running", total=0, done=0, errors=[])
+                  output_dir: Path | None = None, target_slot: int = 0,
+                  media_mode: Literal["circles", "videos"] = "circles"):
+    JOB.update(status="running", total=0, done=0, errors=[], media_mode=media_mode)
     try:
         d = config()
         d.setdefault("processed", [])
         output_dir = output_dir or settings.upload_dir
-        render_scope = ((str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
-                        ("folder:" + str(output_dir.resolve())
-                         if output_dir.resolve() != settings.upload_dir.resolve() else ""))
+        media_namespace = "" if media_mode == "circles" else "videos:"
+        render_scope = media_namespace + (
+            (str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
+            ("folder:" + str(output_dir.resolve())
+             if output_dir.resolve() != settings.upload_dir.resolve() else "")
+        )
         if render_scope:
             completed_keys = d.setdefault("processed_by_target", {}).setdefault(render_scope, [])
             known_hashes = set(d.setdefault("rendered_hashes_by_target", {}).get(render_scope, []))
@@ -627,6 +693,10 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
             d["rendered_hashes"] = sorted(known_hashes)
         save(d)
         bgs = choose_backgrounds(design)
+        normal_layout = None
+        if media_mode == "videos":
+            from app.instagram_studio import current_layout
+            normal_layout = current_layout()
         background_queue = []
         previous_bg = None
         def next_background():
@@ -657,10 +727,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                             break
                         if date_to and message.date.date() > date_to:
                             continue
-                        if not message.video_note:
+                        if not telegram_media_matches(message, media_mode):
                             continue
-                        key = f"{channel}:{message.id}"
-                        target = output_dir / f"tg_{channel}_{message.id}.mp4"
+                        key = (f"{channel}:{message.id}" if media_mode == "circles"
+                               else f"video:{channel}:{message.id}")
+                        filename_prefix = "tg" if media_mode == "circles" else "tgvideo"
+                        target = output_dir / f"{filename_prefix}_{channel}_{message.id}.mp4"
                         if key in completed_keys:
                             continue
                         if target.is_file() and target.stat().st_size > 0:
@@ -684,10 +756,13 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
             for channel, message in selected:
                 if STOP_REQUESTED:
                     break
-                key = f"{channel}:{message.id}"
+                key = (f"{channel}:{message.id}" if media_mode == "circles"
+                       else f"video:{channel}:{message.id}")
                 JOB["total"] += 1
-                source = ORIGINALS / f"{channel}_{message.id}.mp4"
-                target = output_dir / f"tg_{channel}_{message.id}.mp4"
+                target_prefix = "tg" if media_mode == "circles" else "tgvideo"
+                originals_dir = ORIGINALS if media_mode == "circles" else REGULAR_ORIGINALS
+                source = originals_dir / f"{channel}_{message.id}.mp4"
+                target = output_dir / f"{target_prefix}_{channel}_{message.id}.mp4"
                 try:
                     # Never overwrite a previously rendered or queued reel.
                     if target.exists() and target.stat().st_size > 0:
@@ -707,12 +782,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                         try:
                             await client.download_media(message, file=str(temp_source))
                             if not temp_source.exists() or duration(temp_source) <= 0:
-                                raise ValueError("Telegram прислал повреждённый или неполный кружок")
+                                raise ValueError("Telegram прислал повреждённое или неполное видео")
                             temp_source.replace(source)
                         finally:
                             temp_source.unlink(missing_ok=True)
                     if not source.exists():
-                        raise ValueError("Не удалось скачать кружок")
+                        raise ValueError("Не удалось скачать Telegram-видео")
                     digest = file_digest(source)
                     if digest in known_hashes:
                         # Same original media may have been forwarded to another channel.
@@ -722,7 +797,15 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     # Render to a temporary file, publish only after ffprobe validates it.
                     temp_target = target.with_name(target.stem + ".rendering.mp4")
                     try:
-                        await asyncio.to_thread(render, source, next_background(), temp_target, design, banner)
+                        bg = next_background()
+                        if media_mode == "circles":
+                            await asyncio.to_thread(render, source, bg, temp_target, design, banner)
+                        else:
+                            from app.instagram_studio import render as render_normal_video
+                            normal_preset = normal_layout.model_copy(update={
+                                "background_mode": "single", "background_name": bg.name,
+                            })
+                            await asyncio.to_thread(render_normal_video, source, temp_target, bg, normal_preset)
                         if duration(temp_target) <= 0:
                             raise ValueError("Готовый ролик не прошёл проверку FFprobe")
                         temp_target.replace(target)
@@ -781,7 +864,7 @@ async def run(body: RenderRequest):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     banner = current_banner(data)
-    if design.banner_enabled and banner is None:
+    if body.media_mode == "circles" and design.banner_enabled and banner is None:
         raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
     try:
         choose_backgrounds(design)
@@ -793,6 +876,7 @@ async def run(body: RenderRequest):
     JOB_TASK = asyncio.create_task(process(
         body.limit_per_channel, body.order, body.date_from, body.date_to,
         design=design, banner=banner, output_dir=output_dir, target_slot=body.target_slot,
+        media_mode=body.media_mode,
     ))
     return {"started": True}
 

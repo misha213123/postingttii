@@ -23,7 +23,7 @@ from typing import Literal
 from fastapi.responses import FileResponse
 from app.config import settings
 from app.video_folders import folder_path, account_folder, account_background
-from app.telegram_studio import BACKGROUNDS, backgrounds, duration
+from app.telegram_studio import BACKGROUNDS, backgrounds, duration, is_image_background
 
 router = APIRouter(prefix="/api/telegram-studio/instagram", tags=["studio-instagram"])
 ROOT = settings.data_dir / "instagram_studio"
@@ -339,8 +339,11 @@ def render(source, target, background, layout: InstagramLayout | None = None):
     else:
         if not background:
             raise ValueError("Не выбран активный Instagram-фон")
-        offset = random.uniform(0, max(0, duration(background) - seconds))
-        args += ["-stream_loop", "-1", "-ss", str(offset), "-i", str(background)]
+        if is_image_background(background):
+            args += ["-loop", "1", "-i", str(background)]
+        else:
+            offset = random.uniform(0, max(0, duration(background) - seconds))
+            args += ["-stream_loop", "-1", "-ss", str(offset), "-i", str(background)]
         background_filter = (
             "[1:v]scale=1080:1920:force_original_aspect_ratio=increase,"
             "crop=1080:1920,setsar=1[bg];"
