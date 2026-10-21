@@ -696,9 +696,10 @@ function bindBannerDrag(frameId,stageId,state,ratio,refresh,save,allowMove){
     const dx=(e.clientX-active.x)*1080/active.rectWidth;
     const dy=(e.clientY-active.y)*1920/active.rectHeight;
     if(active.resize){
-      const widthByX=active.width+dx;
-      const widthByY=active.width+dy/Math.max(.01,ratio());
-      state.banner_width=Math.max(100,Math.min(1080,Math.round(Math.max(widthByX,widthByY)/10)*10));
+      const weightedY=dy/Math.max(.01,ratio());
+      const dimensionChange=Math.abs(dx)>=Math.abs(weightedY)?dx:weightedY;
+      state.banner_width=Math.max(100,Math.min(1080,
+        Math.round((active.width+dimensionChange)/10)*10));
     }else{
       state.banner_x=active.bannerX+dx;
       state.banner_y=active.bannerY+dy;
