@@ -182,7 +182,11 @@ def _safe_video(filename: str, folder_id: str = "default") -> Path:
 def _videos(history: dict | None = None, folder_id: str = "default") -> list[dict]:
     history = publish_state._read() if history is None else history
     result = []
-    for path in list_videos(folder_id):
+    paths = (list_videos(folder_id) if folder_id != "default" else
+             sorted((p for p in settings.upload_dir.iterdir()
+                     if p.is_file() and p.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}),
+                    key=lambda p: p.stat().st_mtime))
+    for path in paths:
         try:
             digest = publish_state.video_key(path)
             size = path.stat().st_size
@@ -226,7 +230,8 @@ async def status(folder_id: str = "default"):
     history = await asyncio.to_thread(publish_state._read)
     try:
         videos = await asyncio.to_thread(_videos, history, folder_id)
-        active_folder = folder_path(folder_id)
+        active_folder = (settings.upload_dir.resolve() if folder_id == "default"
+                         else folder_path(folder_id))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     latest_by_target = {}
@@ -418,6 +423,10 @@ async def _archive_after_publish(job_id: str, entry: dict) -> None:
         folder_id = entry.get("source_folder", "default")
         path = folder_path(folder_id) / filename
         if not path.exists():
+            job["cleanup_pending"] = [
+                pending for pending in job.get("cleanup_pending", [])
+                if pending is not entry
+            ]
             return
         path = video_path(folder_id, filename)
         if not publish_state.completed_targets(entry["video_key"]):
