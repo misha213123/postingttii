@@ -387,6 +387,56 @@ class BrowserProxyIntegrationTests(unittest.IsolatedAsyncioTestCase):
             result=await proxy.check_proxy("res.example:8080")
         self.assertEqual(result["code"], "bad_ip_response")
 
+    async def test_https_connect_rejection_status_is_not_lost(self):
+        from app import browser_proxy as proxy
+
+        class RejectedClient:
+            error = ""
+            def __init__(self, **kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def get(self, url):
+                raise proxy.httpx.ProxyError(self.error)
+
+        scenarios = [
+            ("407 Proxy Authentication Required", "auth_required", 407),
+            ("403 Forbidden", "access_denied", 403),
+            ("429 Too Many Requests", "rate_limited", 429),
+            ("502 Bad Gateway", "upstream_failure", 502),
+        ]
+        for detail, kind, status in scenarios:
+            with self.subTest(status=status), patch.object(
+                proxy.httpx, "AsyncClient", side_effect=RejectedClient
+            ):
+                RejectedClient.error = detail
+                result = await proxy.check_proxy(
+                    "res.example:8080:alice:private-password"
+                )
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["code"], kind)
+            self.assertEqual(result["http_status"], status)
+            self.assertNotIn("private-password", str(result))
+
+    async def test_unknown_proxy_rejection_stays_safe(self):
+        from app import browser_proxy as proxy
+
+        class RejectedClient:
+            def __init__(self, **kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def get(self, url):
+                raise proxy.httpx.ProxyError(
+                    "Failed to connect to alice:private-password@res.example"
+                )
+
+        with patch.object(proxy.httpx, "AsyncClient", side_effect=RejectedClient):
+            result = await proxy.check_proxy(
+                "res.example:8080:alice:private-password"
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "proxy_rejected")
+        self.assertNotIn("private-password", str(result))
+
     async def test_proxy_connection_error_does_not_expose_credentials(self):
         from app import browser_proxy as proxy
         class BrokenClient:
