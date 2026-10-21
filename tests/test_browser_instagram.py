@@ -89,6 +89,43 @@ class ProxySettingsTests(unittest.TestCase):
                          "socks5://host.example:1080")
         self.assertIsNone(proxy.parse_proxy(""))
 
+    def test_provider_format_with_and_without_http_scheme(self):
+        from app import browser_proxy as proxy
+        suffix="user-country-af"
+        plain=proxy.parse_proxy("198.51.100.15:5000:"+suffix+":somepass")
+        prefixed=proxy.parse_proxy("http://198.51.100.15:5000:"+suffix+":somepass")
+        for parsed in (plain,prefixed):
+            self.assertEqual(parsed["server"],"http://198.51.100.15:5000")
+            self.assertEqual(parsed["username"],suffix)
+            self.assertEqual(parsed["password"],"somepass")
+
+    def test_provider_format_escapes_special_chars_in_password(self):
+        from app import browser_proxy as proxy
+        expected="a:@?#%tail"
+        parsed=proxy.parse_proxy("http://res.example:9000:username:"+expected)
+        self.assertEqual(parsed["password"],expected)
+        self.assertEqual(parsed["server"],"http://res.example:9000")
+        self.assertEqual(proxy.masked_proxy("res.example:9000:username:"+expected),
+                         "http://res.example:9000")
+        url=proxy.httpx_proxy(parsed)
+        self.assertIn("a%3A%40%3F%23%25tail",url)
+        self.assertNotIn(expected,url)
+
+    def test_uri_user_password_format_without_scheme(self):
+        from app import browser_proxy as proxy
+        parsed=proxy.parse_proxy("name:pa%40ss@res.example:8080")
+        self.assertEqual(parsed["server"],"http://res.example:8080")
+        self.assertEqual(parsed["username"],"name")
+        self.assertEqual(parsed["password"],"pa@ss")
+
+    def test_malformed_prefixed_proxy_reports_safe_format_hint(self):
+        from app import browser_proxy as proxy
+        with self.assertRaises(ValueError) as ex:
+            proxy.parse_proxy("http://198.51.100.12:invalid:user:secret")
+        msg=str(ex.exception)
+        self.assertNotIn("secret",msg)
+        self.assertIn("IP:порт:логин:пароль",msg)
+
     def test_no_secret_in_displayed_fields(self):
         from app import browser_proxy as proxy
         full = "residential.example:10000:user:secret-password"
