@@ -111,12 +111,19 @@ async def _reels(client: httpx.AsyncClient, token: str) -> list[dict[str, Any]]:
         try:
             response = await _graph_get(client, "me/media", token, params)
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code not in (400, 403) or fields == "id,media_type":
+            if exc.response.status_code not in (400, 403):
                 raise
-            # Graceful fallback if an optional metadata field is unsupported.
+            # Optional fields vary by media type and Graph API version.
             fields = "id,caption,media_type,permalink,like_count,comments_count,timestamp"
             params["fields"] = fields
-            response = await _graph_get(client, "me/media", token, params)
+            try:
+                response = await _graph_get(client, "me/media", token, params)
+            except httpx.HTTPStatusError as second:
+                if second.response.status_code not in (400, 403):
+                    raise
+                fields = "id,media_type,permalink,timestamp"
+                params["fields"] = fields
+                response = await _graph_get(client, "me/media", token, params)
         for media in response.get("data") or []:
             if not isinstance(media, dict):
                 continue
@@ -244,7 +251,10 @@ async def refresh_all() -> None:
         connected = accounts.get("instagram") or []
         saved = await asyncio.to_thread(_read)
         previous_accounts = saved.get("accounts") or {}
-        updated = {}
+        # Keep not-yet-processed accounts visible during long refreshes.
+        updated = dict(previous_accounts)
+        connected_slots = {str(account["slot"]) for account in connected}
+        updated = {slot: value for slot, value in updated.items() if slot in connected_slots}
         for account in connected:
             slot = int(account["slot"])
             old = previous_accounts.get(str(slot), {})
