@@ -47,7 +47,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
    <h2>01 / Добавить аккаунт</h2>
    <div class="field"><label for="newUsername">Instagram username</label><input id="newUsername" autocomplete="off" placeholder="@instagram_account"></div>
    <div class="field"><label for="newProxy">Личный резидентский прокси (необязательно)</label>
-     <input id="newProxy" type="password" autocomplete="off" placeholder="host:port:user:password или http://user:pass@host:port">
+     <input id="newProxy" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="host:port:user:password или http://user:pass@host:port">
+     <button type="button" class="ghost" id="newProxyVisibility" onclick="toggleProxyVisibility('newProxy',this)">Скрыть ввод</button>
      <p class="muted">Поддерживаются HTTP / HTTPS и SOCKS5 без авторизации. Пароли прокси зашифрованы и не показываются после сохранения.</p></div>
    <div class="row"><button class="ghost" id="testProxyBtn" onclick="testNewProxy()">Проверить прокси и IP</button>
      <button class="primary" onclick="addAccount()">+ Добавить аккаунт</button></div>
@@ -140,7 +141,8 @@ function renderAccounts(){
    '<button class="danger" data-remove="'+esc(a.id)+'">Удалить из списка</button></div>'+
    '<div id="proxyPanel_'+esc(a.id)+'" hidden style="border-top:1px solid #304561;margin-top:11px;padding-top:9px">'+
    '<label for="proxyInput_'+esc(a.id)+'">Новый прокси (оставь пустым, чтобы отключить)</label>'+
-   '<input id="proxyInput_'+esc(a.id)+'" type="password" autocomplete="off" placeholder="host:port:user:password" style="margin:8px 0">'+
+   '<input id="proxyInput_'+esc(a.id)+'" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="host:port:user:password" style="margin:8px 0">'+
+   '<button type="button" class="ghost" data-toggle-proxy="'+esc(a.id)+'">Скрыть ввод</button>'+
    '<div class="account-buttons"><button data-test-input="'+esc(a.id)+'">Проверить введённый</button>'+
    '<button data-save-proxy="'+esc(a.id)+'">Сохранить привязку</button>'+
    '<button data-clear-proxy="'+esc(a.id)+'">Убрать прокси</button></div>'+
@@ -155,8 +157,12 @@ $('accountsList').addEventListener('click',async e=>{
  b.disabled=true;
  const id=b.dataset.open||b.dataset.close||b.dataset.remove||
    b.dataset.showProxy||b.dataset.testSaved||b.dataset.testInput||
-   b.dataset.saveProxy||b.dataset.clearProxy;
+   b.dataset.saveProxy||b.dataset.clearProxy||b.dataset.toggleProxy;
  try{
+  if(b.dataset.toggleProxy){
+    toggleProxyVisibility('proxyInput_'+id,b);
+    return;
+  }
   if(b.dataset.showProxy){
     const panel=$('proxyPanel_'+id);
     panel.hidden=!panel.hidden;
@@ -206,6 +212,15 @@ function proxyResultText(d){
   return d.ok?'✓ Прокси работает · внешний IP: '+d.ip+' · задержка '+d.latency_ms+' мс':
     (d.message||'Не удалось проверить подключение');
 }
+function toggleProxyVisibility(inputId,button){
+  const input=$(inputId);
+  if(!input)return;
+  const concealed=input.type==='text';
+  input.type=concealed?'password':'text';
+  button.textContent=concealed?'Показать ввод':'Скрыть ввод';
+  input.focus();
+}
+
 async function testNewProxy(){
   const input=$('newProxy'),btn=$('testProxyBtn'),value=input.value.trim();
   if(!value){message('accountAddResult','Сначала укажи адрес прокси','error');return;}
