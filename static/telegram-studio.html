@@ -691,6 +691,84 @@ function updateTelegramMediaMode(){
 }
 el('tgMediaMode').value=localStorage.getItem('postingttii_tg_media_mode')==='videos'?'videos':'circles';
 updateTelegramMediaMode();
+let lastRenderMode='circles',lastRenderFingerprint='',lastRenderedInfo=null,lastRenderFetching=false;
+function setLastRenderStatus(textValue){
+  el('lastRenderName').textContent=textValue;
+}
+async function chooseLastRender(mode){
+  if(!['circles','videos','instagram'].includes(mode))return;
+  lastRenderMode=mode;
+  lastRenderFingerprint='';
+  lastRenderedInfo=null;
+  const player=el('lastRenderPlayer');
+  player.pause();player.removeAttribute('src');player.load();
+  el('lastRenderThumb').style.display='none';
+  player.style.display='none';
+  for(const m of ['circles','videos','instagram']){
+    el('lastMode'+m.charAt(0).toUpperCase()+m.slice(1)).classList.toggle('active',mode===m);
+  }
+  setLastRenderStatus('Ищу последний готовый ролик...');
+  el('lastRenderInfo').textContent='Проверяем готовый MP4.';
+  el('lastRenderPlay').disabled=true;el('lastRenderStill').disabled=true;
+  await loadLastRender(true);
+}
+async function loadLastRender(force=false){
+  if(lastRenderFetching)return;
+  const mode=lastRenderMode;
+  lastRenderFetching=true;
+  try{
+    const d=await request('/last-render?mode='+encodeURIComponent(mode));
+    if(mode!==lastRenderMode)return;
+    if(!d.available){
+      const video=el('lastRenderPlayer');
+      video.pause();video.style.display='none';
+      el('lastRenderThumb').style.display='none';
+      lastRenderFingerprint='';
+      lastRenderedInfo=null;
+      setLastRenderStatus('Ещё нет готового ролика для выбранного режима');
+      el('lastRenderInfo').textContent='Запусти рендер. После завершения здесь появится миниатюра настоящего результата.';
+      el('lastRenderPlay').disabled=true;el('lastRenderStill').disabled=true;
+      return;
+    }
+    const fingerprint=mode+':'+d.fingerprint;
+    if(!force&&lastRenderFingerprint===fingerprint)return;
+    lastRenderFingerprint=fingerprint;lastRenderedInfo=d;
+    const player=el('lastRenderPlayer');
+    player.pause();player.removeAttribute('src');player.load();player.style.display='none';
+    const thumb=el('lastRenderThumb');
+    thumb.src=d.poster_url+'&v='+encodeURIComponent(d.fingerprint);
+    thumb.style.display='block';
+    thumb.onerror=()=>{
+      thumb.style.display='none';
+      el('lastRenderInfo').textContent+=' · миниатюра недоступна, открой MP4 для просмотра.';
+    };
+    setLastRenderStatus(d.name);
+    const checked=d.banner_applied===true?'✓ Баннер добавлен в MP4':
+      d.banner_applied===false?'Баннер при этом рендере не применялся':
+      'Результат прежнего рендера (состояние баннера неизвестно)';
+    el('lastRenderInfo').textContent=checked+
+      ' · '+new Date(d.updated_at*1000).toLocaleString('ru-RU')+
+      ' · готовый ролик можно воспроизвести прямо здесь.';
+    el('lastRenderPlay').disabled=false;el('lastRenderStill').disabled=false;
+  }catch(err){
+    if(mode===lastRenderMode)setLastRenderStatus('Ошибка просмотра: '+err.message);
+  }finally{lastRenderFetching=false;}
+}
+function playLastRendered(){
+  if(!lastRenderedInfo)return;
+  const player=el('lastRenderPlayer');
+  player.src=lastRenderedInfo.video_url+'&v='+encodeURIComponent(lastRenderedInfo.fingerprint);
+  player.poster=lastRenderedInfo.poster_url+'&v='+encodeURIComponent(lastRenderedInfo.fingerprint);
+  player.style.display='block';
+  el('lastRenderThumb').style.display='none';
+  player.load();player.play().catch(()=>{});
+}
+function showLastPoster(){
+  const player=el('lastRenderPlayer');
+  player.pause();player.style.display='none';
+  if(lastRenderedInfo)el('lastRenderThumb').style.display='block';
+}
+
 async function refresh(){
 try{const d=await request('/status');el('health').textContent=(d.ffmpeg_ready?'FFmpeg ✓':'FFmpeg отсутствует')+' · '+(d.telegram_configured?'Telegram API ✓':'Telegram API не настроен');
 el('channels').innerHTML=d.channels.map(c=>'<div class="item"><strong>✈ Telegram · @'+safe(c)+'</strong><div class="actions"><label><input type="checkbox" data-tg-toggle="'+safe(c)+'" '+(!(d.channels_disabled||[]).includes(c)?'checked':'')+'> Вкл.</label><button class="danger" data-channel="'+safe(c)+'">Удалить</button></div></div>').join('');
@@ -712,6 +790,7 @@ if(bgSignature!==lastBackgroundSignature){
       '> Вкл.</label><button class="danger" data-bg="'+name+'">×</button></div></div>';
   }).join(''):'<div class="empty">Добавь MP4 или фото</div>';
 }
+loadLastRender().catch(()=>{});
 const j=d.job;el('progress').textContent=j.status+' · '+(j.media_mode==='videos'?'обычные видео':'кружки')+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=(j.errors||[]).join('\n');el('run').disabled=j.status==='running';
 }catch(e){el('log').textContent=e.message}}
 el('addChannel').onsubmit=async e=>{e.preventDefault();try{await request('/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:el('channel').value})});el('channel').value='';await refresh()}catch(e){notify(e)}};
@@ -720,7 +799,7 @@ document.addEventListener('click',async e=>{try{if(e.target.dataset.channel){awa
 document.addEventListener('change',async e=>{if(e.target.dataset.toggle){try{await request('/backgrounds/'+encodeURIComponent(e.target.dataset.toggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}catch(err){notify(err)}}});
 async function startLogin(){try{await request('/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:el('phone').value})});el('auth').textContent='Код отправлен'}catch(e){notify(e)}}
 async function finishLogin(){try{const d=await request('/auth/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:el('code').value,password:el('password').value})});el('auth').textContent=d.password_required?'Введи пароль 2FA':'Telegram подключён';el('code').value='';el('password').value=''}catch(e){notify(e)}}
-async function run(){try{await designSaveQueue;await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_channel:Number(el('limit').value),media_mode:el('tgMediaMode').value,order:el('order').value,date_from:el('dateFrom').value||null,date_to:el('dateTo').value||null,output_folder:el('tgRenderFolder').value,target_slot:Number(el('tgRenderTarget').value)})});await refresh()}catch(e){notify(e)}}
+async function run(){try{await designSaveQueue;await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_channel:Number(el('limit').value),media_mode:el('tgMediaMode').value,order:el('order').value,date_from:el('dateFrom').value||null,date_to:el('dateTo').value||null,output_folder:el('tgRenderFolder').value,target_slot:Number(el('tgRenderTarget').value)})});await chooseLastRender(el('tgMediaMode').value);await refresh()}catch(e){notify(e)}}
 async function auth(){try{const d=await request('/auth');el('auth').textContent=d.authorized?'Telegram подключён':'Telegram не авторизован'}catch(e){el('auth').textContent=e.message}}
 let qrPoll=null;
 async function startQR(){
@@ -975,7 +1054,7 @@ el('igAdd').onsubmit=async e=>{e.preventDefault();try{await igRequest('/accounts
 async function igOpenChrome(){try{const d=await igRequest('/chrome/open',{method:'POST'});alert(d.message)}catch(e){notify(e)}}
 async function igSessionConnect(){try{const file=el('igSessionFile').files[0];if(!file)throw Error('Выбери .session файл');const form=new FormData();form.append('file',file);await igRequest('/session',{method:'POST',body:form});await igRefresh()}catch(e){notify(e)}}
 async function igSessionDisconnect(){try{await igRequest('/session',{method:'DELETE'});await igRefresh()}catch(e){notify(e)}}
-async function igRun(){try{await instagramLayoutSave;await designSaveQueue;await igRequest('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_account:Number(el('igLimit').value),output_folder:el('igRenderFolder').value,target_slot:Number(el('igRenderTarget').value)})});await igRefresh()}catch(e){notify(e)}}
+async function igRun(){try{await instagramLayoutSave;await designSaveQueue;await igRequest('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_account:Number(el('igLimit').value),output_folder:el('igRenderFolder').value,target_slot:Number(el('igRenderTarget').value)})});await chooseLastRender('instagram');await igRefresh()}catch(e){notify(e)}}
 document.addEventListener('click',async e=>{if(e.target.dataset.igRemove){try{await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igRemove),{method:'DELETE'});await igRefresh()}catch(err){notify(err)}}});
 document.addEventListener('change',async e=>{try{if(e.target.dataset.tgToggle){await request('/channels/'+encodeURIComponent(e.target.dataset.tgToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}if(e.target.dataset.igToggle){await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await igRefresh()}}catch(err){notify(err);await refresh();await igRefresh()}});
 igRefresh();setInterval(igRefresh,2500);
