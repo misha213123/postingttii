@@ -49,7 +49,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
    <div class="field"><label for="newProxy">Личный резидентский прокси (необязательно)</label>
      <input id="newProxy" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="host:port:user:password или http://user:pass@host:port">
      <button type="button" class="ghost" id="newProxyVisibility" onclick="toggleProxyVisibility('newProxy',this)">Скрыть ввод</button>
-     <p class="muted">Поддерживаются HTTP / HTTPS и SOCKS5 без авторизации. Пароли прокси зашифрованы и не показываются после сохранения.</p></div>
+     <p class="muted">Форматы: IP:порт:логин:пароль, http://IP:порт:логин:пароль или http://логин:пароль@IP:порт. HTTP/HTTPS с авторизацией и SOCKS5 без авторизации. После сохранения пароль скрыт.</p></div>
    <div class="row"><button class="ghost" id="testProxyBtn" onclick="testNewProxy()">Проверить прокси и IP</button>
      <button class="primary" onclick="addAccount()">+ Добавить аккаунт</button></div>
    <p id="accountAddResult" class="muted" aria-live="polite"></p>
