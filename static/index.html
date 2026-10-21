@@ -226,9 +226,9 @@ async function load(){
   if(!folderRegistry)await loadFolderRegistry();
   const r=await fetch('/api/status?folder_id='+encodeURIComponent(activeVideoFolder==='linked'?'default':activeVideoFolder));
   state=await r.json();
-  document.getElementById('folder').textContent=state.upload_dir;
-  document.getElementById('totalCount').textContent=(state.videos||[]).length;
-  document.getElementById('videoCount').textContent='('+((state.videos||[]).length)+')';
+  document.getElementById('folder').textContent=activeVideoFolder==='linked'?'Папки Instagram-аккаунтов':state.upload_dir;
+  document.getElementById('totalCount').textContent=activeVideoFolder==='linked'?'по аккаунтам':(state.videos||[]).length;
+  document.getElementById('videoCount').textContent=activeVideoFolder==='linked'?'(индивидуальные папки)':'('+((state.videos||[]).length)+')';
   const names=new Set((state.videos||[]).map(v=>v.name));
   selectedVideos=new Set([...selectedVideos].filter(x=>names.has(x)));
   renderPlatforms();renderVideos();renderBatchTargets();syncIntervalMin();updateSelectedCount();renderFolderBindings();
