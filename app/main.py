@@ -49,6 +49,7 @@ from app.account_creator.api.instagram import router as account_instagram_router
 from app.telegram_studio import router as telegram_studio_router, shutdown_telegram_studio
 from app.instagram_studio import router as instagram_reels_router
 from app.instagram_stats import router as instagram_stats_router, periodic_refresh
+from app.video_folders import router as video_folders_router, folder_path, list_videos, video_path, account_folder
 
 app = FastAPI(title="PostingTTII", version="0.1.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -63,6 +64,7 @@ app.include_router(autotok_router)
 app.include_router(telegram_studio_router)
 app.include_router(instagram_reels_router)
 app.include_router(instagram_stats_router)
+app.include_router(video_folders_router)
 
 INSTAGRAM_STATS_TASK: asyncio.Task | None = None
 
@@ -147,17 +149,20 @@ class PublishRequest(BaseModel):
     filename: str
     caption: str
     targets: list[str] | None = None
+    source_folder: str = "default"
 
 
 class PublishTargetRequest(BaseModel):
     filename: str
     caption: str
     target: str
+    source_folder: str = "default"
 
 
 class BatchPublishRequest(BaseModel):
     filenames: list[str]
     targets: list[str]
+    source_folder: str = "default"  # "linked" uses each account's assigned folder
     interval_seconds: int = 60
     interval_max_seconds: int = 160
     wave_min_minutes: int = 22
@@ -167,42 +172,30 @@ class BatchPublishRequest(BaseModel):
     captions: dict[str, str] = Field(default_factory=dict)
 
 
-def _safe_video(filename: str) -> Path:
-    name = Path(filename).name
-    path = (settings.upload_dir / name).resolve()
-    if path.parent != settings.upload_dir:
-        raise HTTPException(400, "Некорректное имя файла")
-    if not path.exists() or not path.is_file():
-        raise HTTPException(404, "Видео не найдено")
-    if path.suffix.lower() not in {".mp4", ".mov", ".m4v", ".webm"}:
-        raise HTTPException(400, "Формат видео не поддерживается")
-    return path
+def _safe_video(filename: str, folder_id: str = "default") -> Path:
+    try:
+        return video_path(folder_id, filename)
+    except ValueError as exc:
+        status_code = 404 if "не найдено" in str(exc).lower() else 400
+        raise HTTPException(status_code, str(exc)) from exc
 
 
-def _videos(history: dict | None = None) -> list[dict]:
-    """List inbox files without repeatedly hashing videos or reading history."""
+def _videos(history: dict | None = None, folder_id: str = "default") -> list[dict]:
     history = publish_state._read() if history is None else history
-    entries = []
-    for path in settings.upload_dir.iterdir():
-        if path.suffix.lower() not in {".mp4", ".mov", ".m4v", ".webm"}:
-            continue
-        try:
-            if path.is_file():
-                entries.append((path, path.stat()))
-        except FileNotFoundError:
-            # Another worker may have just archived a completed upload.
-            continue
-    entries.sort(key=lambda entry: entry[1].st_mtime)
     result = []
-    for path, stats in entries:
+    paths = (list_videos(folder_id) if folder_id != "default" else
+             sorted((p for p in settings.upload_dir.iterdir()
+                     if p.is_file() and p.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}),
+                    key=lambda p: p.stat().st_mtime))
+    for path in paths:
         try:
-            video_key = publish_state.video_key(path)
+            digest = publish_state.video_key(path)
+            size = path.stat().st_size
         except FileNotFoundError:
             continue
         result.append({
-            "name": path.name,
-            "size_mb": round(stats.st_size / 1024 / 1024, 1),
-            "completed_targets": sorted(history.get(video_key, {}).get("targets", {}).keys()),
+            "name": path.name, "size_mb": round(size / 1024 / 1024, 1),
+            "completed_targets": sorted(history.get(digest, {}).get("targets", {}).keys()),
         })
     return result
 
@@ -214,8 +207,8 @@ async def home():
 
 
 @app.get("/api/video-preview/{filename}")
-async def video_preview(filename: str):
-    path = _safe_video(filename)
+async def video_preview(filename: str, folder_id: str = "default"):
+    path = _safe_video(filename, folder_id)
     media_type = {
         ".mp4": "video/mp4",
         ".mov": "video/quicktime",
@@ -231,12 +224,17 @@ async def video_preview(filename: str):
 
 
 @app.get("/api/status")
-async def status():
+async def status(folder_id: str = "default"):
     # One snapshot of each local JSON store per request. SHA-256 hashing runs
     # off the async event loop so the API stays responsive during a cold scan.
     accounts = await asyncio.to_thread(store.list_accounts)
     history = await asyncio.to_thread(publish_state._read)
-    videos = await asyncio.to_thread(_videos, history)
+    try:
+        videos = await asyncio.to_thread(_videos, history, folder_id)
+        active_folder = (settings.upload_dir.resolve() if folder_id == "default"
+                         else folder_path(folder_id))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     latest_by_target = {}
     for item in history.values():
         for target, details in item.get("targets", {}).items():
@@ -254,7 +252,8 @@ async def status():
     return {
         "accounts": accounts,
         "videos": videos,
-        "upload_dir": str(settings.upload_dir),
+        "upload_dir": str(active_folder),
+        "folder_id": folder_id,
         "post_cooldown_minutes": settings.post_cooldown_minutes,
         "cooldowns": cooldowns,
         "configured": {
@@ -401,6 +400,15 @@ def _save_batch_job(job: dict) -> None:
     tmp.replace(path)
 
 
+def archive_dir(folder_id: str = "default") -> Path:
+    if folder_id == "default":
+        directory = settings.posted_dir
+    else:
+        directory = folder_path(folder_id) / "posted"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
 # Instagram continues requesting the media URL briefly after publication.
 # Remove confirmed videos from inbox only when that window has elapsed.
 ARCHIVE_GRACE_SECONDS = 330
@@ -413,9 +421,15 @@ async def _archive_after_publish(job_id: str, entry: dict) -> None:
         await asyncio.sleep(max(0, entry["due_at"] - time.time()))
         if Path(filename).name != filename:
             raise ValueError("Некорректное имя видео для архивации")
-        path = (settings.upload_dir / filename).resolve()
-        if path.parent != settings.upload_dir:
-            raise ValueError("Файл вне папки inbox")
+        folder_id = entry.get("source_folder", "default")
+        path = folder_path(folder_id) / filename
+        if not path.exists():
+            job["cleanup_pending"] = [
+                pending for pending in job.get("cleanup_pending", [])
+                if pending is not entry
+            ]
+            return
+        path = video_path(folder_id, filename)
         if not publish_state.completed_targets(entry["video_key"]):
             raise ValueError("Нет подтверждения публикации — исходник сохранён")
         # The previous file at the same path might have been replaced.
@@ -429,9 +443,10 @@ async def _archive_after_publish(job_id: str, entry: dict) -> None:
                 await asyncio.sleep(30)
             else:
                 raise ValueError("Источник ещё используется API — исходник сохранён")
-            destination = settings.posted_dir / filename
+            destination_dir = archive_dir(folder_id)
+            destination = destination_dir / filename
             if destination.exists():
-                destination = settings.posted_dir / (
+                destination = destination_dir / (
                     path.stem + "_" + secrets.token_hex(4) + path.suffix
                 )
             await asyncio.to_thread(shutil.move, str(path), str(destination))
@@ -451,11 +466,13 @@ async def _archive_after_publish(job_id: str, entry: dict) -> None:
         _save_batch_job(job)
 
 
-def _queue_archive(job: dict, video: Path, video_key: str) -> None:
-    if any(p["filename"] == video.name for p in job.get("cleanup_pending", [])):
+def _queue_archive(job: dict, video: Path, video_key: str, folder_id: str = "default") -> None:
+    if any(p["filename"] == video.name and p.get("source_folder", "default") == folder_id
+           for p in job.get("cleanup_pending", [])):
         return
     due_at = int(time.time()) + ARCHIVE_GRACE_SECONDS
-    entry = {"filename": video.name, "video_key": video_key, "due_at": due_at}
+    entry = {"filename": video.name, "source_folder": folder_id,
+             "video_key": video_key, "due_at": due_at}
     job.setdefault("cleanup_pending", []).append(entry)
     _save_batch_job(job)
     asyncio.create_task(_archive_after_publish(job["id"], entry))
@@ -525,7 +542,8 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
         target = next(iter(item["targets"]))
         state = item["targets"][target]
         try:
-            video = _safe_video(item["filename"])
+            folder_id = item.get("source_folder", "default")
+            video = _safe_video(item["filename"], folder_id)
             key = await asyncio.to_thread(publish_state.video_key, video)
             published_targets = publish_state.completed_targets(key)
             if published_targets:
@@ -534,7 +552,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     message=("Уже опубликовано: " + ", ".join(published_targets)),
                 )
                 item["status"] = "already"
-                _queue_archive(job, video, key)
+                _queue_archive(job, video, key, folder_id)
                 return
             youtube_metadata = None
             caption = (body.captions.get(video.name) or item.get("caption") or "").strip()
@@ -600,7 +618,7 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     message="Уже было" if result.get("skipped") else "Опубликовано",
                 )
                 item["status"] = state["status"]
-                _queue_archive(job, video, key)
+                _queue_archive(job, video, key, folder_id)
                 return
             state.update(status="cancelled", message="Очередь остановлена")
             item["status"] = "cancelled"
@@ -688,13 +706,7 @@ async def batch_active():
 async def batch_start(body: BatchPublishRequest):
     if _active_batch_jobs():
         raise HTTPException(409, "Сначала останови или заверши текущую очередь")
-    filenames = list(dict.fromkeys(Path(x).name for x in body.filenames))
-    if body.shuffle_videos:
-        secrets.SystemRandom().shuffle(filenames)
     targets = list(dict.fromkeys(body.targets))
-
-    if not filenames:
-        raise HTTPException(400, "Выбери хотя бы одно видео")
     if not targets:
         raise HTTPException(400, "Выбери хотя бы один аккаунт")
     if any(target.startswith("instagram:") for target in targets):
@@ -706,22 +718,6 @@ async def batch_start(body: BatchPublishRequest):
         raise HTTPException(400, "Пауза должна быть от 60 секунд")
     if not 1 <= body.wave_min_minutes <= body.wave_max_minutes <= 1440:
         raise HTTPException(400, "Некорректная пауза между волнами")
-
-    # The same content can appear under different names; it must never
-    # be assigned to two separate accounts in the same queue.
-    unique_filenames = []
-    duplicate_filenames = []
-    seen_video_keys = set()
-    for filename in filenames:
-        video = _safe_video(filename)
-        video_key = publish_state.video_key(video)
-        if video_key in seen_video_keys:
-            duplicate_filenames.append(filename)
-            continue
-        seen_video_keys.add(video_key)
-        unique_filenames.append(filename)
-    filenames = unique_filenames
-
     allowed_targets = {
         f"{platform}:{account['slot']}"
         for platform in ("youtube", "instagram", "tiktok")
@@ -729,18 +725,81 @@ async def batch_start(body: BatchPublishRequest):
     }
     invalid = [target for target in targets if target not in allowed_targets]
     if invalid:
-        raise HTTPException(
-            400,
-            "Недоступные аккаунты: " + ", ".join(invalid),
-        )
-    if len(filenames) < len(targets):
-        raise HTTPException(
-            400,
-            "Выбрано меньше уникальных видео, чем аккаунтов. "
-            "Часть аккаунтов (в том числе TikTok) не получит ролик. "
-            "Добавь видео или сними лишние галочки аккаунтов.",
-        )
-    # Verify AutoTok sessions before any YouTube or Instagram work starts.
+        raise HTTPException(400, "Недоступные аккаунты: " + ", ".join(invalid))
+
+    duplicate_filenames = []
+    rows: list[dict] = []
+    seen_video_keys: set[str] = set()
+    if body.source_folder == "linked":
+        if any(not t.startswith("instagram:") for t in targets):
+            raise HTTPException(400, "Привязанные папки работают только для Instagram. Сними галочки YouTube/TikTok.")
+        # Every account draws independently from its own registered folder.
+        # A deterministic snapshot of folder assignments is saved with job items.
+        per_target: dict[str, list[Path]] = {}
+        per_target_folder: dict[str, str] = {}
+        for target in targets:
+            try:
+                slot = int(target.split(":", 1)[1])
+                selected_folder = account_folder(slot)
+                per_target_folder[target] = selected_folder
+                videos = list_videos(selected_folder)
+            except (ValueError, OSError) as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if body.shuffle_videos:
+                secrets.SystemRandom().shuffle(videos)
+            per_target[target] = videos
+        max_rounds = max((len(pool) for pool in per_target.values()), default=0)
+        cursors = {target: 0 for target in targets}
+        # Max 500 scheduled files per account to avoid runaway batch creation.
+        # Advance each account's cursor until a truly unique video is found,
+        # so two accounts sharing one folder still get distinct files.
+        for _ in range(min(max_rounds, 500)):
+            any_new = False
+            for target in targets:
+                pool = per_target[target]
+                while cursors[target] < len(pool):
+                    video = pool[cursors[target]]
+                    cursors[target] += 1
+                    digest = await asyncio.to_thread(publish_state.video_key, video)
+                    if digest in seen_video_keys:
+                        duplicate_filenames.append(video.name)
+                        continue
+                    seen_video_keys.add(digest)
+                    rows.append({"filename": video.name, "source_folder": per_target_folder[target],
+                                 "target": target, "video_key": digest})
+                    any_new = True
+                    break
+            if not any_new:
+                break
+        # Require at least one distinct video per selected Instagram account.
+        assigned = {row["target"] for row in rows}
+        missing = [target for target in targets if target not in assigned]
+        if missing:
+            raise HTTPException(400, "В привязанных папках нет уникальных видео для: " + ", ".join(missing))
+    else:
+        try:
+            folder_path(body.source_folder)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        filenames = list(dict.fromkeys(body.filenames))
+        if body.shuffle_videos:
+            secrets.SystemRandom().shuffle(filenames)
+        if not filenames:
+            raise HTTPException(400, "Выбери хотя бы одно видео")
+        for name in filenames:
+            video = _safe_video(name, body.source_folder)
+            digest = await asyncio.to_thread(publish_state.video_key, video)
+            if digest in seen_video_keys:
+                duplicate_filenames.append(name)
+                continue
+            seen_video_keys.add(digest)
+            rows.append({"filename": name, "source_folder": body.source_folder,
+                         "target": targets[len(rows) % len(targets)], "video_key": digest})
+        if len(rows) < len(targets):
+            raise HTTPException(
+                400, "Меньше уникальных видео, чем аккаунтов. Добавь видео или сними лишние галочки."
+            )
+
     for target in targets:
         if target.startswith("tiktok:"):
             account = store.get("tiktok", int(target.split(":", 1)[1])) or {}
@@ -749,67 +808,45 @@ async def batch_start(body: BatchPublishRequest):
                     await autotok_bridge.check_account(account["autotok_account"])
                 except RuntimeError as exc:
                     raise HTTPException(400, f"{target}: {exc}") from exc
-
+    if not rows:
+        raise HTTPException(400, "Нет доступных видео для выбранных папок")
     job_id = secrets.token_urlsafe(12)
-    # Round-robin: each video is assigned to exactly one account.
-    # Consecutive rounds give each account a different second video.
-    assignments = {
-        filename: [targets[index % len(targets)]]
-        for index, filename in enumerate(filenames)
-    }
     normalized = BatchPublishRequest(
-        filenames=filenames,
+        filenames=[row["filename"] for row in rows],
+        source_folder=body.source_folder,
         targets=targets,
         interval_seconds=body.interval_seconds,
         interval_max_seconds=body.interval_max_seconds,
         wave_min_minutes=body.wave_min_minutes,
         wave_max_minutes=body.wave_max_minutes,
-        shuffle_videos=body.shuffle_videos,
-        hint=body.hint,
-        captions={
-            filename: (body.captions.get(filename) or "").strip()
-            for filename in filenames
-            if (body.captions.get(filename) or "").strip()
-        },
+        shuffle_videos=body.shuffle_videos, hint=body.hint,
+        captions=body.captions,
     )
+    assignments = {
+        row["source_folder"] + "/" + row["filename"]: [row["target"]]
+        for row in rows
+    }
     BATCH_JOBS[job_id] = {
-        "id": job_id,
-        "status": "queued",
+        "id": job_id, "status": "queued",
         "created_at": int(time.time()),
-        "started_at": None,
-        "finished_at": None,
-        "next_video_at": None,
-        "completed_videos": 0,
-        "total_videos": len(filenames),
+        "started_at": None, "finished_at": None,
+        "next_video_at": None, "completed_videos": 0,
+        "total_videos": len(rows),
         "interval_seconds": body.interval_seconds,
         "interval_max_seconds": body.interval_max_seconds,
         "wave_min_minutes": body.wave_min_minutes,
         "wave_max_minutes": body.wave_max_minutes,
-        "targets": targets,
-        "cancel_requested": False,
+        "targets": targets, "cancel_requested": False,
         "assignment_mode": "one_video_one_account",
         "excluded_duplicate_files": duplicate_filenames,
-        "cleanup_pending": [],
-        "archived_count": 0,
-        "error": "",
-        "blocked_targets": {},
-        "assignments": assignments,
-        "claimed_circles": [],
-        "items": [
-            {
-                "filename": filename,
-                "status": "queued",
-                "caption": normalized.captions.get(filename, ""),
-                "error": "",
-                "targets": {
-                    target: {"status": "queued", "message": ""}
-                    for target in assignments[filename]
-                },
-            }
-            for filename in filenames
-        ],
+        "cleanup_pending": [], "archived_count": 0, "error": "",
+        "blocked_targets": {}, "assignments": assignments, "claimed_circles": [],
+        "items": [{
+            "filename": row["filename"], "source_folder": row["source_folder"],
+            "status": "queued", "caption": normalized.captions.get(row["filename"], ""),
+            "error": "", "targets": {row["target"]: {"status": "queued", "message": ""}},
+        } for row in rows],
     }
-
     BATCH_JOBS[job_id]["request"] = normalized.model_dump()
     _save_batch_job(BATCH_JOBS[job_id])
     asyncio.create_task(_run_batch_job(job_id, normalized))
@@ -841,7 +878,7 @@ async def batch_cancel(job_id: str):
 
 @app.post("/api/publish-target")
 async def publish_target(body: PublishTargetRequest):
-    video = _safe_video(body.filename)
+    video = _safe_video(body.filename, body.source_folder)
     try:
         return await _publish_single_target(video, body.caption, body.target)
     except HTTPException:
@@ -856,7 +893,7 @@ async def publish_target(body: PublishTargetRequest):
 
 @app.post("/api/publish")
 async def publish(body: PublishRequest):
-    video = _safe_video(body.filename)
+    video = _safe_video(body.filename, body.source_folder)
     accounts = store.list_accounts()
 
     if body.targets:
@@ -946,9 +983,10 @@ async def publish(body: PublishRequest):
     # Move to posted only when every target requested in this run is now completed.
     all_done = all(publish_state.is_completed(video_key, target) for target in targets)
     if all_done:
-        destination = settings.posted_dir / video.name
+        destination_dir = archive_dir(body.source_folder)
+        destination = destination_dir / video.name
         if destination.exists():
-            destination = settings.posted_dir / f"{video.stem}_{secrets.token_hex(3)}{video.suffix}"
+            destination = destination_dir / f"{video.stem}_{secrets.token_hex(3)}{video.suffix}"
         shutil.move(str(video), str(destination))
 
     MEDIA_TOKENS.pop(media_token, None)

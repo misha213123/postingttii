@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from typing import Literal
 from fastapi.responses import FileResponse
 from app.config import settings
+from app.video_folders import folder_path, account_folder, account_background
 from app.telegram_studio import BACKGROUNDS, backgrounds, duration
 
 router = APIRouter(prefix="/api/telegram-studio/instagram", tags=["studio-instagram"])
@@ -39,6 +40,8 @@ class Source(BaseModel):
 
 class Run(BaseModel):
     limit_per_account: int = 5
+    output_folder: str = "default"
+    target_slot: int = 0
 
 
 class InstagramLayout(BaseModel):
@@ -481,12 +484,21 @@ def is_profile_extraction_error(message):
     return "Unable to extract data" in message and "instagram:user" in message
 
 
-async def process(limit, layout: InstagramLayout):
+async def process(limit, layout: InstagramLayout, *,
+                  output_dir: Path | None = None, target_slot: int = 0):
     JOB.update(status="running", done=0, total=0, errors=[])
     try:
         d = load()
-        known = set(d["processed"])
-        hashes = set(d["hashes"])
+        output_dir = output_dir or settings.upload_dir
+        render_scope = ((str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
+                        ("folder:" + str(output_dir.resolve())
+                         if output_dir.resolve() != settings.upload_dir.resolve() else ""))
+        if render_scope:
+            known = set(d.setdefault("processed_by_target", {}).get(render_scope, []))
+            hashes = set(d.setdefault("hashes_by_target", {}).get(render_scope, []))
+        else:
+            known = set(d["processed"])
+            hashes = set(d["hashes"])
         known_ids = {reel_id(link) for link in known}
         # One layout snapshot and one rotating background queue for this job.
         pool = [BACKGROUNDS / bg["name"] for bg in backgrounds() if bg["enabled"]]
@@ -552,7 +564,7 @@ async def process(limit, layout: InstagramLayout):
         for account, link in selected:
             stem = "ig_" + hashlib.sha256(link.encode()).hexdigest()[:18]
             source = ROOT / (stem + ".mp4")
-            output = settings.upload_dir / (stem + ".mp4")
+            output = output_dir / (stem + ".mp4")
             temp = ROOT / (stem + ".rendering.mp4")
             try:
                 if output.exists() and output.stat().st_size:
@@ -588,9 +600,13 @@ async def process(limit, layout: InstagramLayout):
                     pass
             finally:
                 temp.unlink(missing_ok=True)
-                d["processed"] = sorted(known)
-                d["links"] = [url for url in d["links"] if url not in known]
-                d["hashes"] = sorted(hashes)
+                if render_scope:
+                    d.setdefault("processed_by_target", {})[render_scope] = sorted(known)
+                    d.setdefault("hashes_by_target", {})[render_scope] = sorted(hashes)
+                else:
+                    d["processed"] = sorted(known)
+                    d["links"] = [url for url in d["links"] if url not in known]
+                    d["hashes"] = sorted(hashes)
                 save(d)
         JOB["status"] = "done" if not JOB["errors"] else "partial"
     except Exception as exc:
@@ -609,6 +625,22 @@ async def run(body: Run):
     if not load()["accounts"] and not load()["links"]:
         raise HTTPException(400, "Добавь Instagram-аккаунт или ссылку на публикацию")
     layout = current_layout()
+    try:
+        if body.target_slot:
+            selected_folder = (account_folder(body.target_slot) if body.output_folder == "linked"
+                               else body.output_folder)
+            selected_bg = account_background(body.target_slot, "instagram")
+            if selected_bg:
+                layout = layout.model_copy(update={
+                    "background_mode": "single", "background_name": selected_bg,
+                })
+        else:
+            if body.output_folder == "linked":
+                raise ValueError("Выбери Instagram-аккаунт для привязанной папки")
+            selected_folder = body.output_folder
+        output_dir = folder_path(selected_folder, writable=True)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if layout.background_mode in ("shuffle", "single"):
         pool = [BACKGROUNDS / bg["name"] for bg in backgrounds() if bg["enabled"]]
         if layout.background_mode == "single":
@@ -621,5 +653,6 @@ async def run(body: Run):
             # backgrounds have been uploaded: fall back to blurred source.
             layout = layout.model_copy(update={"background_mode": "blur"})
     await LOCK.acquire()
-    TASK = asyncio.create_task(process(body.limit_per_account, layout))
+    TASK = asyncio.create_task(process(body.limit_per_account, layout,
+                                      output_dir=output_dir, target_slot=body.target_slot))
     return {"started": True}

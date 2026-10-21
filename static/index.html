@@ -120,6 +120,18 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
   </div>
 
   <section class="accounts-strip" id="platforms"></section>
+  <section class="card" style="margin:16px 0;padding:18px">
+    <h2 style="font-size:18px">📁 Папки и фоны аккаунтов</h2>
+    <p class="muted">Привяжи отдельную папку и свой MP4-фон к Instagram-аккаунту. Стандартная схема публикаций не изменяется.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="folderLabelInput" placeholder="Название папки" style="flex:1;min-width:160px;padding:10px">
+      <input id="folderPathInput" placeholder="C:\Videos\Account1" style="flex:2;min-width:240px;padding:10px">
+      <button class="secondary" onclick="pickNewFolder()">📂 Выбрать на ПК</button>
+      <button class="primary" onclick="registerVideoFolder()">Сохранить папку</button>
+    </div>
+    <p class="muted" id="folderStatus">Загружаю папки...</p>
+    <div id="accountFolderBindings" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px"></div>
+  </section>
 
   <div class="workspace">
     <section class="card video-panel">
@@ -141,6 +153,9 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 
     <aside class="card sidebar">
       <h2>Настройка очереди</h2>
+      <div class="field"><label for="sourceFolder">Из какой папки публиковать видео</label>
+      <select id="sourceFolder" onchange="setSourceFolder(this.value)"><option value="default">Стандартная videos/inbox</option></select>
+      <div class="muted" id="sourceFolderHelp">Можно выбрать общую папку или папки, закреплённые за аккаунтами.</div></div>
       <div class="metric-row">
         <div class="metric"><span>Выбрано</span><b id="selectedCount">0</b></div>
         <div class="metric"><span>Всего файлов</span><b id="totalCount">0</b></div>
@@ -197,6 +212,9 @@ let pollTimer=null;
 let lastArchivedCount=0;
 let terminalRefreshed=false;
 let activeInstagramMetaTab=1;
+let folderRegistry=null;
+let folderBackgrounds=[];
+let activeVideoFolder=localStorage.getItem('postingttii_source_folder')||'default';
 const pendingDisconnects=new Set();
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -205,14 +223,15 @@ function prettyTarget(target){const [p,n]=target.split(':');const a=connected(p,
 function fmtTime(seconds){seconds=Math.max(0,Math.floor(Number(seconds)||0));const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;return h? h+'ч '+m+'м':m+':'+String(s).padStart(2,'0');}
 
 async function load(){
-  const r=await fetch('/api/status');
+  if(!folderRegistry)await loadFolderRegistry();
+  const r=await fetch('/api/status?folder_id='+encodeURIComponent(activeVideoFolder==='linked'?'default':activeVideoFolder));
   state=await r.json();
-  document.getElementById('folder').textContent=state.upload_dir;
-  document.getElementById('totalCount').textContent=(state.videos||[]).length;
-  document.getElementById('videoCount').textContent='('+((state.videos||[]).length)+')';
+  document.getElementById('folder').textContent=activeVideoFolder==='linked'?'Папки Instagram-аккаунтов':state.upload_dir;
+  document.getElementById('totalCount').textContent=activeVideoFolder==='linked'?'по аккаунтам':(state.videos||[]).length;
+  document.getElementById('videoCount').textContent=activeVideoFolder==='linked'?'(индивидуальные папки)':'('+((state.videos||[]).length)+')';
   const names=new Set((state.videos||[]).map(v=>v.name));
   selectedVideos=new Set([...selectedVideos].filter(x=>names.has(x)));
-  renderPlatforms();renderVideos();renderBatchTargets();syncIntervalMin();updateSelectedCount();
+  renderPlatforms();renderVideos();renderBatchTargets();syncIntervalMin();updateSelectedCount();renderFolderBindings();
   if(!(await discoverActiveJob()) && currentJobId)await resumeJob(currentJobId);
 }
 
@@ -470,9 +489,108 @@ async function saveCover(slot,input){
  if(!r.ok)throw Error(await r.text());if(el)el.textContent='✓ Сохранена';}
  catch(e){if(el)el.textContent='Ошибка';alert(e.message);}
 }
+
+function folderOptions(selected='default'){
+  return (folderRegistry?.folders||[]).map(f=>'<option value="'+esc(f.id)+'"'+(selected===f.id?' selected':'')+
+    (!f.available?' disabled':'')+'>'+esc(f.label||f.path)+(f.available?'':' (недоступна)')+'</option>').join('');
+}
+function bgOptions(selected=''){
+  return '<option value="">Общий шаблон / случайный фон</option>'+
+    folderBackgrounds.filter(f=>f.enabled).map(f=>
+      '<option value="'+esc(f.name)+'"'+(f.name===selected?' selected':'')+'>'+esc(f.name)+'</option>').join('');
+}
+async function loadFolderRegistry(){
+  const r=await fetch('/api/video-folders');
+  if(!r.ok)throw Error('Настройки папок: HTTP '+r.status);
+  folderRegistry=await r.json();
+  if(!folderBackgrounds.length){
+    try{const response=await fetch('/api/telegram-studio/status');
+      if(response.ok)folderBackgrounds=(await response.json()).backgrounds||[];
+    }catch(e){console.warn(e);}
+  }
+  if(activeVideoFolder!=='linked'&&!folderRegistry.folders.some(f=>f.id===activeVideoFolder&&f.available)){
+    activeVideoFolder='default';
+    localStorage.setItem('postingttii_source_folder','default');
+  }
+  const select=document.getElementById('sourceFolder');
+  select.innerHTML=folderOptions(activeVideoFolder)+
+    '<option value="linked"'+(activeVideoFolder==='linked'?' selected':'')+'>Папки аккаунтов (автоматически)</option>';
+  select.value=activeVideoFolder;
+  document.getElementById('sourceFolderHelp').textContent=activeVideoFolder==='linked'?
+    'Для каждого выбранного Instagram-аккаунта используем его привязанную папку. Выбор видео ручным способом не нужен.':
+    'Файлы из этой папки после успешной публикации перемещаются в posted. По умолчанию используется обычная videos/posted.';
+  renderFolderBindings();
+}
+function renderFolderBindings(){
+  const root=document.getElementById('accountFolderBindings');
+  if(!root||!folderRegistry)return;
+  const accounts=folderRegistry.accounts||[];
+  root.innerHTML=accounts.length?accounts.map(a=>{
+    const slot=Number(a.slot),bind=folderRegistry.bindings[String(slot)]||{},bg=bind.backgrounds||{};
+    return '<div style="padding:12px;border:1px solid #304361;border-radius:12px;background:#0c1828">'+
+      '<strong>@'+esc(a.label||a.id||'Instagram')+'</strong> <small class="muted">Meta '+Number(a.meta_app||1)+'</small>'+
+      '<div class="field"><label>Папка этого аккаунта</label><select data-folder-slot="'+slot+'">'+folderOptions(bind.folder_id||'default')+'</select></div>'+
+      '<div class="field"><label>Фон Telegram Studio</label><select data-bg-slot="'+slot+'" data-bg-studio="telegram">'+bgOptions(bg.telegram||'')+'</select></div>'+
+      '<div class="field"><label>Фон Instagram Studio</label><select data-bg-slot="'+slot+'" data-bg-studio="instagram">'+bgOptions(bg.instagram||'')+'</select></div>'+
+      '</div>';
+  }).join(''):'<div class="muted">Нет подключённых Instagram-аккаунтов.</div>';
+  document.getElementById('folderStatus').textContent='Папок добавлено: '+(folderRegistry.folders.length-1)+
+    '. Список доступных фонов берётся из Telegram Studio.';
+}
+async function setSourceFolder(folderId){
+  activeVideoFolder=folderId;
+  localStorage.setItem('postingttii_source_folder',folderId);
+  selectedVideos.clear();
+  await loadFolderRegistry();
+  await load();
+}
+async function pickNewFolder(){
+  try{
+    const response=await fetch('/api/video-folders/pick',{method:'POST'});
+    const d=await response.json();
+    if(!response.ok)throw Error(d.detail||'Диалог выбора недоступен');
+    if(!d.path)return;
+    document.getElementById('folderPathInput').value=d.path;
+    document.getElementById('folderLabelInput').value=
+      d.path.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||'Видео';
+  }catch(e){document.getElementById('folderStatus').textContent=e.message+
+    ' — укажи путь к папке вручную.';}
+}
+async function registerVideoFolder(){
+  const label=document.getElementById('folderLabelInput').value.trim();
+  const path=document.getElementById('folderPathInput').value.trim();
+  if(!label||!path){alert('Укажи название папки и её путь.');return;}
+  try{
+    const response=await fetch('/api/video-folders',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({label,path})});
+    const d=await response.json();if(!response.ok)throw Error(d.detail||'Ошибка сохранения');
+    await loadFolderRegistry();
+    document.getElementById('folderStatus').textContent='✓ Папка добавлена — теперь выбери её для публикации или привяжи к аккаунту.';
+  }catch(e){alert('Папка: '+e.message);}
+}
+async function saveFolderSetting(slot,body,kind){
+  const route='/api/video-folders/account/'+slot+(kind==='background'?'/background':'');
+  try{
+    const response=await fetch(route,{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    const d=await response.json();if(!response.ok)throw Error(d.detail||'Сохранение не удалось');
+    await loadFolderRegistry();
+  }catch(e){alert('Настройки аккаунта: '+e.message);await loadFolderRegistry();}
+}
+document.addEventListener('change',event=>{
+  const e=event.target;
+  if(e.dataset.folderSlot)saveFolderSetting(Number(e.dataset.folderSlot),{folder_id:e.value},'folder');
+  if(e.dataset.bgSlot)saveFolderSetting(Number(e.dataset.bgSlot),
+    {studio:e.dataset.bgStudio,background_name:e.value},'background');
+});
+
 function renderVideos(){
   const root=document.getElementById('videos');
   if(!state)return;
+  if(activeVideoFolder==='linked'){
+    root.innerHTML='<div class="empty">Выбран режим папок аккаунтов. Каждый Instagram-аккаунт получит ролики из собственной папки — выбирать файлы здесь не требуется.</div>';
+    return;
+  }
   const q=(document.getElementById('videoSearch').value||'').trim().toLowerCase();
   const videos=(state.videos||[]).filter(v=>!q||v.name.toLowerCase().includes(q));
   if(!videos.length){root.innerHTML='<div class="empty">Ничего не найдено.</div>';return;}
@@ -501,6 +619,10 @@ function updateSelectedCount(){
 
 function updateAssignmentPreview(){
   const el=document.getElementById('assignmentPreview');
+  if(activeVideoFolder==='linked'){
+    if(el)el.textContent='Источник: индивидуальная папка каждого выбранного Instagram-аккаунта. Сними галочки YouTube/TikTok в этом режиме.';
+    return;
+  }
   if(!el)return;
   const accounts=[...document.querySelectorAll('.batch-target:checked')].map(x=>x.value);
   const count=selectedVideos.size;
@@ -516,7 +638,7 @@ function renderBatchTargets(){
   for(const platform of ['youtube','instagram','tiktok']){
     for(const a of (state.accounts[platform]||[])){
       const target=platform+':'+a.slot,cooldown=Number((state.cooldowns||{})[target]||0);
-      html+='<label class="target"><input type="checkbox" class="batch-target" value="'+esc(target)+'" checked><span><b>'+prettyTarget(target)+'</b><br><small>'+esc(a.label||'')+'</small>'+(cooldown>0?'<br><span class="warn" style="font-size:10px">пауза '+fmtTime(cooldown)+'</span>':'')+'</span></label>';
+      html+='<label class="target"><input type="checkbox" class="batch-target" value="'+esc(target)+'" '+(activeVideoFolder==='linked'&&platform!=='instagram'?'':'checked')+'><span><b>'+prettyTarget(target)+'</b><br><small>'+esc(a.label||'')+'</small>'+(cooldown>0?'<br><span class="warn" style="font-size:10px">пауза '+fmtTime(cooldown)+'</span>':'')+'</span></label>';
     }
   }
   root.innerHTML=html||'<div class="muted">Нет подключённых аккаунтов.</div>';
@@ -551,13 +673,14 @@ async function discoverActiveJob(){
 }
 
 async function startBatch(){
-  if(!selectedVideos.size){alert('Выбери хотя бы одно видео.');return;}
+  if(!selectedVideos.size&&activeVideoFolder!=='linked'){alert('Выбери хотя бы одно видео.');return;}
   const targets=[...document.querySelectorAll('.batch-target:checked')].map(x=>x.value);
   if(!targets.length){alert('Выбери хотя бы один аккаунт.');return;}
   const btn=document.getElementById('startBatch');btn.disabled=true;btn.textContent='Создаю очередь...';
   try{
     const r=await fetch('/api/batch/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      filenames:[...selectedVideos],
+      filenames:activeVideoFolder==='linked'?[]:[...selectedVideos],
+      source_folder:activeVideoFolder,
       targets,
       interval_seconds:Number(document.getElementById('intervalSeconds').value),
       interval_max_seconds:Number(document.getElementById('intervalMaxSeconds').value),
@@ -688,7 +811,7 @@ async function cancelBatch(){
     alert('Ошибка остановки очереди: '+error.message);
   }
 }
-async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
+async function refreshAfterJob(){const r=await fetch('/api/status?folder_id='+encodeURIComponent(activeVideoFolder==='linked'?'default':activeVideoFolder));state=await r.json();renderVideos();renderBatchTargets();}
 async function openEdge(slot,mode,metaApp=1){
   try{
     const r=await fetch('/api/instagram/edge/'+slot+'?mode='+encodeURIComponent(mode)+'&meta_app='+encodeURIComponent(metaApp),{method:'POST'});
@@ -741,7 +864,7 @@ async function disconnect(platform,slot){
 
 function openPreview(encoded){
   const name=decodeURIComponent(encoded),modal=document.getElementById('previewModal'),player=document.getElementById('previewPlayer');
-  document.getElementById('previewTitle').textContent=name;player.src='/api/video-preview/'+encoded;modal.classList.add('open');player.load();
+  document.getElementById('previewTitle').textContent=name;player.src='/api/video-preview/'+encoded+'?folder_id='+encodeURIComponent(activeVideoFolder);modal.classList.add('open');player.load();
 }
 function closePreview(){const modal=document.getElementById('previewModal'),player=document.getElementById('previewPlayer');player.pause();player.removeAttribute('src');player.load();modal.classList.remove('open');}
 function previewBackdrop(e){if(e.target.id==='previewModal')closePreview();}

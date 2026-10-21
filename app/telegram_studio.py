@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from PIL import Image, UnidentifiedImageError
 from app.config import settings
+from app.video_folders import folder_path, account_folder, account_background
 
 router = APIRouter(prefix="/api/telegram-studio", tags=["telegram-studio"])
 ROOT = settings.data_dir / "telegram_studio"
@@ -285,6 +286,8 @@ def sample_circle_preview():
 
 class RenderRequest(BaseModel):
     limit_per_channel: int = 30
+    output_folder: str = "default"
+    target_slot: int = 0
     order: str = "oldest"
     date_from: date | None = None
     date_to: date | None = None
@@ -604,13 +607,24 @@ def render(
     subprocess.run(cmd, capture_output=True, text=True, check=True)
 
 
-async def process(limit, order="oldest", date_from=None, date_to=None, *, design: RenderDesign, banner: Path | None):
+async def process(limit, order="oldest", date_from=None, date_to=None, *,
+                  design: RenderDesign, banner: Path | None,
+                  output_dir: Path | None = None, target_slot: int = 0):
     JOB.update(status="running", total=0, done=0, errors=[])
     try:
         d = config()
         d.setdefault("processed", [])
-        known_hashes = rendered_hashes(d)
-        d["rendered_hashes"] = sorted(known_hashes)
+        output_dir = output_dir or settings.upload_dir
+        render_scope = ((str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
+                        ("folder:" + str(output_dir.resolve())
+                         if output_dir.resolve() != settings.upload_dir.resolve() else ""))
+        if render_scope:
+            completed_keys = d.setdefault("processed_by_target", {}).setdefault(render_scope, [])
+            known_hashes = set(d.setdefault("rendered_hashes_by_target", {}).get(render_scope, []))
+        else:
+            completed_keys = d["processed"]
+            known_hashes = rendered_hashes(d)
+            d["rendered_hashes"] = sorted(known_hashes)
         save(d)
         bgs = choose_backgrounds(design)
         background_queue = []
@@ -646,11 +660,11 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *, design
                         if not message.video_note:
                             continue
                         key = f"{channel}:{message.id}"
-                        target = settings.upload_dir / f"tg_{channel}_{message.id}.mp4"
-                        if key in d["processed"]:
+                        target = output_dir / f"tg_{channel}_{message.id}.mp4"
+                        if key in completed_keys:
                             continue
                         if target.is_file() and target.stat().st_size > 0:
-                            d["processed"].append(key)
+                            completed_keys.append(key)
                             continue
                         candidates.append(message)
                     if order == "oldest":
@@ -673,11 +687,11 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *, design
                 key = f"{channel}:{message.id}"
                 JOB["total"] += 1
                 source = ORIGINALS / f"{channel}_{message.id}.mp4"
-                target = settings.upload_dir / f"tg_{channel}_{message.id}.mp4"
+                target = output_dir / f"tg_{channel}_{message.id}.mp4"
                 try:
                     # Never overwrite a previously rendered or queued reel.
                     if target.exists() and target.stat().st_size > 0:
-                        d["processed"].append(key)
+                        completed_keys.append(key)
                         save(d)
                         continue
                     # Re-download incomplete or unreadable originals rather than retrying a bad cache.
@@ -702,7 +716,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *, design
                     digest = file_digest(source)
                     if digest in known_hashes:
                         # Same original media may have been forwarded to another channel.
-                        d["processed"].append(key)
+                        completed_keys.append(key)
                         save(d)
                         continue
                     # Render to a temporary file, publish only after ffprobe validates it.
@@ -715,8 +729,11 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *, design
                     finally:
                         temp_target.unlink(missing_ok=True)
                     known_hashes.add(digest)
-                    d["rendered_hashes"] = sorted(known_hashes)
-                    d["processed"].append(key)
+                    if render_scope:
+                        d.setdefault("rendered_hashes_by_target", {})[render_scope] = sorted(known_hashes)
+                    else:
+                        d["rendered_hashes"] = sorted(known_hashes)
+                    completed_keys.append(key)
                     save(d)
                     JOB["done"] += 1
                 except Exception as exc:
@@ -747,6 +764,22 @@ async def run(body: RenderRequest):
     # Snapshot settings at batch start so every Reel uses one consistent layout.
     data = config()
     design = RenderDesign.model_validate(data.get("render_design", {}))
+    try:
+        if body.target_slot:
+            chosen_folder = (account_folder(body.target_slot) if body.output_folder == "linked"
+                             else body.output_folder)
+            selected_bg = account_background(body.target_slot, "telegram")
+            if selected_bg:
+                design = design.model_copy(update={
+                    "background_mode": "single", "background_name": selected_bg,
+                })
+        else:
+            if body.output_folder == "linked":
+                raise ValueError("Выбери Instagram-аккаунт для привязанной папки")
+            chosen_folder = body.output_folder
+        output_dir = folder_path(chosen_folder, writable=True)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     banner = current_banner(data)
     if design.banner_enabled and banner is None:
         raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
@@ -759,7 +792,7 @@ async def run(body: RenderRequest):
     STOP_REQUESTED = False
     JOB_TASK = asyncio.create_task(process(
         body.limit_per_channel, body.order, body.date_from, body.date_to,
-        design=design, banner=banner,
+        design=design, banner=banner, output_dir=output_dir, target_slot=body.target_slot,
     ))
     return {"started": True}
 
