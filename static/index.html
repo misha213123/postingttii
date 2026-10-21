@@ -120,6 +120,18 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
   </div>
 
   <section class="accounts-strip" id="platforms"></section>
+  <section class="card" style="margin:16px 0;padding:18px">
+    <h2 style="font-size:18px">📁 Папки и фоны аккаунтов</h2>
+    <p class="muted">Привяжи отдельную папку и свой MP4-фон к Instagram-аккаунту. Стандартная схема публикаций не изменяется.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="folderLabelInput" placeholder="Название папки" style="flex:1;min-width:160px;padding:10px">
+      <input id="folderPathInput" placeholder="C:\Videos\Account1" style="flex:2;min-width:240px;padding:10px">
+      <button class="secondary" onclick="pickNewFolder()">📂 Выбрать на ПК</button>
+      <button class="primary" onclick="registerVideoFolder()">Сохранить папку</button>
+    </div>
+    <p class="muted" id="folderStatus">Загружаю папки...</p>
+    <div id="accountFolderBindings" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px"></div>
+  </section>
 
   <div class="workspace">
     <section class="card video-panel">
@@ -141,6 +153,9 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 
     <aside class="card sidebar">
       <h2>Настройка очереди</h2>
+      <div class="field"><label for="sourceFolder">Из какой папки публиковать видео</label>
+      <select id="sourceFolder" onchange="setSourceFolder(this.value)"><option value="default">Стандартная videos/inbox</option></select>
+      <div class="muted" id="sourceFolderHelp">Можно выбрать общую папку или папки, закреплённые за аккаунтами.</div></div>
       <div class="metric-row">
         <div class="metric"><span>Выбрано</span><b id="selectedCount">0</b></div>
         <div class="metric"><span>Всего файлов</span><b id="totalCount">0</b></div>
@@ -197,6 +212,9 @@ let pollTimer=null;
 let lastArchivedCount=0;
 let terminalRefreshed=false;
 let activeInstagramMetaTab=1;
+let folderRegistry=null;
+let folderBackgrounds=[];
+let activeVideoFolder=localStorage.getItem('postingttii_source_folder')||'default';
 const pendingDisconnects=new Set();
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -205,14 +223,15 @@ function prettyTarget(target){const [p,n]=target.split(':');const a=connected(p,
 function fmtTime(seconds){seconds=Math.max(0,Math.floor(Number(seconds)||0));const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;return h? h+'ч '+m+'м':m+':'+String(s).padStart(2,'0');}
 
 async function load(){
-  const r=await fetch('/api/status');
+  if(!folderRegistry)await loadFolderRegistry();
+  const r=await fetch('/api/status?folder_id='+encodeURIComponent(activeVideoFolder==='linked'?'default':activeVideoFolder));
   state=await r.json();
   document.getElementById('folder').textContent=state.upload_dir;
   document.getElementById('totalCount').textContent=(state.videos||[]).length;
   document.getElementById('videoCount').textContent='('+((state.videos||[]).length)+')';
   const names=new Set((state.videos||[]).map(v=>v.name));
   selectedVideos=new Set([...selectedVideos].filter(x=>names.has(x)));
-  renderPlatforms();renderVideos();renderBatchTargets();syncIntervalMin();updateSelectedCount();
+  renderPlatforms();renderVideos();renderBatchTargets();syncIntervalMin();updateSelectedCount();renderFolderBindings();
   if(!(await discoverActiveJob()) && currentJobId)await resumeJob(currentJobId);
 }
 
@@ -473,6 +492,10 @@ async function saveCover(slot,input){
 function renderVideos(){
   const root=document.getElementById('videos');
   if(!state)return;
+  if(activeVideoFolder==='linked'){
+    root.innerHTML='<div class="empty">Выбран режим папок аккаунтов. Каждый Instagram-аккаунт получит ролики из собственной папки — выбирать файлы здесь не требуется.</div>';
+    return;
+  }
   const q=(document.getElementById('videoSearch').value||'').trim().toLowerCase();
   const videos=(state.videos||[]).filter(v=>!q||v.name.toLowerCase().includes(q));
   if(!videos.length){root.innerHTML='<div class="empty">Ничего не найдено.</div>';return;}
@@ -501,6 +524,10 @@ function updateSelectedCount(){
 
 function updateAssignmentPreview(){
   const el=document.getElementById('assignmentPreview');
+  if(activeVideoFolder==='linked'){
+    if(el)el.textContent='Источник: индивидуальная папка каждого выбранного Instagram-аккаунта. Сними галочки YouTube/TikTok в этом режиме.';
+    return;
+  }
   if(!el)return;
   const accounts=[...document.querySelectorAll('.batch-target:checked')].map(x=>x.value);
   const count=selectedVideos.size;
@@ -551,13 +578,14 @@ async function discoverActiveJob(){
 }
 
 async function startBatch(){
-  if(!selectedVideos.size){alert('Выбери хотя бы одно видео.');return;}
+  if(!selectedVideos.size&&activeVideoFolder!=='linked'){alert('Выбери хотя бы одно видео.');return;}
   const targets=[...document.querySelectorAll('.batch-target:checked')].map(x=>x.value);
   if(!targets.length){alert('Выбери хотя бы один аккаунт.');return;}
   const btn=document.getElementById('startBatch');btn.disabled=true;btn.textContent='Создаю очередь...';
   try{
     const r=await fetch('/api/batch/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      filenames:[...selectedVideos],
+      filenames:activeVideoFolder==='linked'?[]:[...selectedVideos],
+      source_folder:activeVideoFolder,
       targets,
       interval_seconds:Number(document.getElementById('intervalSeconds').value),
       interval_max_seconds:Number(document.getElementById('intervalMaxSeconds').value),
@@ -688,7 +716,7 @@ async function cancelBatch(){
     alert('Ошибка остановки очереди: '+error.message);
   }
 }
-async function refreshAfterJob(){const r=await fetch('/api/status');state=await r.json();renderVideos();renderBatchTargets();}
+async function refreshAfterJob(){const r=await fetch('/api/status?folder_id='+encodeURIComponent(activeVideoFolder==='linked'?'default':activeVideoFolder));state=await r.json();renderVideos();renderBatchTargets();}
 async function openEdge(slot,mode,metaApp=1){
   try{
     const r=await fetch('/api/instagram/edge/'+slot+'?mode='+encodeURIComponent(mode)+'&meta_app='+encodeURIComponent(metaApp),{method:'POST'});
@@ -741,7 +769,7 @@ async function disconnect(platform,slot){
 
 function openPreview(encoded){
   const name=decodeURIComponent(encoded),modal=document.getElementById('previewModal'),player=document.getElementById('previewPlayer');
-  document.getElementById('previewTitle').textContent=name;player.src='/api/video-preview/'+encoded;modal.classList.add('open');player.load();
+  document.getElementById('previewTitle').textContent=name;player.src='/api/video-preview/'+encoded+'?folder_id='+encodeURIComponent(activeVideoFolder);modal.classList.add('open');player.load();
 }
 function closePreview(){const modal=document.getElementById('previewModal'),player=document.getElementById('previewPlayer');player.pause();player.removeAttribute('src');player.load();modal.classList.remove('open');}
 function previewBackdrop(e){if(e.target.id==='previewModal')closePreview();}
