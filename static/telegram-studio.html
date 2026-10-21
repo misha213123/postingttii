@@ -382,16 +382,26 @@ function setTelegramBgMode(mode){
     designState.background_name=el('designBgSelect').value;
   updateDesignPreview();saveRenderDesign();
 }
+function setStillOrVideoBackground(videoId,imageId,filename,enabled=true){
+  const video=el(videoId),photo=el(imageId);
+  const isImage=/\.(jpe?g|png|webp)$/i.test(filename||'');
+  const active=!!filename&&enabled;
+  const url=active?api+'/backgrounds/'+encodeURIComponent(filename)+'/preview':'';
+  video.style.display=active&&!isImage?'block':'none';
+  photo.style.display=active&&isImage?'block':'none';
+  if(active&&isImage){
+    if(photo.getAttribute('src')!==url)photo.src=url;
+    video.pause();
+  }else if(active){
+    if(video.getAttribute('src')!==url){video.src=url;video.load();}
+    video.play().catch(()=>{});
+  }else video.pause();
+}
 function selectDesignBackground(){
   const value=el('designBgSelect').value;
   designState.background_name=value;
   saveRenderDesign();
-  const video=el('designBgVideo');
-  if(value){
-    const next=api+'/backgrounds/'+encodeURIComponent(value)+'/preview';
-    if(video.getAttribute('src')!==next){video.src=next;video.load();}
-    video.play().catch(()=>{});
-  }else{video.removeAttribute('src');video.load();}
+  setStillOrVideoBackground('designBgVideo','designBgImage',value);
 }
 function updateDesignBackgroundChoices(bgs){
   const sel=el('designBgSelect');
@@ -410,12 +420,7 @@ function updateDesignBackgroundChoices(bgs){
     sel.value=names.includes(current)?current:names[0];
     if(!designState.background_name)designState.background_name=sel.value;
   }
-  const value=sel.value,video=el('designBgVideo');
-  if(value){
-    const next=api+'/backgrounds/'+encodeURIComponent(value)+'/preview';
-    if(video.getAttribute('src')!==next){video.src=next;video.load();}
-    video.play().catch(()=>{});
-  }else{video.removeAttribute('src');video.load();}
+  setStillOrVideoBackground('designBgVideo','designBgImage',sel.value);
 }
 function loadBannerPreview(){
   const img=el('designBanner');
@@ -608,6 +613,15 @@ function initDesignControls(){
   }
 }
 
+function updateTelegramMediaMode(){
+  const mode=el('tgMediaMode').value;
+  localStorage.setItem('postingttii_tg_media_mode',mode);
+  el('tgMediaModeHint').textContent=mode==='videos'?
+    'Загружаются только обычные Telegram-видео (не кружки). Прямоугольный монтаж 9:16 берётся из шаблона «Instagram · видео».':
+    'Загружаются только круглые видеосообщения (кружки); обычные видео пропускаются.';
+}
+el('tgMediaMode').value=localStorage.getItem('postingttii_tg_media_mode')==='videos'?'videos':'circles';
+updateTelegramMediaMode();
 async function refresh(){
 try{const d=await request('/status');el('health').textContent=(d.ffmpeg_ready?'FFmpeg ✓':'FFmpeg отсутствует')+' · '+(d.telegram_configured?'Telegram API ✓':'Telegram API не настроен');
 el('channels').innerHTML=d.channels.map(c=>'<div class="item"><strong>✈ Telegram · @'+safe(c)+'</strong><div class="actions"><label><input type="checkbox" data-tg-toggle="'+safe(c)+'" '+(!(d.channels_disabled||[]).includes(c)?'checked':'')+'> Вкл.</label><button class="danger" data-channel="'+safe(c)+'">Удалить</button></div></div>').join('');
@@ -752,17 +766,13 @@ function setInstagramBgMode(mode){
 }
 function updateInstagramBackgroundPreview(){
   const chosen=el('igLayoutBgSelect').value;
-  const bg=el('igLayoutBg');
-  if(chosen&&['shuffle','single'].includes(instagramLayout.background_mode)){
-    const url=api+'/backgrounds/'+encodeURIComponent(chosen)+'/preview';
-    if(bg.getAttribute('src')!==url){bg.src=url;bg.load();}
-    bg.play().catch(()=>{});
-  }else{bg.pause();}
+  setStillOrVideoBackground('igLayoutBg','igLayoutBgImage',chosen,
+    ['shuffle','single'].includes(instagramLayout.background_mode));
   const blur=el('igLayoutBgBlur');
   if(instagramLayout.background_mode==='blur'&&instagramSampleURL){
     if(blur.getAttribute('src')!==instagramSampleURL){blur.src=instagramSampleURL;blur.load();}
     blur.play().catch(()=>{});
-  }else{blur.pause();}
+  }else blur.pause();
 }
 function updateIgBackgroundChoices(backgrounds){
   const sel=el('igLayoutBgSelect');
