@@ -41,6 +41,13 @@ USER_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
 def _local(request: Request) -> None:
     if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
         raise HTTPException(403, "Браузерный постинг доступен только локально")
+    # Block cross-site requests to the local process from unrelated websites.
+    origin = request.headers.get("origin", "")
+    if origin and origin not in {
+        f"http://127.0.0.1:{settings.port}",
+        f"http://localhost:{settings.port}",
+    }:
+        raise HTTPException(403, "Недопустимый источник запроса")
 
 
 def _read() -> dict[str, dict]:
@@ -207,7 +214,7 @@ async def open_account(account_id: str, request: Request):
     try:
         await page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=40000)
     except Exception:
-        # User may need to resolve proxy/login issues in the visible browser.
+        # User may need to complete login in the visible browser.
         pass
     try:
         await page.bring_to_front()
@@ -283,8 +290,9 @@ async def _publish_via_browser(ctx, video: Path, caption: str) -> str:
             raise RuntimeError("Не нашёл поле описания. Публикация не запущена.")
     try:
         await _click_action(page, r"Share|Поделиться|Опубликовать", timeout_ms=15000)
-    except Exception as exc:
-        raise RuntimeError("Не найдена кнопка Share. Проверь интерфейс Instagram.") from exc
+    except Exception:
+        # A timeout after a click could mean Share succeeded; halt and check.
+        return "needs_review"
     # A timeout after clicking Share is AMBIGUOUS: do not retry the upload
     # because that could create a duplicate post.
     try:
@@ -320,8 +328,8 @@ async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str):
                 )
             job["progress"] = index + 1
             # On an uncertain Share result, stop the queue to avoid duplicates.
-            if item["status"] == "needs_review":
-                job["status"] = "needs_review"
+            if item["status"] in ("needs_review", "error"):
+                job["status"] = ("needs_review" if item["status"] == "needs_review" else "stopped")
                 return
         job["status"] = "stopped" if job.get("cancel") else "completed"
     except asyncio.CancelledError:
@@ -352,8 +360,8 @@ async def publish(body: PublishInput, request: Request):
         raise HTTPException(400, "Для браузерной публикации выбери MP4/MOV")
     # Deliberate explicit bounded snapshot. Each selected video is queued for
     # each selected account. No scheduled repeats or stealth automation.
-    if len(clips) * len(account_ids) > 150:
-        raise HTTPException(400, "Не более 150 публикаций за одно задание")
+    if len(clips) * len(account_ids) > 25:
+        raise HTTPException(400, "Не более 25 публикаций за одно ручное задание")
     jobs = [(account_id, clip) for account_id in account_ids for clip in clips]
     CURRENT_JOB = {
         "id": secrets.token_hex(8), "status": "running",
