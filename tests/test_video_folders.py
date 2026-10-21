@@ -149,6 +149,36 @@ class BatchFolderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pairs, {("a", "instagram:11"), ("b", "instagram:12")})
             self.assertEqual(job["request"]["source_folder"], "linked")
 
+    async def test_shared_source_folder_distributes_distinct_files_fairly(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp)
+            for i in range(6):
+                (source / f"{i}.mp4").write_bytes(f"video {i}".encode())
+            def close_task(coroutine):
+                coroutine.close()
+                return MagicMock()
+            with (
+                patch.object(main, "_active_batch_jobs", return_value=[]),
+                patch.object(main.store, "list_accounts", return_value={
+                    "youtube": [], "tiktok": [],
+                    "instagram": [{"slot": 9}, {"slot": 10}],
+                }),
+                patch.object(main, "account_folder", return_value="shared"),
+                patch.object(main, "list_videos", return_value=sorted(source.glob("*.mp4"))),
+                patch.object(main, "load_instagram_caption_templates", return_value=["caption"]),
+                patch.object(main, "_save_batch_job"),
+                patch.object(main.asyncio, "create_task", side_effect=close_task),
+            ):
+                response = await main.batch_start(main.BatchPublishRequest(
+                    filenames=[], targets=["instagram:9", "instagram:10"], source_folder="linked",
+                ))
+            job = main.BATCH_JOBS.pop(response["job_id"])
+            self.assertEqual(len(job["items"]), 6)
+            assigned = [next(iter(item["targets"])) for item in job["items"]]
+            self.assertEqual(assigned.count("instagram:9"), 3)
+            self.assertEqual(assigned.count("instagram:10"), 3)
+            self.assertEqual(len({item["filename"] for item in job["items"]}), 6)
+
     async def test_linked_mode_never_uses_tiktok_or_youtube(self):
         with (
             patch.object(main, "_active_batch_jobs", return_value=[]),
