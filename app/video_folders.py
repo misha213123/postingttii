@@ -136,7 +136,7 @@ def folders(request: Request):
             "folder_id": data["account_folders"].get(key, "default"),
             "backgrounds": data["account_backgrounds"].get(key, {}),
         }
-    return {"folders": folder_items, "bindings": bindings}
+    return {"folders": folder_items, "accounts": accounts, "bindings": bindings}
 
 
 @router.post("")
