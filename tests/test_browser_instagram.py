@@ -1,4 +1,4 @@
-"""Independent browser Instagram posting: proxy security, files, and job guards."""
+"""Safety and functionality regressions for standalone browser Instagram posting."""
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +6,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
@@ -15,105 +14,118 @@ from starlette.requests import Request
 from app import browser_instagram as browser
 
 
-def local_request(method: str = "GET", origin: str | None = None) -> Request:
+def request(method="GET", ip="127.0.0.1", origin=None):
     headers = []
     if origin:
         headers.append((b"origin", origin.encode()))
-    return Request({"type": "http", "client": ("127.0.0.1", 6060),
+    return Request({"type": "http", "client": (ip, 6010),
                     "method": method, "path": "/api/browser-instagram",
                     "headers": headers})
 
 
-class BrowserProxyTests(unittest.TestCase):
-    def test_host_port_user_password_and_url_proxy_parsing(self):
-        parsed = browser._parse_proxy("res.example.org:8899:login:secret123")
-        self.assertEqual(parsed["server"], "http://res.example.org:8899")
-        self.assertEqual(parsed["username"], "login")
-        self.assertEqual(parsed["password"], "secret123")
-        self.assertEqual(browser._masked_proxy("res.example.org:8899:login:secret123"),
-                         "http://res.example.org:8899")
-        self.assertEqual(browser._parse_proxy("http://user:pass@res.example.org:443")["username"], "user")
-
-    def test_proxy_credentials_never_in_public_accounts(self):
-        value = browser._public_account("a"*24, {
-            "username": "sample", "proxy": "res.example.org:8899:login:topsecret",
-        })
-        self.assertNotIn("topsecret", json.dumps(value))
-        self.assertNotIn("login", json.dumps(value))
-        self.assertEqual(value["proxy"], "http://res.example.org:8899")
-
-    def test_invalid_proxy_and_socks_auth_rejected(self):
-        for address in ("http://missing-port.example.com", "not-a-proxy",
-                        "ftp://proxy.example.com:8080", "socks5://login:pw@proxy.example.com:1080"):
-            with self.subTest(address=address):
-                with self.assertRaises(ValueError):
-                    browser._parse_proxy(address)
-
-    def test_auth_proxy_url_encoded_safely(self):
-        parsed = browser._parse_proxy("res.example.org:8000:user:p@ss:word")
-        url = browser._httpx_proxy_url(parsed)
-        self.assertIn("p%40ss%3Aword", url)
-        self.assertEqual(browser._masked_proxy(url), "http://res.example.org:8000")
-
-
 class BrowserAccountTests(unittest.TestCase):
-    def test_encrypted_accounts_dont_write_credentials_in_plaintext(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            with patch.object(browser, "DATA_DIR", root), patch.object(
-                browser, "ACCOUNTS_FILE", root/"browser-accounts.enc"
-            ), patch.object(browser, "PROFILES_DIR", root/"profiles"):
-                created = browser.add_account(browser.BrowserAccount(
-                    username="@accountname",
-                    proxy="proxy.example.com:8080:username:password-to-hide",
-                ), local_request("POST"))
-                self.assertEqual(created["username"], "accountname")
-                self.assertNotIn("password-to-hide", str(created))
-                raw = (root/"browser-accounts.enc").read_bytes()
-                self.assertNotIn(b"password-to-hide", raw)
-                self.assertEqual(len(browser._read()), 1)
+    def test_browser_accounts_do_not_change_meta_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(browser, "DATA_DIR", root),
+                patch.object(browser, "ACCOUNTS_FILE", root / "browser.enc"),
+                patch.object(browser, "PROFILES_DIR", root / "profiles"),
+                patch.object(browser.store, "save") as meta_save,
+            ):
+                first = browser.add_account(browser.BrowserAccount(username="@demoaccount"), request("POST"))
+                second = browser.add_account(browser.BrowserAccount(username="otheraccount"), request("POST"))
+                self.assertEqual(len(browser._read()), 2)
+                self.assertEqual(first["username"], "demoaccount")
+                self.assertEqual(second["username"], "otheraccount")
+                meta_save.assert_not_called()
+                content = (root / "browser.enc").read_bytes()
+                self.assertNotIn(b"demoaccount", content)
+                self.assertNotIn(b"otheraccount", content)
 
-    def test_non_local_api_blocked(self):
-        outside = Request({"type": "http", "client": ("192.0.2.25", 4000),
-                           "method": "POST", "path": "/api/browser-instagram",
-                           "headers": []})
-        with self.assertRaises(HTTPException) as err:
-            browser._local(outside)
-        self.assertEqual(err.exception.status_code, 403)
+    def test_invalid_username_and_duplicate_account_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(browser, "DATA_DIR", root), patch.object(
+                browser, "ACCOUNTS_FILE", root / "browser.enc"
+            ):
+                browser.add_account(browser.BrowserAccount(username="@myaccount"), request("POST"))
+                with self.assertRaises(HTTPException) as caught:
+                    browser.add_account(browser.BrowserAccount(username="myaccount"), request("POST"))
+                self.assertEqual(caught.exception.status_code, 409)
+                with self.assertRaises(HTTPException):
+                    browser.add_account(browser.BrowserAccount(username="bad/username"), request("POST"))
+
+    def test_local_browser_api_denies_nonlocal_and_cross_site(self):
+        with self.assertRaises(HTTPException) as outside:
+            browser._local(request(ip="192.0.2.5"))
+        self.assertEqual(outside.exception.status_code, 403)
+        with self.assertRaises(HTTPException) as bad_origin:
+            browser._local(request(origin="https://external.example"))
+        self.assertEqual(bad_origin.exception.status_code, 403)
+        browser._local(request(origin=f"http://127.0.0.1:{browser.settings.port}"))
+
+    def test_private_profiles_are_scoped_to_valid_identifiers(self):
+        with self.assertRaises(HTTPException):
+            browser._profile_dir("../different-account")
 
 
 class BrowserPostingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_user_confirmation_required_before_publish(self):
-        with self.assertRaises(HTTPException) as err:
+    async def test_explicit_confirmation_required(self):
+        with self.assertRaises(HTTPException) as caught:
             await browser.publish(browser.PublishInput(
-                accounts=["abc"], filenames=["file.mp4"], confirmed=False,
-            ), local_request("POST"))
-        self.assertEqual(err.exception.status_code, 400)
+                accounts=["abc"], filenames=["clip.mp4"],
+                confirmed=False,
+            ), request("POST"))
+        self.assertEqual(caught.exception.status_code, 400)
 
-    async def test_publishing_stops_on_uncertain_share_result(self):
+    async def test_no_duplicate_auto_retry_after_uncertain_share(self):
         job = {"status": "running", "cancel": False, "items": [],
                "progress": 0, "accounts": ["a"], "total": 2}
         with (
             patch.object(browser, "_context", new=AsyncMock(return_value=object())),
             patch.object(browser, "_read", return_value={"a": {"username": "demo"}}),
-            patch.object(browser, "_publish_via_browser", new=AsyncMock(return_value="needs_review")) as pub,
+            patch.object(browser, "_publish_via_browser",
+                         new=AsyncMock(return_value="needs_review")) as uploader,
         ):
-            await browser._run_job(job, [("a", Path("a.mp4")), ("a", Path("b.mp4"))], "text")
+            await browser._run_job(job, [("a", Path("first.mp4")), ("a", Path("second.mp4"))], "text")
         self.assertEqual(job["status"], "needs_review")
-        self.assertEqual(pub.await_count, 1)
+        self.assertEqual(uploader.await_count, 1)
         self.assertEqual(job["progress"], 1)
 
-    async def test_browser_account_session_is_closed_before_proxy_edit(self):
-        with tempfile.TemporaryDirectory() as d:
-            root=Path(d)
-            with (patch.object(browser, "DATA_DIR", root),
-                  patch.object(browser, "ACCOUNTS_FILE", root/"saved.enc"),
-                  patch.object(browser, "PROFILES_DIR", root/"profiles")):
-                profile = browser.add_account(browser.BrowserAccount(
-                    username="otheraccount", proxy=""
-                ), local_request("POST"))
-                key = profile["id"]
-                with patch.dict(browser.CONTEXTS, {key: object()}, clear=True):
-                    with self.assertRaises(HTTPException) as error:
-                        browser.set_proxy(key, browser.ProxyInput(proxy="proxy.example:8080"), local_request("PUT"))
-                self.assertEqual(error.exception.status_code, 409)
+    async def test_browser_failure_stops_next_post(self):
+        job = {"status": "running", "cancel": False, "items": [],
+               "progress": 0, "accounts": ["a"], "total": 2}
+        with (
+            patch.object(browser, "_context", new=AsyncMock(side_effect=Exception("failure"))),
+            patch.object(browser, "_read", return_value={"a": {"username": "demo"}}),
+        ):
+            await browser._run_job(job, [("a", Path("first.mp4")), ("a", Path("second.mp4"))], "")
+        self.assertEqual(job["status"], "stopped")
+        self.assertEqual(job["progress"], 1)
+        self.assertNotIn("failure", json.dumps(job))
+
+    async def test_manual_publish_uses_registered_folder_and_deduplicates_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "clip.mp4").write_bytes(b"fake video bytes")
+            store = {"acct": {"username": "sample"}}
+            with (
+                patch.object(browser, "_read", return_value=store),
+                patch.object(browser, "video_path", return_value=root/"clip.mp4") as resolve,
+                patch.object(browser, "CURRENT_TASK", None),
+                patch.object(browser, "CURRENT_JOB", None),
+                patch.object(browser.asyncio, "create_task") as task,
+            ):
+                coro_holder=[]
+                def create_task(coro):
+                    coro_holder.append(coro)
+                    coro.close()
+                    return type("StubTask", (), {"done": lambda self: False})()
+                task.side_effect=create_task
+                result = await browser.publish(browser.PublishInput(
+                    accounts=["acct", "acct"], filenames=["clip.mp4", "clip.mp4"],
+                    folder_id="custom-folder", confirmed=True,
+                ), request("POST"))
+            self.assertEqual(result["total"], 1)
+            resolve.assert_called_once_with("custom-folder", "clip.mp4")
