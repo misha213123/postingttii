@@ -490,9 +490,12 @@ async def process(limit, layout: InstagramLayout, *,
     try:
         d = load()
         output_dir = output_dir or settings.upload_dir
-        if target_slot:
-            known = set(d.setdefault("processed_by_target", {}).get(str(target_slot), []))
-            hashes = set(d.setdefault("hashes_by_target", {}).get(str(target_slot), []))
+        render_scope = (str(target_slot) if target_slot else
+                        ("folder:" + str(output_dir.resolve())
+                         if output_dir.resolve() != settings.upload_dir.resolve() else ""))
+        if render_scope:
+            known = set(d.setdefault("processed_by_target", {}).get(render_scope, []))
+            hashes = set(d.setdefault("hashes_by_target", {}).get(render_scope, []))
         else:
             known = set(d["processed"])
             hashes = set(d["hashes"])
@@ -597,9 +600,9 @@ async def process(limit, layout: InstagramLayout, *,
                     pass
             finally:
                 temp.unlink(missing_ok=True)
-                if target_slot:
-                    d.setdefault("processed_by_target", {})[str(target_slot)] = sorted(known)
-                    d.setdefault("hashes_by_target", {})[str(target_slot)] = sorted(hashes)
+                if render_scope:
+                    d.setdefault("processed_by_target", {})[render_scope] = sorted(known)
+                    d.setdefault("hashes_by_target", {})[render_scope] = sorted(hashes)
                 else:
                     d["processed"] = sorted(known)
                     d["links"] = [url for url in d["links"] if url not in known]
