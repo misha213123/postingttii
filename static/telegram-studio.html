@@ -643,8 +643,47 @@ async function removeDesignBanner(){
     designStatus('Баннер убран');
   }catch(err){notify(err);}
 }
+function bindBannerDrag(frameId,stageId,state,ratio,refresh,save,allowMove){
+  const drag=el(frameId);
+  let active=null;
+  drag.addEventListener('pointerdown',e=>{
+    if(!allowMove())return;
+    e.preventDefault();
+    const rect=el(stageId).getBoundingClientRect();
+    active={
+      id:e.pointerId,resize:!!e.target.closest('[data-banner-resize]'),
+      x:e.clientX,y:e.clientY,
+      bannerX:state.banner_x,bannerY:state.banner_y,width:state.banner_width,
+      rectWidth:rect.width,rectHeight:rect.height
+    };
+    drag.setPointerCapture(e.pointerId);
+  });
+  drag.addEventListener('pointermove',e=>{
+    if(!active||active.id!==e.pointerId)return;
+    const dx=(e.clientX-active.x)*1080/active.rectWidth;
+    const dy=(e.clientY-active.y)*1920/active.rectHeight;
+    if(active.resize){
+      const widthByX=active.width+dx;
+      const widthByY=active.width+dy/Math.max(.01,ratio());
+      state.banner_width=Math.max(100,Math.min(1080,Math.round(Math.max(widthByX,widthByY)/10)*10));
+    }else{
+      state.banner_x=active.bannerX+dx;
+      state.banner_y=active.bannerY+dy;
+    }
+    refresh();
+  });
+  const finish=e=>{
+    if(!active||active.id!==e.pointerId)return;
+    active=null;save();
+  };
+  drag.addEventListener('pointerup',finish);
+  drag.addEventListener('pointercancel',finish);
+}
 function initDesignControls(){
   el('designBgSelect').addEventListener('change',selectDesignBackground);
+  bindBannerDrag('tgBannerMove','designPreview',designState,()=>bannerRatio,
+                 updateDesignPreview,saveRenderDesign,
+                 ()=>bannerAvailable&&designState.banner_enabled&&!chromaPicking);
   el('circleScale').addEventListener('input',e=>{
     designState.circle_size=Number(e.target.value);updateDesignPreview();
   });
@@ -1034,6 +1073,13 @@ async function loadInstagramLayout(){
   try{
     const d=await igRequest('/layout');
     Object.assign(instagramLayout,d.layout);
+    Object.assign(videoBannerState,d.banner_design||{});
+    videoBannerAvailable=!!d.banner?.available;
+    videoBannerKind=d.banner?.kind||'image';
+    el('igBannerStatus').textContent=d.banner?.legacy?
+      'Раньше использовался общий баннер кружков. Загрузи свой, чтобы сделать отдельный.':
+      (videoBannerAvailable?'✓ Баннер для обычных видео подключён':'Баннер обычных видео пока не загружен');
+    loadVideoBannerPreview();
     const sel=el('igLayoutBgSelect');
     if([...sel.options].some(o=>o.value===instagramLayout.background_name))
       sel.value=instagramLayout.background_name;
@@ -1059,6 +1105,24 @@ function resetInstagramPosition(){
   updateInstagramLayoutPreview();saveInstagramLayout();
 }
 function initInstagramLayoutControls(){
+  bindBannerDrag('igBannerMove','igLayoutStage',videoBannerState,()=>videoBannerRatio,
+    ()=>{Object.assign(instagramLayout,videoBannerState);syncInstagramBannerPreview();},
+    saveInstagramLayout,()=>videoBannerAvailable&&videoBannerState.banner_enabled);
+  el('igBannerEnabled').addEventListener('change',e=>{
+    if(e.target.checked&&!videoBannerAvailable){
+      e.target.checked=false;alert('Сначала загрузи баннер для обычных видео');return;
+    }
+    videoBannerState.banner_enabled=e.target.checked;
+    instagramLayout.banner_enabled=e.target.checked;
+    syncInstagramBannerPreview();saveInstagramLayout();
+  });
+  el('igBannerFile').addEventListener('change',uploadVideoBanner);
+  el('igBannerScale').addEventListener('input',e=>{
+    videoBannerState.banner_width=Number(e.target.value);
+    instagramLayout.banner_width=videoBannerState.banner_width;
+    syncInstagramBannerPreview();
+  });
+  el('igBannerScale').addEventListener('change',saveInstagramLayout);
   const selector=el('igLayoutBgSelect');
   selector.addEventListener('change',()=>{
     instagramLayout.background_name=selector.value;
