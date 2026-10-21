@@ -342,14 +342,20 @@ def latest_render_path(mode: RenderMode) -> tuple[Path | None, dict]:
     value = entry.get("path", "")
     if value:
         path = Path(value).resolve()
-        if (path.is_file() and path.suffix.lower() == ".mp4"
-                and path.name.startswith(prefixes[mode])
-                and not path.name.endswith(".rendering.mp4")):
-            return path, entry
-    # Legacy runs predating the latest-render index can still be previewed
-    # from the standard inbox. Custom locations use the saved pointer above.
+        if path.suffix.lower() == ".mp4" and path.name.startswith(prefixes[mode]) and not path.name.endswith(".rendering.mp4"):
+            # Publishing archives completed MP4s: continue previewing them
+            # from posted/ after the file leaves the chosen source folder.
+            possible = [path, path.parent / "posted" / path.name,
+                        settings.posted_dir / path.name]
+            for candidate in possible:
+                if candidate.is_file():
+                    return candidate, entry
+    # Legacy runs predating the latest-render index may live in inbox or
+    # already be archived to posted/ by the regular Meta publishing queue.
+    search_dirs = (settings.upload_dir, settings.posted_dir)
     paths = sorted(
-        (path for path in settings.upload_dir.glob(prefixes[mode] + "*.mp4")
+        (path for folder in search_dirs
+         for path in folder.glob(prefixes[mode] + "*.mp4")
          if path.is_file() and not path.name.endswith(".rendering.mp4")),
         key=lambda path: path.stat().st_mtime_ns, reverse=True,
     )
