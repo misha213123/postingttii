@@ -222,6 +222,30 @@ function clampBanner(){
   designState.banner_x=Math.max(0,Math.min(Math.round(designState.banner_x),Math.max(0,1080-designState.banner_width)));
   designState.banner_y=Math.max(0,Math.min(Math.round(designState.banner_y),Math.max(0,1920-bannerHeightPx())));
 }
+function syncInstagramBannerPreview(){
+  const visible=designState.banner_enabled&&bannerAvailable;
+  const keyed=visible&&designState.chromakey_enabled&&bannerChromaReady&&!chromaPicking;
+  const tgImage=el('designBanner'),tgVideo=el('designBannerVideo');
+  const image=el('igAdBannerImage'),video=el('igAdBannerVideo'),canvas=el('igAdBannerKeyed');
+  const layout=[image,video,canvas];
+  for(const layer of layout){
+    layer.style.width=(designState.banner_width/1080*100)+'%';
+    layer.style.left=(designState.banner_x/1080*100)+'%';
+    layer.style.top=(designState.banner_y/1920*100)+'%';
+  }
+  canvas.style.height=(bannerHeightPx()/1920*100)+'%';
+  canvas.style.display=keyed?'block':'none';
+  image.style.display=visible&&!keyed&&bannerKind==='image'?'block':'none';
+  video.style.display=visible&&!keyed&&bannerKind==='video'?'block':'none';
+  const imageSrc=tgImage.getAttribute('src');
+  if(visible&&bannerKind==='image'&&imageSrc&&image.getAttribute('src')!==imageSrc)image.src=imageSrc;
+  const videoSrc=tgVideo.getAttribute('src');
+  if(visible&&bannerKind==='video'&&videoSrc&&video.getAttribute('src')!==videoSrc){
+    video.src=videoSrc;video.load();
+  }
+  if(visible&&bannerKind==='video')video.play().catch(()=>{});
+  else video.pause();
+}
 function updateDesignPreview(){
   const size=designState.circle_size;
   designState.circle_x=Math.max(0,Math.min(Math.round(designState.circle_x),1080-size));
@@ -276,7 +300,7 @@ function updateDesignPreview(){
   el('chromaBlend').value=Math.round(designState.chromakey_blend*100);
   el('chromaSimilarityValue').textContent=Math.round(designState.chromakey_similarity*100);
   el('chromaBlendValue').textContent=Math.round(designState.chromakey_blend*100);
-
+  syncInstagramBannerPreview();
 }
 
 let chromaPicking=false;
@@ -359,7 +383,7 @@ function pickedChromaColor(event){
 function drawChromaPreview(now){
   requestAnimationFrame(drawChromaPreview);
   if(now-chromaLastFrame<100||!designState.chromakey_enabled||!designState.banner_enabled
-       ||!bannerAvailable||chromaPicking||el('tgEditor').hidden)return;
+       ||!bannerAvailable||chromaPicking)return;
   const src=chromaBannerSource();
   if(!src||!chromaScratchCtx)return;
   chromaLastFrame=now;
@@ -388,6 +412,12 @@ function drawChromaPreview(now){
       pixels[i+3]=Math.round(pixels[i+3]*alpha);
     }
     canvas.getContext('2d').putImageData(frame,0,0);
+    const igCanvas=el('igAdBannerKeyed');
+    if(igCanvas.width!==width||igCanvas.height!==height){
+      igCanvas.width=width;igCanvas.height=height;
+    }
+    igCanvas.getContext('2d').clearRect(0,0,width,height);
+    igCanvas.getContext('2d').drawImage(canvas,0,0);
     if(!bannerChromaReady){
       bannerChromaReady=true;
       updateDesignPreview();
@@ -763,6 +793,7 @@ function switchRenderEditor(name){
   el('tgEditorTab').setAttribute('aria-selected',String(telegram));
   el('igEditorTab').setAttribute('aria-selected',String(!telegram));
   if(!telegram)el('igLayoutVideo').play().catch(()=>{});
+  syncInstagramBannerPreview();
 }
 function instagramLayoutStatus(message){el('igLayoutStatus').textContent=message;}
 function updateInstagramLayoutPreview(){
@@ -944,7 +975,7 @@ el('igAdd').onsubmit=async e=>{e.preventDefault();try{await igRequest('/accounts
 async function igOpenChrome(){try{const d=await igRequest('/chrome/open',{method:'POST'});alert(d.message)}catch(e){notify(e)}}
 async function igSessionConnect(){try{const file=el('igSessionFile').files[0];if(!file)throw Error('Выбери .session файл');const form=new FormData();form.append('file',file);await igRequest('/session',{method:'POST',body:form});await igRefresh()}catch(e){notify(e)}}
 async function igSessionDisconnect(){try{await igRequest('/session',{method:'DELETE'});await igRefresh()}catch(e){notify(e)}}
-async function igRun(){try{await instagramLayoutSave;await igRequest('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_account:Number(el('igLimit').value),output_folder:el('igRenderFolder').value,target_slot:Number(el('igRenderTarget').value)})});await igRefresh()}catch(e){notify(e)}}
+async function igRun(){try{await instagramLayoutSave;await designSaveQueue;await igRequest('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_account:Number(el('igLimit').value),output_folder:el('igRenderFolder').value,target_slot:Number(el('igRenderTarget').value)})});await igRefresh()}catch(e){notify(e)}}
 document.addEventListener('click',async e=>{if(e.target.dataset.igRemove){try{await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igRemove),{method:'DELETE'});await igRefresh()}catch(err){notify(err)}}});
 document.addEventListener('change',async e=>{try{if(e.target.dataset.tgToggle){await request('/channels/'+encodeURIComponent(e.target.dataset.tgToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}if(e.target.dataset.igToggle){await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await igRefresh()}}catch(err){notify(err);await refresh();await igRefresh()}});
 igRefresh();setInterval(igRefresh,2500);
