@@ -864,7 +864,7 @@ async def run(body: RenderRequest):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     banner = current_banner(data)
-    if design.banner_enabled and banner is None:
+    if body.media_mode == "circles" and design.banner_enabled and banner is None:
         raise HTTPException(400, "Сначала загрузи рекламный баннер или выключи его")
     try:
         choose_backgrounds(design)
