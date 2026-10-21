@@ -100,7 +100,7 @@ class LatestRenderedVideoTests(unittest.TestCase):
             }}
             with (
                 patch.object(tg, "config", return_value=data),
-                patch.object(tg, "settings", SimpleNamespace(upload_dir=home)),
+                patch.object(tg, "settings", SimpleNamespace(upload_dir=home, posted_dir=Path(directory) / 'posted')),
             ):
                 self.assertEqual(tg.latest_render_path("circles")[0], circle)
                 self.assertEqual(tg.latest_render_path("videos")[0], regular)
@@ -121,7 +121,7 @@ class LatestRenderedVideoTests(unittest.TestCase):
                     "path": str(output), "updated_at": 234,
                     "banner_applied": True,
                 }}),
-                patch.object(tg, "settings", SimpleNamespace(upload_dir=Path(directory))),
+                patch.object(tg, "settings", SimpleNamespace(upload_dir=Path(directory, posted_dir=Path(directory) / 'posted'))),
             ):
                 data = tg.last_render("instagram")
             self.assertTrue(data["available"])
@@ -135,7 +135,7 @@ class LatestRenderedVideoTests(unittest.TestCase):
                 patch.object(tg, "config", return_value={"last_outputs": {
                     "circles": {"path": str(other)},
                 }}),
-                patch.object(tg, "settings", SimpleNamespace(upload_dir=Path(directory))),
+                patch.object(tg, "settings", SimpleNamespace(upload_dir=Path(directory, posted_dir=Path(directory) / 'posted'))),
             ):
                 self.assertFalse(tg.last_render("circles")["available"])
                 with self.assertRaises(HTTPException) as exc:
@@ -154,7 +154,7 @@ class LatestRenderedVideoTests(unittest.TestCase):
                 patch.object(tg, "config", return_value={
                     "last_outputs": {"circles": {"path": str(output)}},
                 }),
-                patch.object(tg, "settings", SimpleNamespace(upload_dir=Path(directory))),
+                patch.object(tg, "settings", SimpleNamespace(upload_dir=Path(directory, posted_dir=Path(directory) / 'posted'))),
                 patch.object(tg, "RENDER_PREVIEWS", thumbs),
                 patch.object(tg.subprocess, "run", side_effect=fake_ffmpeg) as run,
             ):
