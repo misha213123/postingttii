@@ -26,10 +26,11 @@ router = APIRouter(prefix="/api/telegram-studio", tags=["telegram-studio"])
 ROOT = settings.data_dir / "telegram_studio"
 BACKGROUNDS = ROOT / "backgrounds"
 ORIGINALS = ROOT / "originals"
+REGULAR_ORIGINALS = ORIGINALS / "regular"
 BANNERS = ROOT / "banners"
 CONFIG = ROOT / "config.json"
 SESSION = ROOT / "telegram"
-for p in (ROOT, BACKGROUNDS, ORIGINALS, BANNERS):
+for p in (ROOT, BACKGROUNDS, ORIGINALS, REGULAR_ORIGINALS, BANNERS):
     p.mkdir(parents=True, exist_ok=True)
 LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
@@ -78,8 +79,6 @@ def rendered_hashes(data):
     hashes = set(data.get("rendered_hashes", []))
     processed = set(data.get("processed", []))
     for source in ORIGINALS.glob("*.mp4"):
-        if source.stem.startswith("video_"):
-            continue
         stem = source.stem
         if "_" not in stem:
             continue
@@ -760,9 +759,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                 key = (f"{channel}:{message.id}" if media_mode == "circles"
                        else f"video:{channel}:{message.id}")
                 JOB["total"] += 1
-                source_prefix = "" if media_mode == "circles" else "video_"
                 target_prefix = "tg" if media_mode == "circles" else "tgvideo"
-                source = ORIGINALS / f"{source_prefix}{channel}_{message.id}.mp4"
+                originals_dir = ORIGINALS if media_mode == "circles" else REGULAR_ORIGINALS
+                source = originals_dir / f"{channel}_{message.id}.mp4"
                 target = output_dir / f"{target_prefix}_{channel}_{message.id}.mp4"
                 try:
                     # Never overwrite a previously rendered or queued reel.
@@ -783,12 +782,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                         try:
                             await client.download_media(message, file=str(temp_source))
                             if not temp_source.exists() or duration(temp_source) <= 0:
-                                raise ValueError("Telegram прислал повреждённый или неполный кружок")
+                                raise ValueError("Telegram прислал повреждённое или неполное видео")
                             temp_source.replace(source)
                         finally:
                             temp_source.unlink(missing_ok=True)
                     if not source.exists():
-                        raise ValueError("Не удалось скачать кружок")
+                        raise ValueError("Не удалось скачать Telegram-видео")
                     digest = file_digest(source)
                     if digest in known_hashes:
                         # Same original media may have been forwarded to another channel.
