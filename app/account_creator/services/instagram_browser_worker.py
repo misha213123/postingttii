@@ -83,14 +83,23 @@ def run(edge_path: str, profile_path: str, email: str, mode: str = "signup") -> 
         try:
             page = context.pages[0] if context.pages else context.new_page()
             target_url = INSTAGRAM_SIGNUP_URL if mode == "signup" else INSTAGRAM_HOME_URL
-            page.goto(
-                target_url,
-                wait_until="domcontentloaded",
-                timeout=45_000,
-            )
-            page.wait_for_timeout(1500)
-            if mode == "signup" and email:
-                _fill_email(page, email)
+            # Network timeouts must not close the persistent Edge profile
+            # while the user is handling an Instagram login challenge.
+            navigated = False
+            try:
+                page.goto(
+                    target_url,
+                    wait_until="domcontentloaded",
+                    timeout=45_000,
+                )
+                navigated = True
+            except (PlaywrightError, PlaywrightTimeoutError) as exc:
+                print(f"Instagram navigation failed; browser kept open: {exc}", flush=True)
+            if navigated and mode == "signup" and email:
+                try:
+                    _fill_email(page, email)
+                except (PlaywrightError, PlaywrightTimeoutError):
+                    pass
             page.bring_to_front()
 
             while True:
