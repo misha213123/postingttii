@@ -402,7 +402,7 @@ def instagram_auth_url(state: str) -> str:
         "client_id": settings.instagram_client_id,
         "redirect_uri": settings.instagram_redirect_uri,
         "response_type": "code",
-        "scope": "instagram_business_basic,instagram_business_content_publish",
+        "scope": "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
         "state": state,
         "enable_fb_login": "0",
         "force_authentication": "1",
