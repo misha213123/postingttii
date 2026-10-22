@@ -28,6 +28,7 @@ from app.services.platforms import (
     youtube_upload,
 )
 from app.store import store
+from app.services.reels_archive import monitor as reels_archive_monitor, router as reels_archive_router
 from app.account_creator.api.accounts import router as account_manager_router
 from app.account_creator.api.aliases import router as account_aliases_router
 from app.account_creator.api.profile import router as account_profile_router
@@ -44,6 +45,18 @@ app.include_router(account_profile_router)
 app.include_router(account_browser_router)
 app.include_router(account_tiktok_router)
 app.include_router(account_instagram_router)
+
+app.include_router(reels_archive_router)
+
+
+@app.on_event("startup")
+async def start_reels_archive_monitor() -> None:
+    reels_archive_monitor.start()
+
+
+@app.on_event("shutdown")
+async def stop_reels_archive_monitor() -> None:
+    await reels_archive_monitor.stop()
 
 OAUTH_STATES: dict[str, tuple[str, int]] = {}
 MEDIA_TOKENS: dict[str, Path] = {}
