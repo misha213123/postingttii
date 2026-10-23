@@ -35,6 +35,7 @@ from app.account_creator.api.profile import router as account_profile_router
 from app.account_creator.api.browser_profiles import router as account_browser_router
 from app.account_creator.api.tiktok import router as account_tiktok_router
 from app.account_creator.api.instagram import router as account_instagram_router
+from app.account_creator.services.camoufox_proxy import router as camoufox_proxy_router
 
 app = FastAPI(title="PostingTTII", version="0.1.0")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -45,6 +46,7 @@ app.include_router(account_profile_router)
 app.include_router(account_browser_router)
 app.include_router(account_tiktok_router)
 app.include_router(account_instagram_router)
+app.include_router(camoufox_proxy_router)
 
 app.include_router(reels_archive_router)
 
