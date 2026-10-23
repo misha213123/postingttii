@@ -91,7 +91,7 @@ async def start_instagram(account_id: int):
         "instagram",
         social_status="ACTION_REQUIRED",
         account_status="INSTAGRAM_WAITING_USER",
-        step="EDGE_REGISTRATION",
+        step="CAMOUFOX_REGISTRATION",
         job_status="WAITING_USER",
     )
 
