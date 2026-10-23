@@ -1,6 +1,4 @@
-/* Local Instagram sessions: manual Edge windows with persistent on-disk profiles.
- * Deliberately does not rotate fingerprints, log in, or bypass Instagram checks.
- */
+/* Manual Camoufox Firefox sessions with persistent per-account profiles and proxies. */
 (() => {
   const root = document.querySelector(".shell");
   if (!root || document.getElementById("instagramSessionPanel")) return;
@@ -10,9 +8,9 @@
   panel.innerHTML = [
     '<div class="queue-head"><div><h2>Instagram · постоянные профили</h2>',
     '<div class="muted" style="font-size:12px;margin-top:4px">',
-    'Один профиль Edge на аккаунт. Вход выполняется вручную; cookies сохраняются на этом компьютере.',
+    'Один профиль Camoufox на аккаунт. Вход выполняется вручную, cookies остаются на компьютере.',
     '</div></div><button class="secondary" id="sessionRefresh">Обновить</button></div>',
-    '<div class="note">Здесь используется обычный Edge, без подмены отпечатка и обхода проверок Instagram. ',
+    '<div class="note">Используется Camoufox (Firefox). Старые профили Edge не изменяются. ',
     'Браузеры запускаются только по кнопке, не автоматически. ',
     'Профили Account Manager независимы от слотов Meta API.</div>',
     '<div class="toolbar" style="margin-bottom:10px;align-items:end">',
@@ -63,13 +61,103 @@
     return button;
   }
 
+  function addProxyEditor(card, id, running) {
+    const toggle = document.createElement("button");
+    toggle.textContent = "Настройки прокси";
+    toggle.className = "secondary";
+    toggle.disabled = running;
+    toggle.style.marginTop = "8px";
+    const editor = document.createElement("div");
+    editor.className = "hidden";
+    editor.style.marginTop = "8px";
+
+    const mkInput = (label, placeholder, type = "text") => {
+      const wrap = document.createElement("div");
+      wrap.className = "field";
+      const title = document.createElement("label");
+      title.textContent = label;
+      const field = document.createElement("input");
+      field.className = "search";
+      field.style.width = "100%";
+      field.style.minWidth = "0";
+      field.type = type;
+      field.placeholder = placeholder;
+      wrap.append(title, field);
+      editor.appendChild(wrap);
+      return field;
+    };
+    const server = mkInput("Адрес прокси", "http://host:port или socks5://host:port");
+    const username = mkInput("Логин (если требуется)", "Логин");
+    const password = mkInput("Пароль (пустой — оставить прежний)", "Пароль", "password");
+    const visible = document.createElement("label");
+    visible.style.fontSize = "12px";
+    visible.className = "muted";
+    const show = document.createElement("input");
+    show.type = "checkbox";
+    show.style.marginRight = "6px";
+    show.addEventListener("change", () => { password.type = show.checked ? "text" : "password"; });
+    visible.append(show, document.createTextNode("Показать пароль"));
+    editor.appendChild(visible);
+
+    const row = document.createElement("div");
+    row.className = "toolbar";
+    row.style.marginTop = "9px";
+    const save = document.createElement("button");
+    save.className = "primary";
+    save.textContent = "Сохранить прокси";
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const response = await fetch("/api/account-manager/accounts/" + id + "/camoufox/proxy", {
+          method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            server: server.value.trim(),
+            username: username.value.trim(),
+            password: password.value,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "HTTP " + response.status);
+        password.value = "";
+        message(data.enabled ? "Прокси сохранён. Будет применён при следующем открытии Camoufox." :
+          "Прокси отключён для этого профиля.");
+      } catch (error) {
+        message(error.message || "Не удалось сохранить прокси", true);
+      } finally {
+        save.disabled = false;
+      }
+    });
+    const clear = document.createElement("button");
+    clear.className = "secondary";
+    clear.textContent = "Удалить прокси";
+    clear.addEventListener("click", () => { server.value = ""; username.value = ""; password.value = ""; save.click(); });
+    row.append(save, clear);
+    editor.appendChild(row);
+    toggle.addEventListener("click", async () => {
+      editor.classList.toggle("hidden");
+      if (editor.classList.contains("hidden")) return;
+      try {
+        const response = await fetch("/api/account-manager/accounts/" + id + "/camoufox/proxy");
+        if (!response.ok) throw new Error("Не удалось загрузить настройки прокси");
+        const data = await response.json();
+        server.value = data.server || "";
+        username.value = data.username || "";
+        password.value = "";
+      } catch (error) {
+        message(error.message || "Ошибка прокси", true);
+      }
+    });
+    card.append(toggle, editor);
+  }
+
   async function refresh() {
     try {
       const payload = await api("/api/account-manager/browser/profiles");
       const list = $("sessionList");
       list.replaceChildren();
-      if (!payload.browser?.edge_available) {
-        message(payload.browser?.edge_message || "Microsoft Edge не найден", true);
+      if (!payload.browser?.camoufox_available) {
+        message("Camoufox не установлен: выполни pip install -r requirements.txt и camoufox fetch.", true);
       }
       if (!payload.profiles?.length) {
         const empty = document.createElement("div");
@@ -103,13 +191,14 @@
           const hint = document.createElement("span");
           hint.className = "muted";
           hint.style.fontSize = "11px";
-          hint.textContent = "Для сохранения сессии закрой окно Edge обычным способом.";
+          hint.textContent = "Для сохранения сессии закрой окно Camoufox обычным способом.";
           actions.appendChild(hint);
         } else {
           actions.appendChild(actionButton("Открыть Instagram", () =>
             api("/api/account-manager/accounts/" + id + "/browser/open", {target:"instagram"})));
         }
         card.appendChild(actions);
+        addProxyEditor(card, id, item.running);
         list.appendChild(card);
       }
     } catch (error) {
@@ -138,4 +227,5 @@
     }
   });
   refresh();
+  setInterval(refresh, 15000);
 })();
