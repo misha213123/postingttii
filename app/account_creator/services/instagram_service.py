@@ -63,6 +63,15 @@ def _launch_instagram(
             'и затем .venv\\Scripts\\python.exe -m camoufox fetch'
         )
 
+    try:
+        proxy_settings = launch_proxy(account_id)
+    except Exception as exc:
+        raise InstagramBrowserError("Не удалось прочитать настройки прокси Camoufox") from exc
+    if not proxy_settings:
+        raise InstagramBrowserError(
+            "Сначала укажи прокси для этого аккаунта в панели «Instagram · постоянные профили»."
+        )
+
     # profile_path is intentionally not reused: it points to Chromium's old
     # profile directory in Account Manager. Those cookies stay untouched.
     profile = profile_directory(account_id)
@@ -96,7 +105,7 @@ def _launch_instagram(
             )
             assert process.stdin is not None
             try:
-                process.stdin.write(json.dumps(launch_proxy(account_id)).encode("utf-8"))
+                process.stdin.write(json.dumps(proxy_settings).encode("utf-8"))
                 process.stdin.close()
             except (OSError, ValueError):
                 process.terminate()
