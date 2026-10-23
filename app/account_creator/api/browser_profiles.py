@@ -63,6 +63,7 @@ def open_browser(account_id: int, body: BrowserOpenRequest):
             account_id,
             account["browser_profile_path"],
             body.target,
+            preferred="edge" if body.target == "instagram" else "auto",
         )
     except BrowserProfileError as exc:
         raise HTTPException(503, str(exc)) from exc
