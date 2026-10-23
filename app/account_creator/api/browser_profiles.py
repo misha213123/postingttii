@@ -16,6 +16,10 @@ from app.account_creator.services.browser_service import (
 from app.account_creator.services.instagram_service import (
     is_running as is_instagram_running,
     stop_instagram_browser,
+    open_instagram_account,
+    InstagramBrowserError,
+    camoufox_available,
+    profile_directory,
 )
 
 router = APIRouter(prefix="/api/account-manager", tags=["account-manager-browser"])
@@ -27,14 +31,17 @@ class BrowserOpenRequest(BaseModel):
 
 @router.get("/browser/status")
 def status():
-    return browser_status()
+    result = browser_status()
+    result["instagram_backend"] = "camoufox"
+    result["camoufox_available"] = camoufox_available()
+    return result
 
 
 @router.get("/browser/profiles")
 def profiles():
     accounts = database.list_accounts()
     return {
-        "browser": browser_status(),
+        "browser": status(),
         "profiles": [
             {
                 "account_id": account["id"],
@@ -44,6 +51,7 @@ def profiles():
                 "email": account["email"],
                 "status": account["status"],
                 "browser_profile_path": account["browser_profile_path"],
+                "camoufox_profile_path": str(profile_directory(account["id"])),
                 "running": is_running(account["id"]) or is_instagram_running(account["id"]),
                 "instagram_running": is_instagram_running(account["id"]),
             }
@@ -59,13 +67,12 @@ def open_browser(account_id: int, body: BrowserOpenRequest):
         raise HTTPException(404, "Account not found")
 
     try:
+        if body.target == "instagram":
+            return open_instagram_account(account_id, account["browser_profile_path"])
         return open_profile(
-            account_id,
-            account["browser_profile_path"],
-            body.target,
-            preferred="edge" if body.target == "instagram" else "auto",
+            account_id, account["browser_profile_path"], body.target
         )
-    except BrowserProfileError as exc:
+    except (BrowserProfileError, InstagramBrowserError) as exc:
         raise HTTPException(503, str(exc)) from exc
 
 
