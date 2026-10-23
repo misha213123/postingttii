@@ -227,5 +227,4 @@
     }
   });
   refresh();
-  setInterval(refresh, 15000);
 })();
