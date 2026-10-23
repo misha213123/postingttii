@@ -100,8 +100,11 @@
         actions.className = "toolbar";
         actions.style.marginTop = "8px";
         if (item.running) {
-          actions.appendChild(actionButton("Закрыть браузер", () =>
-            api("/api/account-manager/accounts/" + id + "/browser/close", {})));
+          const hint = document.createElement("span");
+          hint.className = "muted";
+          hint.style.fontSize = "11px";
+          hint.textContent = "Для сохранения сессии закрой окно Edge обычным способом.";
+          actions.appendChild(hint);
         } else {
           actions.appendChild(actionButton("Открыть Instagram", () =>
             api("/api/account-manager/accounts/" + id + "/browser/open", {target:"instagram"})));
