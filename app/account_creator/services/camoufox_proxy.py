@@ -126,10 +126,11 @@ def set_proxy(account_id: int, body: ProxyInput):
         raise HTTPException(422, str(exc)) from exc
     current = _load()
     if server:
+        previous = current.get(str(account_id), {})
         current[str(account_id)] = {
             "server": server,
             "username": body.username.strip(),
-            "password": body.password,
+            "password": body.password or previous.get("password", ""),
         }
     else:
         current.pop(str(account_id), None)
