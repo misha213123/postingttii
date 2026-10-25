@@ -632,11 +632,29 @@ def is_profile_extraction_error(message):
     return "Unable to extract data" in message and "instagram:user" in message
 
 
+def cleanup_instagram_download(source: Path, output: Path) -> bool:
+    """Discard the downloaded original once a good render already exists.
+
+    Never delete the finished output when the user selected the same directory
+    as the download cache; keep the original after failed render attempts.
+    """
+    if source.resolve() == output.resolve():
+        return False
+    try:
+        source.unlink(missing_ok=True)
+        return True
+    except OSError as exc:
+        JOB.setdefault("cleanup_warnings", []).append(
+            f"{source.name}: не удалось удалить скачанный оригинал: {exc}"
+        )
+        return False
+
+
 async def process(limit, layout: InstagramLayout, *,
                   output_dir: Path | None = None, target_slot: int = 0,
                   banner: Path | None = None,
                   banner_design: RenderDesign | None = None):
-    JOB.update(status="running", done=0, total=0, errors=[])
+    JOB.update(status="running", done=0, total=0, errors=[], cleanup_warnings=[])
     try:
         d = load()
         output_dir = output_dir or settings.upload_dir
@@ -721,6 +739,7 @@ async def process(limit, layout: InstagramLayout, *,
                     known.add(link)
                     known_ids.add(reel_id(link))
                     record_download(account, link, "already_in_queue", file=output.name)
+                    cleanup_instagram_download(source, output)
                     continue
                 if not source.exists():
                     await asyncio.to_thread(download_reel, link, source)
@@ -731,6 +750,7 @@ async def process(limit, layout: InstagramLayout, *,
                     known.add(link)
                     known_ids.add(reel_id(link))
                     record_download(account, link, "duplicate_content", sha256=digest)
+                    cleanup_instagram_download(source, output)
                     continue
                 bg = next_background()
                 await asyncio.to_thread(render, source, temp, bg, layout,
@@ -738,6 +758,9 @@ async def process(limit, layout: InstagramLayout, *,
                 if duration(temp) <= 0:
                     raise ValueError("Рендер не прошёл проверку")
                 temp.replace(output)
+                # Real MP4 is validated and moved into the render folder.
+                # The downloaded Instagram original is no longer needed.
+                cleanup_instagram_download(source, output)
                 hashes.add(digest)
                 known.add(link)
                 known_ids.add(reel_id(link))
