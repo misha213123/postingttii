@@ -965,7 +965,7 @@ if(bgSignature!==lastBackgroundSignature){
   }).join(''):'<div class="empty">Добавь MP4 или фото</div>';
 }
 loadLastRender().catch(()=>{});
-const j=d.job;el('progress').textContent=j.status+' · '+(j.media_mode==='videos'?'обычные видео':'кружки')+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=(j.errors||[]).join('\n');el('run').disabled=j.status==='running';
+const j=d.job;el('progress').textContent=j.status+' · '+(j.media_mode==='videos'?'обычные видео':'кружки')+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=[...(j.notes||[]),...(j.errors||[])].join('\n');el('run').disabled=j.status==='running';
 }catch(e){el('log').textContent=e.message}}
 el('addChannel').onsubmit=async e=>{e.preventDefault();try{await request('/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:el('channel').value})});el('channel').value='';await refresh()}catch(e){notify(e)}};
 el('upload').onsubmit=async e=>{e.preventDefault();for(const file of el('files').files){const fd=new FormData();fd.append('file',file);try{await request('/backgrounds',{method:'POST',body:fd})}catch(e){notify(e)}}el('files').value='';await refresh()};
