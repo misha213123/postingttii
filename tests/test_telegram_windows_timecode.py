@@ -79,7 +79,8 @@ class WindowsTimecodeRecoveryTests(unittest.TestCase):
             patch.object(tg.subprocess, "run", side_effect=problem) as run,
         ):
             with self.assertRaisesRegex(RuntimeError, "No such filter"):
-                tg.render(Path("circle.mp4"), Path("bg.mp4"), Path("out.mp4"))
+                tg.render(Path("circle.mp4"), Path("bg.mp4"), Path("out.mp4"),
+                          tg.RenderDesign(quality_preset="standard"))
         self.assertEqual(run.call_count, 1)
 
 
