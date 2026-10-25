@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from app.config import settings
 from app.store import store
 from app.video_folders import folder_path, list_videos, video_path, _read as folder_settings
 from app.browser_proxy import parse_proxy, masked_proxy, check_proxy
+from app.upload_cleanup import move_confirmed_video
 
 router = APIRouter(prefix="/api/browser-instagram", tags=["browser-instagram"])
 DATA_DIR = settings.data_dir / "browser_instagram"
@@ -468,6 +470,10 @@ async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None
 
 
 async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str):
+    # A selected source can target multiple Instagram accounts. Clear it from
+    # the folder only after every selected upload of this source is confirmed.
+    remaining = Counter(path.resolve() for _, path in selected)
+    uncertain: set[Path] = set()
     try:
         for index, (account_id, path) in enumerate(selected):
             if job.get("cancel"):
@@ -485,12 +491,27 @@ async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str):
                 item["message"] = ("✓ Опубликовано" if result == "published" else
                                    "Результат отправки не подтверждён. Проверь ролик "
                                    "в аккаунте; автоматического повтора нет.")
+                key = path.resolve()
+                if result != "published":
+                    uncertain.add(key)
+                remaining[key] -= 1
+                if remaining[key] == 0 and key not in uncertain:
+                    try:
+                        destination = move_confirmed_video(path)
+                        item["removed_from_queue"] = True
+                        item["stored_at"] = str(destination)
+                        item["message"] += " · Убрано из папки загрузки"
+                    except (OSError, ValueError) as exc:
+                        # Do not mark an Instagram publish as failed because
+                        # cleanup was blocked by the filesystem.
+                        item["cleanup_warning"] = str(exc)[:240]
             except Exception as exc:
                 log.error("Browser IG upload error (account=%s, stage=%s): %s",
                           account_id[:8], item.get("step", "?"),
                           type(exc).__name__)
                 item["status"] = "error"
                 item["message"] = _brief_error(exc)
+                uncertain.add(path.resolve())
             job["progress"] = index + 1
             # On an uncertain Share result, stop the queue to avoid duplicates.
             if item["status"] in ("needs_review", "error"):
