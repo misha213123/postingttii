@@ -436,10 +436,9 @@ def archive_dir(folder_id: str = "default") -> Path:
     return directory
 
 
-# After confirmation, clear the source queue immediately. Existing temporary
-# Meta media URLs remain valid because move_confirmed_video retargets tokens to
-# the relocated MP4 in the posted directory.
-ARCHIVE_GRACE_SECONDS = 0
+# Meta Instagram: immediate queue cleanup with temporary media URL retargeting.
+# Preserve the former grace period for non-Instagram batch targets.
+ARCHIVE_GRACE_SECONDS = 330
 
 
 async def _archive_after_publish(job_id: str, entry: dict) -> None:
@@ -493,11 +492,14 @@ async def _archive_after_publish(job_id: str, entry: dict) -> None:
         _save_batch_job(job)
 
 
-def _queue_archive(job: dict, video: Path, video_key: str, folder_id: str = "default") -> None:
+def _queue_archive(
+    job: dict, video: Path, video_key: str, folder_id: str = "default",
+    *, immediate: bool = False,
+) -> None:
     if any(p["filename"] == video.name and p.get("source_folder", "default") == folder_id
            for p in job.get("cleanup_pending", [])):
         return
-    due_at = int(time.time()) + ARCHIVE_GRACE_SECONDS
+    due_at = int(time.time()) + (0 if immediate else ARCHIVE_GRACE_SECONDS)
     entry = {"filename": video.name, "source_folder": folder_id,
              "video_key": video_key, "due_at": due_at}
     job.setdefault("cleanup_pending", []).append(entry)
@@ -579,7 +581,8 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     message=("Уже опубликовано: " + ", ".join(published_targets)),
                 )
                 item["status"] = "already"
-                _queue_archive(job, video, key, folder_id)
+                _queue_archive(job, video, key, folder_id,
+                               immediate=target.startswith("instagram:"))
                 return
             youtube_metadata = None
             caption = (body.captions.get(video.name) or item.get("caption") or "").strip()
@@ -645,7 +648,8 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                     message="Уже было" if result.get("skipped") else "Опубликовано",
                 )
                 item["status"] = state["status"]
-                _queue_archive(job, video, key, folder_id)
+                _queue_archive(job, video, key, folder_id,
+                               immediate=target.startswith("instagram:"))
                 return
             state.update(status="cancelled", message="Очередь остановлена")
             item["status"] = "cancelled"
