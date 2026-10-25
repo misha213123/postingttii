@@ -28,7 +28,7 @@ from app.video_folders import folder_path, account_folder, account_background
 from app.telegram_studio import (
     BACKGROUNDS, backgrounds, duration, is_image_background, RenderDesign,
     current_banner, saved_design, banner_input_args, banner_overlay_filter,
-    validate_video_banner,
+    validate_video_banner, quality_filter_segment, h264_quality_args,
 )
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
@@ -63,11 +63,12 @@ class InstagramLayout(BaseModel):
     video_opacity: float = Field(default=1.0, ge=0.1, le=1.0)
     background_mode: Literal["shuffle", "single", "blur", "none"] = "shuffle"
     background_name: str = ""
+    quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
     # None means a legacy profile still inherits the Telegram ad settings;
     # after editing this video template the two are completely independent.
     banner_enabled: bool | None = None
-    banner_x: int | None = Field(default=None, ge=0, le=1080)
-    banner_y: int | None = Field(default=None, ge=0, le=1920)
+    banner_x: int | None = Field(default=None, ge=-2160, le=2160)
+    banner_y: int | None = Field(default=None, ge=-3840, le=3840)
     banner_width: int | None = Field(default=None, ge=100, le=1080)
 
     @field_validator("banner_x", "banner_y", "banner_width", mode="before")
@@ -99,6 +100,7 @@ def video_banner_design(layout: InstagramLayout | None = None) -> RenderDesign:
         value = getattr(layout, key)
         if value is not None:
             updates[key] = value
+    updates["quality_preset"] = layout.quality_preset
     return design.model_copy(update=updates)
 
 
@@ -495,13 +497,15 @@ def render(source, target, background, layout: InstagramLayout | None = None,
     else:
         filt = (
             background_filter + foreground
-            + f"[bg][front]overlay={x}:{y}:shortest=1,"
-            "fps=30,format=yuv420p[v]"
+            + f"[bg][front]overlay={x}:{y}:shortest=1,fps=30,"
+            + quality_filter_segment(layout.quality_preset)
+            + "format=yuv420p[v]"
         )
     args += [
         "-filter_complex", filt,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
-        "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+        "-c:v", "libx264",
+        *h264_quality_args(layout.quality_preset, standard_crf="19"),
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart", str(target),
     ]
