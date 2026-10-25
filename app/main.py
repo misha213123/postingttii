@@ -50,6 +50,7 @@ from app.telegram_studio import router as telegram_studio_router, shutdown_teleg
 from app.instagram_studio import router as instagram_reels_router
 from app.instagram_stats import router as instagram_stats_router, periodic_refresh
 from app.video_folders import router as video_folders_router, folder_path, list_videos, video_path, account_folder
+from app.upload_cleanup import move_confirmed_video
 from app.browser_instagram import router as browser_instagram_router, shutdown_browser_instagram
 
 app = FastAPI(title="PostingTTII", version="0.1.0")
@@ -437,7 +438,7 @@ def archive_dir(folder_id: str = "default") -> Path:
 
 # Instagram continues requesting the media URL briefly after publication.
 # Remove confirmed videos from inbox only when that window has elapsed.
-ARCHIVE_GRACE_SECONDS = 330
+ARCHIVE_GRACE_SECONDS = 0
 
 
 async def _archive_after_publish(job_id: str, entry: dict) -> None:
@@ -463,19 +464,18 @@ async def _archive_after_publish(job_id: str, entry: dict) -> None:
             actual_key = await asyncio.to_thread(publish_state.video_key, path)
             if actual_key != entry["video_key"]:
                 raise ValueError("Файл изменился после публикации — исходник сохранён")
-            for _ in range(20):
-                if not any(p == path for p in MEDIA_TOKENS.values()):
-                    break
-                await asyncio.sleep(30)
-            else:
-                raise ValueError("Источник ещё используется API — исходник сохранён")
-            destination_dir = archive_dir(folder_id)
-            destination = destination_dir / filename
-            if destination.exists():
-                destination = destination_dir / (
-                    path.stem + "_" + secrets.token_hex(4) + path.suffix
-                )
-            await asyncio.to_thread(shutil.move, str(path), str(destination))
+            try:
+                move_confirmed_video(path, expected_key=entry["video_key"],
+                                     media_tokens=MEDIA_TOKENS)
+            except PermissionError:
+                # A Windows FileResponse may hold the file briefly. Preserve
+                # the original and retry without another Instagram upload.
+                if int(entry.get("retries", 0)) < 12:
+                    entry["retries"] = int(entry.get("retries", 0)) + 1
+                    entry["due_at"] = time.time() + 30
+                    asyncio.create_task(_archive_after_publish(job_id, entry))
+                    return
+                raise
             job["archived_count"] = job.get("archived_count", 0) + 1
         job["cleanup_pending"] = [
             pending for pending in job.get("cleanup_pending", [])
@@ -906,7 +906,25 @@ async def batch_cancel(job_id: str):
 async def publish_target(body: PublishTargetRequest):
     video = _safe_video(body.filename, body.source_folder)
     try:
-        return await _publish_single_target(video, body.caption, body.target)
+        result = await _publish_single_target(video, body.caption, body.target)
+        if body.target.startswith("instagram:") and result.get("ok"):
+            busy = any(
+                job.get("status") in {"queued", "running", "waiting"}
+                and any(
+                    row.get("filename") == video.name
+                    and row.get("source_folder", "default") == body.source_folder
+                    and row.get("status") not in {"done", "already", "error", "cancelled"}
+                    for row in job.get("items", [])
+                )
+                for job in BATCH_JOBS.values()
+            )
+            if not busy:
+                try:
+                    move_confirmed_video(video, media_tokens=MEDIA_TOKENS)
+                    result["removed_from_queue"] = True
+                except (OSError, ValueError) as exc:
+                    result["cleanup_warning"] = f"Опубликовано, но файл остался в папке: {exc}"
+        return result
     except HTTPException:
         raise
     except Exception as exc:
@@ -1008,17 +1026,26 @@ async def publish(body: PublishRequest):
 
     # Move to posted only when every target requested in this run is now completed.
     all_done = all(publish_state.is_completed(video_key, target) for target in targets)
+    cleanup_warning = ""
+    removed_from_queue = False
     if all_done:
-        destination_dir = archive_dir(body.source_folder)
-        destination = destination_dir / video.name
-        if destination.exists():
-            destination = destination_dir / f"{video.stem}_{secrets.token_hex(3)}{video.suffix}"
-        shutil.move(str(video), str(destination))
+        try:
+            move_confirmed_video(video, expected_key=video_key,
+                                 media_tokens=MEDIA_TOKENS)
+            removed_from_queue = True
+        except (OSError, ValueError) as exc:
+            cleanup_warning = f"Опубликовано, но файл остался в папке: {exc}"
 
-    MEDIA_TOKENS.pop(media_token, None)
+    # Keep the original media token alive while Meta may still request it.
+    if any(target.startswith("instagram:") for target in targets):
+        asyncio.create_task(_expire_media_token(media_token, 300))
+    else:
+        MEDIA_TOKENS.pop(media_token, None)
     return {
         "ok": failures == 0,
         "all_done": all_done,
+        "removed_from_queue": removed_from_queue,
+        "cleanup_warning": cleanup_warning,
         "results": results,
     }
 
