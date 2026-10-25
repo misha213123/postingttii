@@ -165,6 +165,7 @@ class RenderDesign(BaseModel):
     timecode_font_size: int = Field(default=32, ge=18, le=64)
     output_fps: Literal[30, 60] = 60
     smooth_motion: bool = False
+    quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
     background_mode: Literal["shuffle", "single"] = "shuffle"
     background_name: str = ""
     chromakey_enabled: bool = False
@@ -172,8 +173,10 @@ class RenderDesign(BaseModel):
     chromakey_similarity: float = Field(default=0.20, ge=0.01, le=1.0)
     chromakey_blend: float = Field(default=0.07, ge=0.0, le=1.0)
     banner_enabled: bool = False
-    banner_x: int = Field(default=270, ge=0, le=1080)
-    banner_y: int = Field(default=1550, ge=0, le=1920)
+    # Negative coordinates deliberately allow moving the ad outside the
+    # final video canvas; FFmpeg clips the off-canvas area naturally.
+    banner_x: int = Field(default=270, ge=-2160, le=2160)
+    banner_y: int = Field(default=1550, ge=-3840, le=3840)
     banner_width: int = Field(default=540, ge=100, le=1080)
 
 
@@ -203,6 +206,34 @@ def banner_input_args(banner: Path) -> list[str]:
     return ["-loop", "1", "-i", str(banner)]
 
 
+def quality_filter_segment(quality_preset: str) -> str:
+    """Conservative picture cleanup; visual quality, not duplicate evasion.
+
+    The treatment is applied once after the composition so all layers share
+    the same encoding characteristics. Keep the standard preset filter-free.
+    """
+    if quality_preset == "enhanced":
+        return ("hqdn3d=0.8:0.8:3:3,"
+                "eq=contrast=1.025:saturation=1.035,"
+                "unsharp=3:3:0.35:3:3:0.0,")
+    if quality_preset == "maximum":
+        return ("hqdn3d=1.2:1.0:4:3,"
+                "eq=contrast=1.045:saturation=1.055,"
+                "unsharp=5:5:0.50:5:5:0.0,")
+    return ""
+
+
+def h264_quality_args(quality_preset: str, *, standard_crf: str = "18") -> list[str]:
+    """H.264 settings suited to a high-fidelity 1080x1920 Reels master."""
+    if quality_preset == "maximum":
+        return ["-preset", "slow", "-crf", "16",
+                "-maxrate", "16M", "-bufsize", "32M"]
+    if quality_preset == "enhanced":
+        return ["-preset", "slow", "-crf", "17",
+                "-maxrate", "14M", "-bufsize", "28M"]
+    return ["-preset", "medium", "-crf", standard_crf]
+
+
 def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
     """Composite a video or image banner with 60/30fps and gentle fade-in.
 
@@ -219,7 +250,8 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
         f"fps={fps},format=rgba,{banner_key}format=rgba,"
         "fade=t=in:st=0:d=0.30:alpha=1[banner];"
         f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
-        f"format=auto:shortest=1,fps={fps},format=yuv420p[v]"
+        f"format=auto:shortest=1,fps={fps},"
+        f"{quality_filter_segment(design.quality_preset)}format=yuv420p[v]"
     )
 
 
@@ -886,12 +918,15 @@ def render(
         cmd += banner_input_args(banner)
         filter_chain += banner_overlay_filter(design, 2)
     else:
-        filter_chain += f"[composite]fps={fps},format=yuv420p[v]"
+        filter_chain += (
+            f"[composite]fps={fps},"
+            f"{quality_filter_segment(design.quality_preset)}format=yuv420p[v]"
+        )
 
     cmd += [
         "-filter_complex", filter_chain,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:v", "libx264", *h264_quality_args(design.quality_preset),
         "-profile:v", "high", "-level:v", "5.1" if fps == 60 else "4.2",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
