@@ -743,6 +743,34 @@ def duration(path):
     return float(p.stdout.strip())
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _timecode_fontfile() -> str | None:
+    """Use an explicit Windows system font without relying on Fontconfig.
+
+    Returns None on non-Windows systems (use normal drawtext discovery), a
+    local basename when Windows provides a font, and "" when none is available.
+    FFmpeg runs from ROOT so the basename contains no drive colon or escapes.
+    """
+    if not _is_windows():
+        return None
+    fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    for name in ("arial.ttf", "segoeui.ttf", "tahoma.ttf", "verdana.ttf"):
+        installed = fonts / name
+        if not installed.is_file():
+            continue
+        cached = ROOT / "_timecode_render_font.ttf"
+        try:
+            if not cached.is_file() or cached.stat().st_size == 0:
+                shutil.copyfile(installed, cached)
+            return cached.name
+        except OSError:
+            continue
+    return ""
+
+
 def render(
     source: Path,
     bg: Path,
@@ -818,7 +846,10 @@ def render(
         )
         last = "with_progress"
 
-    if design.timecode_enabled:
+    fontfile = _timecode_fontfile() if design.timecode_enabled else None
+    # On Windows, never call drawtext without an explicit installed font:
+    # MSYS2 builds can access-violate inside Fontconfig in that situation.
+    if design.timecode_enabled and fontfile != "":
         tx = min(design.timecode_x, 1060)
         ty = min(design.timecode_y, 1920 - design.timecode_font_size - 4)
         remaining = int(seconds + 0.5)
@@ -829,12 +860,19 @@ def render(
             r"%{eif\:mod(t\,60)\:d\:2}"
         )
         filter_chain += (
-            f"[{last}]drawtext=text='{elapsed} / {total}':"
+            f"[{last}]drawtext="
+            f"{('fontfile=' + fontfile + ':') if fontfile else ''}"
+            f"text='{elapsed} / {total}':"
             f"fontcolor=white:fontsize={design.timecode_font_size}:"
             "borderw=2:bordercolor=black@0.70:"
             f"x={tx}:y={ty}:fix_bounds=1[with_timecode];"
         )
         last = "with_timecode"
+    elif design.timecode_enabled and fontfile == "":
+        JOB.setdefault("notes", []).append(
+            "Таймкод временно выключен: не найден доступный системный шрифт Windows. "
+            "Видео и остальные элементы рендерятся."
+        )
 
     filter_chain += f"[{last}]null[composite];"
     # Suppress the enormous FFmpeg version/configuration banner so the
@@ -860,12 +898,33 @@ def render(
         "-movflags", "+faststart", str(target),
     ]
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        subprocess.run(
+            cmd, capture_output=True, text=True, check=True,
+            cwd=str(ROOT) if _is_windows() else None,
+        )
     except subprocess.CalledProcessError as exc:
         # A CalledProcessError normally begins with the entire ffmpeg command.
         # The Telegram Studio UI previously truncated it before the real
         # stderr diagnostics, making every failure look identical.
         details = (exc.stderr or exc.stdout or "").strip()
+        # Windows status 0xC0000005 is an access violation. With Fontconfig
+        # failures in drawtext, rerender once WITHOUT timecode rather than
+        # dropping a downloaded Telegram circle or marking the upload complete.
+        access_violation = (exc.returncode & 0xffffffff) == 0xC0000005
+        fontconfig_failure = ("Fontconfig error" in details or
+                              "Cannot load default config file" in details)
+        if (_is_windows() and design.timecode_enabled and
+                (fontconfig_failure or access_violation)):
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: FFmpeg не смог обработать таймкод "
+                "(Fontconfig/сбой Windows); повторяю монтаж без таймкода. "
+                "Кружок, обводка, прогресс-бар и баннер сохраняются."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={"timecode_enabled": False}), banner,
+            )
         meaningful = [
             line.strip() for line in details.splitlines()
             if line.strip() and not line.lstrip().startswith((
