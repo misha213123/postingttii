@@ -837,7 +837,10 @@ def render(
         last = "with_timecode"
 
     filter_chain += f"[{last}]null[composite];"
-    cmd = ["ffmpeg", "-y", "-i", str(source), *bg_input]
+    # Suppress the enormous FFmpeg version/configuration banner so the
+    # dashboard can display actual filter and encoder errors on Windows.
+    cmd = ["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error",
+           "-y", "-i", str(source), *bg_input]
 
     if design.banner_enabled:
         if not banner or not banner.is_file():
@@ -863,11 +866,22 @@ def render(
         # The Telegram Studio UI previously truncated it before the real
         # stderr diagnostics, making every failure look identical.
         details = (exc.stderr or exc.stdout or "").strip()
-        meaningful = [line.strip() for line in details.splitlines() if line.strip()]
-        diagnostics = "\n".join(meaningful[-14:])[-2200:]
+        meaningful = [
+            line.strip() for line in details.splitlines()
+            if line.strip() and not line.lstrip().startswith((
+                "ffmpeg version ", "built with ", "configuration:",
+                "libavutil ", "libavcodec ", "libavformat ",
+                "libavdevice ", "libavfilter ", "libswscale ",
+                "libswresample ", "libpostproc ",
+            ))
+        ]
+        # Preserve the END of the diagnostic. That is where FFmpeg reports
+        # 'No such filter', 'Invalid argument', and filter init failures.
+        diagnostics = "\n".join(meaningful[-12:])[-1550:]
         raise RuntimeError(
-            "FFmpeg не смог смонтировать кружок: "
-            + (diagnostics or f"код выхода {exc.returncode} без stderr")
+            "FFmpeg не смог смонтировать кружок (код "
+            + str(exc.returncode) + "): "
+            + (diagnostics or "FFmpeg завершился без подробной ошибки")
         ) from exc
 
 
@@ -1053,7 +1067,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     target.unlink(missing_ok=True)
                     # The error is shown in Telegram Studio, not just the
                     # shortened FFmpeg argument list.
-                    JOB["errors"].append(f"{key}: {str(exc)[:1800]}")
+                    JOB["errors"].append(f"{key}: {str(exc)[-1750:]}")
 
         JOB["status"] = "stopped" if STOP_REQUESTED else "done"
     except asyncio.CancelledError:
