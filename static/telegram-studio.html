@@ -149,6 +149,19 @@
     <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
       <input id="bannerScale" type="range" min="100" max="1080" step="10" value="540">
       <span class="editor-note">Размер можно менять ползунком или за правый нижний угол баннера на превью.</span></div>
+    <div class="inline banner-position-fields">
+      <label>X, px<input id="bannerPositionX" type="number" min="-2160" max="2160" step="1"></label>
+      <label>Y, px<input id="bannerPositionY" type="number" min="-3840" max="3840" step="1"></label>
+    </div>
+    <span class="editor-note">Баннер можно частично или полностью увести за границы 9:16. В готовом MP4 часть вне кадра будет обрезана. Координаты X/Y помогут вернуть невидимый баннер.</span>
+    <div class="design-field"><label for="tgQualityPreset">Качество готового Reels</label>
+      <select id="tgQualityPreset">
+        <option value="standard">Стандартное — как раньше, быстрее</option>
+        <option value="enhanced">Улучшенное — лёгкая очистка, чёткость и цвет</option>
+        <option value="maximum">Максимальное — высокий битрейт и медленное кодирование</option>
+      </select>
+      <span class="editor-note">1080×1920, H.264 + AAC. Больше качества не гарантирует рекомендации Instagram и не превращает чужое видео в оригинальное.</span>
+    </div>
     <div class="inline"><button id="resetBannerPosition" type="button" onclick="resetBannerPosition()">Сбросить позицию</button>
       <button id="removeBanner" type="button" class="danger" onclick="removeDesignBanner()">Убрать баннер</button></div>
     <span class="muted" id="designStatus">Загрузка настроек оформления...</span>
@@ -194,6 +207,18 @@
         <span class="editor-note" id="igBannerStatus">Загружаем отдельный видео-баннер...</span></div>
       <div class="design-field"><label for="igBannerScale">Ширина баннера: <span id="igBannerScaleValue">540</span> px</label>
         <input id="igBannerScale" type="range" min="100" max="1080" step="10" value="540"></div>
+      <div class="inline banner-position-fields">
+        <label>X, px<input id="igBannerPositionX" type="number" min="-2160" max="2160" step="1"></label>
+        <label>Y, px<input id="igBannerPositionY" type="number" min="-3840" max="3840" step="1"></label>
+      </div>
+      <span class="editor-note">Можно перетащить баннер частично за пределы вертикального кадра. Невидимую часть FFmpeg обрежет; координаты позволяют вернуть баннер.</span>
+      <div class="design-field"><label for="igQualityPreset">Качество обычных видео</label>
+        <select id="igQualityPreset">
+          <option value="standard">Стандартное — как раньше</option>
+          <option value="enhanced">Улучшенное — мягкая обработка и чёткость</option>
+          <option value="maximum">Максимальное — более медленный экспорт высокого качества</option>
+        </select>
+      </div>
       <div class="inline"><button type="button" onclick="resetVideoBanner()">Сбросить позицию баннера</button>
         <button type="button" class="danger" onclick="deleteVideoBanner()">Убрать видео-баннер</button></div>
       <div class="design-field"><label for="igVideoScale">Ширина видео: <span id="igVideoScaleValue">950</span> px</label>
@@ -227,15 +252,16 @@ const designState={
   background_mode:'shuffle',background_name:'',
   chromakey_enabled:false,chromakey_color:'#00ff00',
   chromakey_similarity:.20,chromakey_blend:.07,banner_enabled:false,
-  banner_x:270,banner_y:1550,banner_width:540
+  banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced'
 };
 let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
 
 function designStatus(message){el('designStatus').textContent=message;}
 function bannerHeightPx(){return designState.banner_width*bannerRatio;}
 function clampBanner(){
-  designState.banner_x=Math.max(0,Math.min(Math.round(designState.banner_x),Math.max(0,1080-designState.banner_width)));
-  designState.banner_y=Math.max(0,Math.min(Math.round(designState.banner_y),Math.max(0,1920-bannerHeightPx())));
+  // Preserve off-canvas positioning: negative X/Y and overshoot are intended.
+  designState.banner_x=Math.max(-2160,Math.min(2160,Math.round(Number(designState.banner_x)||0)));
+  designState.banner_y=Math.max(-3840,Math.min(3840,Math.round(Number(designState.banner_y)||0)));
 }
 const videoBannerState={banner_enabled:false,banner_x:270,banner_y:1550,banner_width:540};
 let videoBannerAvailable=false,videoBannerKind='image',videoBannerRatio=.25,videoBannerURL='';
@@ -243,9 +269,8 @@ let videoBannerChromaReady=false,videoChromaLast=0;
 const videoBannerScratch=document.createElement('canvas');
 function clampVideoBanner(){
   videoBannerState.banner_width=Math.max(100,Math.min(1080,Math.round(Number(videoBannerState.banner_width)||540)));
-  videoBannerState.banner_x=Math.max(0,Math.min(Math.round(Number(videoBannerState.banner_x)||0),1080-videoBannerState.banner_width));
-  videoBannerState.banner_y=Math.max(0,Math.min(Math.round(Number(videoBannerState.banner_y)||0),
-    Math.max(0,1920-videoBannerState.banner_width*videoBannerRatio)));
+  videoBannerState.banner_x=Math.max(-2160,Math.min(2160,Math.round(Number(videoBannerState.banner_x)||0)));
+  videoBannerState.banner_y=Math.max(-3840,Math.min(3840,Math.round(Number(videoBannerState.banner_y)||0)));
 }
 function syncInstagramBannerPreview(){
   const visible=!!videoBannerState.banner_enabled&&videoBannerAvailable;
@@ -269,6 +294,9 @@ function syncInstagramBannerPreview(){
   el('igBannerScale').value=videoBannerState.banner_width;
   el('igBannerScaleValue').textContent=videoBannerState.banner_width;
   el('igBannerEnabled').checked=!!videoBannerState.banner_enabled;
+  el('igBannerPositionX').value=videoBannerState.banner_x;
+  el('igBannerPositionY').value=videoBannerState.banner_y;
+  el('igQualityPreset').value=instagramLayout.quality_preset||'enhanced';
 }
 function updateVideoBannerRatio(ratio){
   videoBannerRatio=ratio;
@@ -405,6 +433,9 @@ function updateDesignPreview(){
     banner.style.opacity=showKeyedBanner?'0':'1';
   }
   el('bannerEnabled').checked=designState.banner_enabled;
+  el('bannerPositionX').value=designState.banner_x;
+  el('bannerPositionY').value=designState.banner_y;
+  el('tgQualityPreset').value=designState.quality_preset||'enhanced';
   el('bannerScale').value=designState.banner_width;
   el('circleScale').value=size;
   el('chromakeyEnabled').checked=designState.chromakey_enabled;
@@ -772,6 +803,17 @@ function initDesignControls(){
     designState.banner_width=Number(e.target.value);updateDesignPreview();
   });
   el('bannerScale').addEventListener('change',saveRenderDesign);
+  for(const [id,key] of [['bannerPositionX','banner_x'],['bannerPositionY','banner_y']]){
+    el(id).addEventListener('change',e=>{
+      if(!Number.isFinite(Number(e.target.value)))return;
+      designState[key]=Number(e.target.value);
+      updateDesignPreview();saveRenderDesign();
+    });
+  }
+  el('tgQualityPreset').addEventListener('change',e=>{
+    designState.quality_preset=e.target.value;
+    saveRenderDesign();
+  });
   el('chromakeyEnabled').addEventListener('change',e=>{
     designState.chromakey_enabled=e.target.checked;updateDesignPreview();saveRenderDesign();
   });
@@ -1049,7 +1091,8 @@ const igApi='/api/telegram-studio/instagram';
 /* Instagram and Telegram templates stay separate in persistence and rendering. */
 const instagramLayout={
   video_x:65,video_y:110,video_width:950,video_height:1700,
-  video_opacity:1,background_mode:'shuffle',background_name:''
+  video_opacity:1,background_mode:'shuffle',background_name:'',
+  quality_preset:'enhanced'
 };
 let instagramLayoutSave=Promise.resolve();
 let instagramPreviewObjectURL=null;
@@ -1209,6 +1252,18 @@ function initInstagramLayoutControls(){
     syncInstagramBannerPreview();
   });
   el('igBannerScale').addEventListener('change',saveInstagramLayout);
+  for(const [id,key] of [['igBannerPositionX','banner_x'],['igBannerPositionY','banner_y']]){
+    el(id).addEventListener('change',e=>{
+      if(!Number.isFinite(Number(e.target.value)))return;
+      videoBannerState[key]=Number(e.target.value);
+      Object.assign(instagramLayout,videoBannerState);
+      syncInstagramBannerPreview();saveInstagramLayout();
+    });
+  }
+  el('igQualityPreset').addEventListener('change',e=>{
+    instagramLayout.quality_preset=e.target.value;
+    saveInstagramLayout();
+  });
   const selector=el('igLayoutBgSelect');
   selector.addEventListener('change',()=>{
     instagramLayout.background_name=selector.value;
