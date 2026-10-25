@@ -207,9 +207,8 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
     )
     fps = design.output_fps
     return (
-        f"[{banner_input_index}:v]fps={fps},"
-        f"scale={design.banner_width}:-1:flags=lanczos,"
-        f"format=rgba,{banner_key}format=rgba,"
+        f"[{banner_input_index}:v]scale={design.banner_width}:-1:flags=lanczos,"
+        f"fps={fps},format=rgba,{banner_key}format=rgba,"
         "fade=t=in:st=0:d=0.30:alpha=1[banner];"
         f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
         f"format=auto:shortest=1,fps={fps},format=yuv420p[v]"
