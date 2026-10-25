@@ -865,7 +865,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                   media_mode: Literal["circles", "videos"] = "circles",
                   video_layout=None, video_banner: Path | None = None,
                   video_banner_design: RenderDesign | None = None):
-    JOB.update(status="running", total=0, done=0, errors=[], media_mode=media_mode)
+    JOB.update(status="running", total=0, done=0, errors=[], notes=[], media_mode=media_mode)
     try:
         d = config()
         d.setdefault("processed", [])
@@ -912,6 +912,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                 try:
                     entity = await client.get_entity(channel)
                     candidates = []
+                    found_selected_type = False
                     async for message in client.iter_messages(entity, limit=3000):
                         if STOP_REQUESTED:
                             break
@@ -921,6 +922,7 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                             continue
                         if not telegram_media_matches(message, media_mode):
                             continue
+                        found_selected_type = True
                         key = (f"{channel}:{message.id}" if media_mode == "circles"
                                else f"video:{channel}:{message.id}")
                         filename_prefix = "tg" if media_mode == "circles" else "tgvideo"
@@ -931,6 +933,13 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                             completed_keys.append(key)
                             continue
                         candidates.append(message)
+                    if not found_selected_type and not STOP_REQUESTED:
+                        missing_type = ("кружков (видеосообщений)" if media_mode == "circles"
+                                        else "обычных видео")
+                        JOB["notes"].append(
+                            f"@{channel}: среди проверенных сообщений не найдено {missing_type}. "
+                            "Неподходящий тип не скачивается."
+                        )
                     if order == "oldest":
                         candidates.reverse()
                     elif order == "random":
