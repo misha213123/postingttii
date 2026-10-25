@@ -57,8 +57,8 @@ class StyledCircleTests(unittest.TestCase):
         design = studio.RenderDesign(progress_x=1050, progress_y=1900,
                                      progress_width=450, progress_height=22)
         graph, _ = graph_for(design)
-        self.assertIn("drawbox=x=630:y=1900:w=450:h=22", graph)
-        self.assertIn("overlay=630:1900", graph)
+        self.assertIn("drawbox=x=630:y=1898:w=450:h=22", graph)
+        self.assertIn("overlay=630:1898", graph)
 
     def test_optical_flow_is_only_used_when_enabled_at_60_fps(self):
         graph, _ = graph_for(studio.RenderDesign(smooth_motion=True))
