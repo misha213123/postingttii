@@ -225,11 +225,14 @@ def quality_filter_segment(quality_preset: str) -> str:
 
 def h264_quality_args(quality_preset: str, *, standard_crf: str = "18") -> list[str]:
     """H.264 settings suited to a high-fidelity 1080x1920 Reels master."""
+    # CRF controls picture fidelity; "slow" mostly improves compression
+    # efficiency and is extremely costly for short 60fps Reels on Windows.
+    # Medium keeps the same CRF quality at the cost of somewhat larger files.
     if quality_preset == "maximum":
-        return ["-preset", "slow", "-crf", "16",
+        return ["-preset", "medium", "-crf", "16",
                 "-maxrate", "16M", "-bufsize", "32M"]
     if quality_preset == "enhanced":
-        return ["-preset", "slow", "-crf", "17",
+        return ["-preset", "fast", "-crf", "17",
                 "-maxrate", "14M", "-bufsize", "28M"]
     return ["-preset", "medium", "-crf", standard_crf]
 
