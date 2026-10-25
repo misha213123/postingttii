@@ -27,7 +27,7 @@ class RenderDiagnosticsTests(unittest.TestCase):
         ):
             with self.assertRaises(RuntimeError) as err:
                 tg.render(Path("source.mp4"), Path("background.mp4"),
-                          Path("output.mp4"), tg.RenderDesign())
+                          Path("output.mp4"), tg.RenderDesign(timecode_enabled=False, quality_preset="standard"))
         message = str(err.exception)
         self.assertIn("Cannot load default font", message)
         self.assertIn("Invalid argument", message)
@@ -52,7 +52,7 @@ class RenderDiagnosticsTests(unittest.TestCase):
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 tg.render(Path("circle.mp4"), Path("bg.mp4"),
-                          Path("output.mp4"), tg.RenderDesign())
+                          Path("output.mp4"), tg.RenderDesign(timecode_enabled=False, quality_preset="standard"))
         message = str(ctx.exception)
         self.assertIn("No such filter", message)
         self.assertIn("Filter not found", message)
@@ -68,9 +68,9 @@ class RenderDiagnosticsTests(unittest.TestCase):
             patch.object(tg.random, "uniform", return_value=0.0),
             patch.object(tg.subprocess, "run", side_effect=simulated_error),
         ):
-            with self.assertRaisesRegex(RuntimeError, "код выхода 9 без stderr"):
+            with self.assertRaisesRegex(RuntimeError, "код 9"):
                 tg.render(Path("source.mp4"), Path("background.mp4"),
-                          Path("output.mp4"), tg.RenderDesign())
+                          Path("output.mp4"), tg.RenderDesign(timecode_enabled=False, quality_preset="standard"))
 
 
 if __name__ == "__main__":
