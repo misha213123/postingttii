@@ -143,6 +143,20 @@ class RenderDesign(BaseModel):
     circle_size: int = Field(default=1040, ge=400, le=1080)
     circle_x: int = Field(default=20, ge=0, le=1080)
     circle_y: int = Field(default=90, ge=0, le=1920)
+    # Modern video-note frame and independently draggable playback indicators.
+    circle_border_width: int = Field(default=9, ge=0, le=48)
+    circle_border_color: str = Field(default="#ffffff", pattern=r"^#[0-9A-Fa-f]{6}$")
+    progress_enabled: bool = True
+    progress_x: int = Field(default=310, ge=0, le=1080)
+    progress_y: int = Field(default=1190, ge=0, le=1920)
+    progress_width: int = Field(default=460, ge=100, le=1080)
+    progress_height: int = Field(default=9, ge=3, le=30)
+    timecode_enabled: bool = True
+    timecode_x: int = Field(default=445, ge=0, le=1080)
+    timecode_y: int = Field(default=1220, ge=0, le=1920)
+    timecode_font_size: int = Field(default=32, ge=18, le=64)
+    output_fps: Literal[30, 60] = 60
+    smooth_motion: bool = False
     background_mode: Literal["shuffle", "single"] = "shuffle"
     background_name: str = ""
     chromakey_enabled: bool = False
@@ -182,21 +196,23 @@ def banner_input_args(banner: Path) -> list[str]:
 
 
 def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
-    """Composite an optional transparent ad banner on a finished video layer.
+    """Composite a video or image banner with 60/30fps and gentle fade-in.
 
-    The chromakey applies only to the banner, never to the Telegram circle
-    or the ordinary Instagram video foreground.
+    Chroma key applies only to the banner, never to the circular media.
     """
     banner_key = (
         f"chromakey=0x{design.chromakey_color[1:]}:"
         f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
         if design.chromakey_enabled else ""
     )
+    fps = design.output_fps
     return (
-        f"[{banner_input_index}:v]scale={design.banner_width}:-1:flags=lanczos,"
-        f"format=rgba,{banner_key}format=rgba[banner];"
+        f"[{banner_input_index}:v]fps={fps},"
+        f"scale={design.banner_width}:-1:flags=lanczos,"
+        f"format=rgba,{banner_key}format=rgba,"
+        "fade=t=in:st=0:d=0.30:alpha=1[banner];"
         f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
-        "format=auto:shortest=1,fps=30,format=yuv420p[v]"
+        f"format=auto:shortest=1,fps={fps},format=yuv420p[v]"
     )
 
 
@@ -742,27 +758,79 @@ def render(
         bg_input = ["-stream_loop", "-1", "-ss", str(offset), "-i", str(bg)]
 
     size = design.circle_size
-    center = size // 2
-    radius_squared = center * center
-    # Telegram circle is never chroma-keyed. The background removal belongs
-    # exclusively to the optional promotional banner (image or looping video).
+    border = min(design.circle_border_width, size // 5)
+    inside = size - 2 * border
+    radius = inside // 2
+    border_radius = size // 2
+    x = max(0, min(design.circle_x, 1080 - size))
+    y = max(0, min(design.circle_y, 1920 - size))
+    fps = design.output_fps
+
+    # Optional optical-flow interpolation is considerably slower, but creates
+    # genuinely new frames rather than duplicating 30fps source frames.
+    motion = (
+        "minterpolate=fps=60:mi_mode=mci:mc_mode=obmc:me_mode=bidir,"
+        if fps == 60 and design.smooth_motion else f"fps={fps},"
+    )
     circle_filter = (
-        f"[0:v]scale={size}:{size}:force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop={size}:{size},format=rgba,"
+        f"[0:v]{motion}scale={size}:{size}:force_original_aspect_ratio=increase:"
+        f"flags=lanczos,crop={inside}:{inside}:{border}:{border},format=rgba,"
         "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-        f"a='if(lte((X-{center})*(X-{center})+(Y-{center})*(Y-{center}),"
-        f"{radius_squared}),alpha(X,Y),0)'[circle];"
+        f"a='if(lte((X-{radius})*(X-{radius})+(Y-{radius})*(Y-{radius}),"
+        f"{radius*radius}),alpha(X,Y),0)'[inside];"
+        f"color=c=0x{design.circle_border_color[1:]}:s={size}x{size}:r={fps}:"
+        f"d={seconds:.3f},format=rgba,"
+        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='if(lte((X-{border_radius})*(X-{border_radius})+"
+        f"(Y-{border_radius})*(Y-{border_radius}),{border_radius*border_radius}),"
+        "255,0)'[ring];"
+        f"[ring][inside]overlay={border}:{border}:shortest=1:format=auto[circle];"
     )
     bg_filter = (
         "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-        "crop=1080:1920,setsar=1[bg];"
+        f"crop=1080:1920,setsar=1,fps={fps}[bg];"
     )
-    x = min(design.circle_x, 1080 - size)
-    y = min(design.circle_y, 1920 - size)
-    # Match preview coordinates: user drags the circular video on the canvas.
-    main_filter = f"[bg][circle]overlay={x}:{y}:shortest=1[composite];"
+    filter_chain = (
+        circle_filter + bg_filter +
+        f"[bg][circle]overlay={x}:{y}:shortest=1[base_circle];"
+    )
+    last = "base_circle"
+
+    if design.progress_enabled:
+        px = max(0, min(design.progress_x, 1080 - design.progress_width))
+        py = max(0, min(design.progress_y, 1920 - design.progress_height))
+        w, h = design.progress_width, design.progress_height
+        filter_chain += (
+            f"[{last}]drawbox=x={px}:y={py}:w={w}:h={h}:"
+            "color=white@0.34:t=fill[progress_track];"
+            f"color=c=white:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
+            "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+            f"a='if(lte(X\\,W*min(T/{seconds:.3f}\\,1))\\,255\\,0)'[progress_fill];"
+            f"[progress_track][progress_fill]overlay={px}:{py}:"
+            "shortest=1[with_progress];"
+        )
+        last = "with_progress"
+
+    if design.timecode_enabled:
+        tx = min(design.timecode_x, 1060)
+        ty = min(design.timecode_y, 1920 - design.timecode_font_size - 4)
+        remaining = int(seconds + 0.5)
+        total = f"{remaining // 60:02d}\\:{remaining % 60:02d}"
+        # FFmpeg dynamic expressions: mm:ss / mm:ss, advancing each second.
+        elapsed = (
+            r"%{eif\:trunc(t/60)\:d\:2}\:"
+            r"%{eif\:mod(t\,60)\:d\:2}"
+        )
+        filter_chain += (
+            f"[{last}]drawtext=text='{elapsed} / {total}':"
+            f"fontcolor=white:fontsize={design.timecode_font_size}:"
+            "borderw=2:bordercolor=black@0.70:"
+            f"x={tx}:y={ty}:fix_bounds=1[with_timecode];"
+        )
+        last = "with_timecode"
+
+    filter_chain += f"[{last}]null[composite];"
     cmd = ["ffmpeg", "-y", "-i", str(source), *bg_input]
-    filter_chain = circle_filter + bg_filter + main_filter
 
     if design.banner_enabled:
         if not banner or not banner.is_file():
@@ -770,13 +838,14 @@ def render(
         cmd += banner_input_args(banner)
         filter_chain += banner_overlay_filter(design, 2)
     else:
-        filter_chain += "[composite]fps=30,format=yuv420p[v]"
+        filter_chain += f"[composite]fps={fps},format=yuv420p[v]"
 
     cmd += [
         "-filter_complex", filter_chain,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-profile:v", "high", "-level:v", "4.2", "-pix_fmt", "yuv420p",
+        "-profile:v", "high", "-level:v", "5.1" if fps == 60 else "4.2",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart", str(target),
     ]
