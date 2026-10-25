@@ -960,6 +960,20 @@ def render(
                 source, bg, target,
                 design.model_copy(update={"timecode_enabled": False}), banner,
             )
+        if (design.quality_preset != "standard" and
+                (access_violation or "No such filter" in details or
+                 "Error initializing complex filters" in details)):
+            # Optional visual filters must never make the previously working
+            # classic Telegram-circle renderer unusable.
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: расширенная обработка недоступна в FFmpeg. "
+                "Повторяю с прежним качеством, сохраняя композицию."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={"quality_preset": "standard"}), banner,
+            )
         meaningful = [
             line.strip() for line in details.splitlines()
             if line.strip() and not line.lstrip().startswith((
