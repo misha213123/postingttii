@@ -47,16 +47,15 @@ def is_image_background(path: Path) -> bool:
 
 
 def telegram_media_matches(message, media_mode: str) -> bool:
-    """Select Telegram round video notes or ordinary videos, never both."""
+    """Exclusive media selection; reject missing or ambiguous media."""
+    video_note = bool(getattr(message, "video_note", None))
+    video = bool(getattr(message, "video", None))
+    document = getattr(message, "document", None)
+    mime = str(getattr(document, "mime_type", "") or "").lower()
     if media_mode == "circles":
-        return bool(message.video_note)
+        return video_note
     if media_mode == "videos":
-        if message.video_note:
-            return False
-        return bool(message.video) or (
-            message.document is not None
-            and str(getattr(message.document, "mime_type", "")).lower().startswith("video/")
-        )
+        return not video_note and (video or mime.startswith("video/"))
     return False
 
 
@@ -940,6 +939,11 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
             for channel, message in selected:
                 if STOP_REQUESTED:
                     break
+                # Re-check at download time as well as during discovery.
+                # Never download/render an ordinary clip in circle mode (or
+                # vice versa), even if the selection pool is modified.
+                if not telegram_media_matches(message, media_mode):
+                    continue
                 key = (f"{channel}:{message.id}" if media_mode == "circles"
                        else f"video:{channel}:{message.id}")
                 JOB["total"] += 1
