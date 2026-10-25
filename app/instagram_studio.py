@@ -509,7 +509,31 @@ def render(source, target, background, layout: InstagramLayout | None = None,
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart", str(target),
     ]
-    cmd(args, timeout=3600)
+    try:
+        cmd(args, timeout=3600)
+    except RuntimeError as exc:
+        # The enhancement is optional. If this FFmpeg build lacks one of its
+        # filters, preserve the old working export and do not lose the Reel.
+        error = str(exc)
+        if layout.quality_preset != "standard" and any(
+            clue in error for clue in (
+                "No such filter", "Error initializing complex filters",
+                "Error reinitializing filters",
+            )
+        ):
+            JOB.setdefault("cleanup_warnings", []).append(
+                "FFmpeg не поддерживает улучшение качества — "
+                "повторный экспорт со стандартными настройками."
+            )
+            fallback = layout.model_copy(update={"quality_preset": "standard"})
+            legacy_banner = (banner_design.model_copy(
+                update={"quality_preset": "standard"}
+            ) if banner_design is not None else None)
+            return render(
+                source, target, background, fallback,
+                banner=banner, banner_design=legacy_banner,
+            )
+        raise
 
 
 def discover_edge(account):
