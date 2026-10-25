@@ -68,7 +68,7 @@
 <div class="layout">
 <section class="card"><h2>01 / Источники: Telegram + Instagram</h2><p class="muted">Telegram-каналы и Instagram-аккаунты в одном списке. Каждый источник можно включать и отключать.</p>
 <div class="design-field" style="margin:10px 0 15px"><label for="tgMediaMode">Какие ролики скачивать из Telegram-каналов?</label>
-<select id="tgMediaMode" onchange="updateTelegramMediaMode()">
+<select id="tgMediaMode" onchange="updateTelegramMediaMode();chooseLastRender(el('tgMediaMode').value)">
 <option value="circles">◉ Только кружки (видеосообщения)</option>
 <option value="videos">▯ Только обычные видео</option></select>
 <span id="tgMediaModeHint" class="editor-note">В выбранном режиме все добавленные Telegram-каналы сканируются только на кружки.</span></div><form id="addChannel" class="inline"><input id="channel" placeholder="@channel или https://t.me/channel" required><button class="primary">+ Добавить</button></form><form id="igAdd" class="inline" style="margin-top:10px"><input id="igUrl" placeholder="https://www.instagram.com/username/" required><button class="primary">+ Instagram</button></form><div id="channels"></div><div id="igAccounts"></div></section>
@@ -865,7 +865,7 @@ function updateTelegramMediaMode(){
 }
 el('tgMediaMode').value=localStorage.getItem('postingttii_tg_media_mode')==='videos'?'videos':'circles';
 updateTelegramMediaMode();
-let lastRenderMode='circles',lastRenderFingerprint='',lastRenderedInfo=null,lastRenderFetching=false;
+let lastRenderMode=el('tgMediaMode').value,lastRenderFingerprint='',lastRenderedInfo=null,lastRenderFetching=false;
 function setLastRenderStatus(textValue){
   el('lastRenderName').textContent=textValue;
 }
@@ -1061,6 +1061,7 @@ function switchRenderEditor(name){
   updateTelegramMediaMode();
   if(!circles)el('igLayoutVideo').play().catch(()=>{});
   syncInstagramBannerPreview();
+  chooseLastRender(circles?'circles':'videos').catch(()=>{});
 }
 function instagramLayoutStatus(message){el('igLayoutStatus').textContent=message;}
 function updateInstagramLayoutPreview(){
