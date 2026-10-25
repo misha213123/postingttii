@@ -1,6 +1,7 @@
 """Banner positioning outside the video canvas and faithful high-quality export."""
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -95,6 +96,43 @@ class HighQualityGraphTests(unittest.TestCase):
             tg.RenderDesign(quality_preset="boost_reach")
         with self.assertRaises(ValidationError):
             ig.InstagramLayout(quality_preset="boost_reach")
+
+
+class EnhancementFallbackTests(unittest.TestCase):
+    def test_telegram_missing_filter_retries_standard(self):
+        failure = subprocess.CalledProcessError(
+            1, ["ffmpeg"], stderr="No such filter: hqdn3d",
+        )
+        design = tg.RenderDesign(timecode_enabled=False,
+                                 quality_preset="enhanced")
+        with (
+            patch.object(tg, "duration", side_effect=[2.0, 8.0, 2.0, 8.0]),
+            patch.object(tg.random, "uniform", return_value=0.0),
+            patch.object(tg.subprocess, "run",
+                         side_effect=[failure, subprocess.CompletedProcess([], 0)]) as run,
+        ):
+            tg.render(Path("circle.mp4"), Path("background.mp4"),
+                      Path("reel.mp4"), design)
+        self.assertEqual(run.call_count, 2)
+        graph_first = run.call_args_list[0].args[0]
+        graph_last = run.call_args_list[1].args[0]
+        self.assertIn("hqdn3d=", graph_first[graph_first.index("-filter_complex") + 1])
+        self.assertNotIn("hqdn3d=", graph_last[graph_last.index("-filter_complex") + 1])
+
+    def test_instagram_missing_filter_retries_standard(self):
+        layout = ig.InstagramLayout(background_mode="none",
+                                    quality_preset="enhanced")
+        with (
+            patch.object(ig, "duration", return_value=2.0),
+            patch.object(ig, "cmd",
+                         side_effect=[RuntimeError("No such filter: hqdn3d"),
+                                      None]) as run,
+        ):
+            ig.render(Path("video.mp4"), Path("out.mp4"), None, layout)
+        self.assertEqual(run.call_count, 2)
+        last = run.call_args_list[-1].args[0]
+        self.assertEqual(last[last.index("-crf") + 1], "19")
+        self.assertNotIn("hqdn3d=", last[last.index("-filter_complex") + 1])
 
 
 class StudioBannerUiTests(unittest.TestCase):
