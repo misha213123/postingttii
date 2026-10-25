@@ -856,7 +856,19 @@ def render(
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart", str(target),
     ]
-    subprocess.run(cmd, capture_output=True, text=True, check=True)
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        # A CalledProcessError normally begins with the entire ffmpeg command.
+        # The Telegram Studio UI previously truncated it before the real
+        # stderr diagnostics, making every failure look identical.
+        details = (exc.stderr or exc.stdout or "").strip()
+        meaningful = [line.strip() for line in details.splitlines() if line.strip()]
+        diagnostics = "\n".join(meaningful[-14:])[-2200:]
+        raise RuntimeError(
+            "FFmpeg не смог смонтировать кружок: "
+            + (diagnostics or f"код выхода {exc.returncode} без stderr")
+        ) from exc
 
 
 async def process(limit, order="oldest", date_from=None, date_to=None, *,
@@ -1039,7 +1051,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     JOB["done"] += 1
                 except Exception as exc:
                     target.unlink(missing_ok=True)
-                    JOB["errors"].append(f"{key}: {str(exc)[:250]}")
+                    # The error is shown in Telegram Studio, not just the
+                    # shortened FFmpeg argument list.
+                    JOB["errors"].append(f"{key}: {str(exc)[:1800]}")
 
         JOB["status"] = "stopped" if STOP_REQUESTED else "done"
     except asyncio.CancelledError:
