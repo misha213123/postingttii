@@ -436,8 +436,9 @@ def archive_dir(folder_id: str = "default") -> Path:
     return directory
 
 
-# Instagram continues requesting the media URL briefly after publication.
-# Remove confirmed videos from inbox only when that window has elapsed.
+# After confirmation, clear the source queue immediately. Existing temporary
+# Meta media URLs remain valid because move_confirmed_video retargets tokens to
+# the relocated MP4 in the posted directory.
 ARCHIVE_GRACE_SECONDS = 0
 
 
