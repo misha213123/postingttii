@@ -14,6 +14,7 @@ def graph_for(design: studio.RenderDesign) -> tuple[str, list[str]]:
         patch.object(studio, "duration", side_effect=[1.6, 10.0]),
         patch.object(studio, "is_image_background", return_value=False),
         patch.object(studio.random, "uniform", return_value=0.0),
+        patch.object(studio, "_timecode_fontfile", return_value="_timecode_render_font.ttf"),
         patch.object(studio.subprocess, "run") as call,
     ):
         studio.render(Path("circle.mp4"), Path("background.mp4"), Path("reel.mp4"), design)
@@ -79,6 +80,7 @@ class StyledCircleTests(unittest.TestCase):
         with patch.object(studio, "duration", side_effect=[6.0, 12.0]), \
              patch.object(studio, "is_image_background", return_value=False), \
              patch.object(studio.random, "uniform", return_value=0.0), \
+             patch.object(studio, "_timecode_fontfile", return_value="_timecode_render_font.ttf"), \
              patch.object(studio.subprocess, "run") as call, \
              patch.object(Path, "is_file", return_value=True):
             studio.render(Path("circle.mp4"), Path("background.mp4"),
