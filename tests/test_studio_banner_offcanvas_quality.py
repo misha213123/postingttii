@@ -74,7 +74,7 @@ class HighQualityGraphTests(unittest.TestCase):
         self.assertIn("unsharp=", graph)
         self.assertIn("-crf", argv)
         self.assertEqual(argv[argv.index("-crf") + 1], "16")
-        self.assertEqual(argv[argv.index("-preset") + 1], "slow")
+        self.assertEqual(argv[argv.index("-preset") + 1], "medium")
 
     def test_normal_instagram_render_uses_its_own_quality_preset(self):
         layout = ig.InstagramLayout(background_mode="none",
