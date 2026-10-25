@@ -47,10 +47,19 @@ def is_image_background(path: Path) -> bool:
 
 
 def telegram_media_matches(message, media_mode: str) -> bool:
-    """Exclusive media selection; reject missing or ambiguous media."""
-    video_note = bool(getattr(message, "video_note", None))
-    video = bool(getattr(message, "video", None))
+    """Only native Telegram round video notes are allowed in circles mode.
+
+    Telethon usually exposes the .video_note shortcut. Some message wrappers
+    expose only DocumentAttributeVideo(round_message=True), so check both.
+    """
     document = getattr(message, "document", None)
+    attrs = getattr(document, "attributes", ()) or ()
+    round_attribute = any(
+        bool(getattr(attribute, "round_message", False))
+        for attribute in attrs
+    )
+    video_note = bool(getattr(message, "video_note", None)) or round_attribute
+    video = bool(getattr(message, "video", None))
     mime = str(getattr(document, "mime_type", "") or "").lower()
     if media_mode == "circles":
         return video_note
@@ -1091,7 +1100,7 @@ async def run(body: RenderRequest):
         media_mode=body.media_mode, video_layout=video_layout,
         video_banner=video_banner, video_banner_design=video_design,
     ))
-    return {"started": True}
+    return {"started": True, "media_mode": body.media_mode}
 
 
 async def shutdown_telegram_studio():
