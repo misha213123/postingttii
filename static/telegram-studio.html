@@ -53,6 +53,9 @@
 .banner-drag-frame[hidden]{display:none}
 .banner-drag-frame>.editor-handle{bottom:-8px;right:-8px;border-radius:5px;cursor:nwse-resize}
 #igBannerMove{z-index:9}
+.banner-position-fields{display:flex;gap:10px;flex-wrap:wrap}
+.banner-position-fields label{display:flex;flex:1;min-width:105px;flex-direction:column;gap:6px;font-size:12px;font-weight:650;color:#bad0f5}
+.banner-position-fields input{width:100%;padding:9px 12px;min-width:0}
 .latest-render-view{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap}
 .latest-render-view>img,.latest-render-view>video{display:block;width:220px;max-width:100%;aspect-ratio:9/16;object-fit:contain;background:#060d1a;border-radius:14px;border:1px solid #405475}
 .latest-render-details{flex:1;min-width:240px}
@@ -264,6 +267,11 @@ function clampBanner(){
   designState.banner_y=Math.max(-3840,Math.min(3840,Math.round(Number(designState.banner_y)||0)));
 }
 const videoBannerState={banner_enabled:false,banner_x:270,banner_y:1550,banner_width:540};
+const instagramLayout={
+  video_x:65,video_y:110,video_width:950,video_height:1700,
+  video_opacity:1,background_mode:'shuffle',background_name:'',
+  quality_preset:'enhanced'
+};
 let videoBannerAvailable=false,videoBannerKind='image',videoBannerRatio=.25,videoBannerURL='';
 let videoBannerChromaReady=false,videoChromaLast=0;
 const videoBannerScratch=document.createElement('canvas');
@@ -1089,11 +1097,7 @@ loadRenderFolders();
 const igApi='/api/telegram-studio/instagram';
 
 /* Instagram and Telegram templates stay separate in persistence and rendering. */
-const instagramLayout={
-  video_x:65,video_y:110,video_width:950,video_height:1700,
-  video_opacity:1,background_mode:'shuffle',background_name:'',
-  quality_preset:'enhanced'
-};
+/* instagramLayout lives above preview helpers so both editors can refresh safely. */
 let instagramLayoutSave=Promise.resolve();
 let instagramPreviewObjectURL=null;
 let instagramSampleURL='';
