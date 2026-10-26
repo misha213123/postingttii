@@ -603,18 +603,56 @@ async def _file_input_attached(page, timeout_ms: int = 1200) -> bool:
         return False
 
 
-async def _open_instagram_create(page) -> None:
-    """Support both expanded and icon-only Instagram sidebar layouts.
+def _in_reels_feed(page) -> bool:
+    """A Reels feed URL is browsing content, not Instagram's upload form."""
+    return bool(re.search(
+        r"instagram\.com/(?:reels|reel)(?:/|$)",
+        str(getattr(page, "url", "")), re.I,
+    ))
 
-    Instagram changes its navigation markup frequently. Prefer a visible,
-    named Create link/button; fall back to the + icon's accessible SVG label.
-    Only a single successful click is made.
-    """
-    if await _file_input_attached(page, timeout_ms=800):
-        return  # The user already opened the create dialog.
+
+async def _go_to_instagram_create(page) -> bool:
+    """Recover a wrong Reels navigation using Instagram's own Create route."""
+    try:
+        await page.goto("https://www.instagram.com/create/select/",
+                        wait_until="domcontentloaded", timeout=18000)
+        if _in_reels_feed(page):
+            return False
+        # A dialog with an input is sufficient; when there is a Create menu
+        # without an input, the next step explicitly selects Post.
+        if await _file_input_attached(page, timeout_ms=1500):
+            return True
+        post = re.compile(r"^(Post|Публикация|Пост)$", re.I)
+        try:
+            if await page.get_by_role("menuitem", name=post).first.is_visible():
+                return True
+        except Exception:
+            pass
+        try:
+            if await page.get_by_role(
+                "button", name=re.compile(
+                    r"^(Select from computer|Select from your computer|"
+                    r"Выбрать с компьютера)$", re.I,
+                )
+            ).first.is_visible():
+                return True
+        except Exception:
+            pass
+        # Some Instagram versions render the upload form after hydration.
+        return "/create/" in str(getattr(page, "url", ""))
+    except Exception:
+        return False
+
+
+async def _open_instagram_create(page) -> None:
+    """Open the Create workflow, never accept the Reels feed as creation."""
+    if await _file_input_attached(page, timeout_ms=800) and not _in_reels_feed(page):
+        return
     role_name = re.compile(r"^(Create|New post|Создать|Новая публикация)$", re.I)
     candidates = [
-        page.locator('a[href="/create/select/"], a[href="/create/"], a[href^="/create/"]').first,
+        page.locator(
+            'a[href="/create/select/"], a[href="/create/"], a[href^="/create/"]'
+        ).first,
         page.get_by_role("link", name=role_name).first,
         page.get_by_role("button", name=role_name).first,
         page.locator(
@@ -626,27 +664,23 @@ async def _open_instagram_create(page) -> None:
     for candidate in candidates:
         try:
             await candidate.click(timeout=2400)
-            return
         except Exception:
             continue
-    # Last resort: navigate only to Instagram's own creator URL. Navigation
-    # cannot publish a video, and the next stage verifies the file chooser.
-    try:
-        await page.goto("https://www.instagram.com/create/select/",
-                        wait_until="domcontentloaded", timeout=15000)
-        if await _file_input_attached(page, timeout_ms=1800):
-            return
-    except Exception:
-        pass
+        if _in_reels_feed(page):
+            # A misleading + icon may lead into /reels/ rather than opening
+            # the Create menu. Do not claim that it opened an upload dialog.
+            break
+        return
+    if await _go_to_instagram_create(page):
+        return
     raise RuntimeError("Не найдена кнопка «Создать» в Instagram.")
 
 
 async def _choose_instagram_video(page, video: Path) -> None:
-    """Attach one local video through Instagram's supported file-picker UI.
+    """Upload via Create -> Post -> Select from computer, never the Reels feed.
 
-    The Create button can open a Post/Reel menu; on some layouts the file
-    input does not exist until "Select from computer" is clicked.
-    Never click Share or try to upload a second file as a fallback.
+    The Reels navigation item is not a publish action. Generic "Reels" or
+    "Post" matches in the global timeline must not be clicked.
     """
     file_path = str(video)
     choose_name = re.compile(
@@ -655,6 +689,33 @@ async def _choose_instagram_video(page, video: Path) -> None:
         r"Выбрать на компьютере|Выбрать файл|Выберите файл)$",
         re.I,
     )
+    post_name = re.compile(r"^(Post|Публикация|Пост)$", re.I)
+
+    async def choose_post_from_menu() -> bool:
+        choices = [
+            page.get_by_role("menuitem", name=post_name).first,
+            page.locator('[role="menu"]').get_by_role(
+                "button", name=post_name
+            ).first,
+            page.locator('[role="menu"]').get_by_text(post_name).first,
+            page.locator('[role="dialog"]').get_by_role(
+                "button", name=post_name
+            ).first,
+        ]
+        for choice in choices:
+            try:
+                if await choice.is_visible():
+                    await choice.click(timeout=2400)
+                    if _in_reels_feed(page):
+                        raise RuntimeError(
+                            "Выбран переход в Reels вместо создания поста."
+                        )
+                    return True
+            except RuntimeError:
+                raise
+            except Exception:
+                continue
+        return False
 
     async def via_chooser() -> bool:
         controls = [
@@ -674,8 +735,6 @@ async def _choose_instagram_video(page, video: Path) -> None:
         return False
 
     async def via_input() -> bool:
-        # Prefer the video input inside the active dialog over hidden global
-        # inputs belonging to unrelated Instagram navigation components.
         selectors = [
             '[role="dialog"] input[type="file"][accept*="video"]',
             '[role="dialog"] input[type="file"]',
@@ -693,40 +752,30 @@ async def _choose_instagram_video(page, video: Path) -> None:
                 continue
         return False
 
-    # The first Create click often reveals a menu with Post/Reel choices.
-    # Prefer the ordinary Post route: Instagram detects MP4 Reels on desktop.
-    menu_names = (
-        re.compile(r"^Post$|^Публикация$|^Пост$", re.I),
-        re.compile(r"^Reel$|^Reels$|^Рилс$|^Видео Reels$", re.I),
-    )
-    for pattern in menu_names:
-        menu = page.get_by_role("menuitem", name=pattern).first
-        try:
-            if await menu.is_visible():
-                await menu.click(timeout=2200)
-                break
-        except Exception:
-            continue
+    if _in_reels_feed(page):
+        if not await _go_to_instagram_create(page):
+            raise RuntimeError(
+                "Instagram открыл ленту Reels вместо создания публикации. "
+                "Не удалось открыть Create → Post."
+            )
 
-    if await via_chooser():
-        return
-    if await via_input():
+    # Always handle an open Create menu before looking for generic inputs:
+    # Instagram can expose unrelated hidden inputs on the normal feed.
+    await choose_post_from_menu()
+    if await via_chooser() or await via_input():
         return
 
-    # Some Instagram variants put "Post" directly into a popover as text.
-    for pattern in menu_names:
-        choice = page.get_by_text(pattern).last
-        try:
-            await choice.click(timeout=1700)
-        except Exception:
-            continue
+    # Recovery for variants which show no upload UI after the first Create
+    # click. Use only the site's own creator route; do not select Reels.
+    if await _go_to_instagram_create(page):
+        await choose_post_from_menu()
         if await via_chooser() or await via_input():
             return
 
     raise RuntimeError(
-        "Не удалось выбрать видео в Instagram: отсутствует кнопка "
-        "«Select from computer» или поле загрузки. "
-        "Открой аккаунт в видимом Camoufox и проверь меню «Создать → Post»."
+        "Не удалось выбрать видео в Instagram: форма загрузки не открылась. "
+        "Проверь в Camoufox путь «Создать → Post → Select from computer». "
+        "В ленту Reels приложение больше не переходит для загрузки."
     )
 
 
