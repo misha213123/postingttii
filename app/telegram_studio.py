@@ -886,18 +886,25 @@ def dotted_progress_filter(
     pitch = w / count
     mid = h / 2
     radius = max(3, min(h / 2 - 1, pitch * 0.25))
+    rail_x, rail_y = max(0, x - 8), max(0, y - 7)
+    rail_w = min(w + 16, 1080 - rail_x)
+    rail_h = min(h + 14, 1920 - rail_y)
     distance = (
         f"(mod(X\\,{pitch:.4f})-{pitch/2:.4f})"
         f"*(mod(X\\,{pitch:.4f})-{pitch/2:.4f})+"
         f"(Y-{mid:.3f})*(Y-{mid:.3f})"
     )
     return (
+        f"[{previous}]drawbox=x={rail_x}:y={rail_y}:w={rail_w}:h={rail_h}:"
+        "color=0x06192d@0.55:t=fill,"
+        f"drawbox=x={rail_x}:y={rail_y}:w={rail_w}:h={rail_h}:"
+        "color=0x9ccaff@0.32:t=2[dot_track];"
         f"color=c=0x6ad9ff:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
         "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
         f"a='if(lte({distance}\\,{radius*radius:.3f})\\,"
         f"if(lte(X\\,W*min(T/{seconds:.3f}\\,1))\\,255\\,65)\\,0)'"
         "[progress_dots];"
-        f"[{previous}][progress_dots]overlay={x}:{y}:shortest=1"
+        f"[dot_track][progress_dots]overlay={x}:{y}:shortest=1"
         "[with_progress];"
     )
 
