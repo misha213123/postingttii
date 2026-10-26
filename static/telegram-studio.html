@@ -66,7 +66,7 @@
 
 .bg-thumbnail{width:120px;height:150px;object-fit:cover;border-radius:10px;flex-shrink:0}
 
-</style><link rel="stylesheet" href="/static/studio-circle-ui.css?v=20261025"></head><body><main>
+</style><link rel="stylesheet" href="/static/studio-circle-ui.css?v=20261026-orbit"></head><body><main>
 <header><div><a href="/">← Вернуться к PostingTTII</a><h1>◉ Telegram Studio</h1><div class="muted">Кружки Telegram → случайный фон → готовые Reels</div></div><span class="pill" id="health">Проверка системы...</span></header>
 <div class="layout">
 <section class="card"><h2>01 / Источники: Telegram + Instagram</h2><p class="muted">Telegram-каналы и Instagram-аккаунты в одном списке. Каждый источник можно включать и отключать.</p>
@@ -691,6 +691,8 @@ async function loadDesign(){
   try{
     const d=await request('/design');
     Object.assign(designState,d.design);
+    window.studioLoadedPresets=d.presets||{};
+    window.setStudioTemplatePresets?.(d.presets||{});
     if(designState.background_name){
       const select=el('designBgSelect');
       if([...select.options].some(option=>option.value===designState.background_name)){
@@ -1340,4 +1342,4 @@ async function igRun(){try{await instagramLayoutSave;await designSaveQueue;await
 document.addEventListener('click',async e=>{if(e.target.dataset.igRemove){try{await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igRemove),{method:'DELETE'});await igRefresh()}catch(err){notify(err)}}});
 document.addEventListener('change',async e=>{try{if(e.target.dataset.tgToggle){await request('/channels/'+encodeURIComponent(e.target.dataset.tgToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}if(e.target.dataset.igToggle){await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await igRefresh()}}catch(err){notify(err);await refresh();await igRefresh()}});
 igRefresh();setInterval(igRefresh,2500);
-</script><script src="/static/studio-circle-ui.js?v=20261025"></script></body></html>
+</script><script src="/static/studio-circle-ui.js?v=20261026-orbit"></script></body></html>
