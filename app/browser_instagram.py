@@ -148,7 +148,7 @@ def _external_profile(value: str) -> str:
 
 
 def _browser_name(account_id: str) -> str:
-    return "Camoufox" if _account(account_id).get("browser") == "camoufox" else "Edge"
+    return "Camoufox" if _read().get(account_id, {}).get("browser") == "camoufox" else "Edge"
 
 
 class BrowserAccount(BaseModel):
