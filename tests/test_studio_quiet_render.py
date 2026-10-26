@@ -44,6 +44,7 @@ class QuietExportTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-threads") + 1], "2")
         self.assertEqual(cmd[cmd.index("-preset") + 1], "veryfast")
         self.assertEqual(cmd[cmd.index("-crf") + 1], "19")
+        self.assertEqual(cmd[cmd.index("-b:a") + 1], "128k")
         self.assertIn("fps=30", graph)
         self.assertNotIn("minterpolate", graph)
         self.assertNotIn("hqdn3d=", graph)
