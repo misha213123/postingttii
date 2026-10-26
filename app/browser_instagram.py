@@ -59,7 +59,7 @@ def _brief_error(exc: Exception) -> str:
         # Only our explicitly-authored workflow errors use RuntimeError;
         # external Playwright errors need a generic sanitized explanation.
         message = str(exc)
-        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не найдена ", "Не нашёл ", "Проверь ", "Не удалось ", "Видео ", "Формат ", "Обложка ")):
+        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не найдена ", "Не нашёл ", "Проверь ", "Не удалось ", "Видео ", "Формат ", "Обложка ", "Меню ", "Пункт ")):
             return message
     return "Ошибка взаимодействия с Edge/Camoufox или Instagram. Проверь браузер, вход и подключение."
 
@@ -787,11 +787,22 @@ async def _choose_instagram_video(page, video: Path) -> None:
                 "Меню «+» открыто, но не удалось нажать Post. "
                 "Проверь нижнее меню Camoufox."
             )
-    elif not await _file_input_attached(page, timeout_ms=900):
-        raise RuntimeError(
-            "Не найдено меню «+ → Post» или форма загрузки Instagram. "
-            "Открой Camoufox в обычном режиме и проверь пункт Post."
-        )
+    else:
+        # Some versions show a large Select from computer button before
+        # mounting any input; this is a valid existing Post editor.
+        editor_open = await _file_input_attached(page, timeout_ms=900)
+        if not editor_open:
+            try:
+                editor_open = await page.get_by_role(
+                    "button", name=choose_label
+                ).first.is_visible()
+            except Exception:
+                editor_open = False
+        if not editor_open:
+            raise RuntimeError(
+                "Не найдено меню «+ → Post» или форма загрузки Instagram. "
+                "Открой Camoufox в обычном режиме и проверь пункт Post."
+            )
 
     # Instagram creates the input asynchronously, often after animation.
     if await upload_from_input():
