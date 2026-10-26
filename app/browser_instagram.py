@@ -570,7 +570,114 @@ async def _open_instagram_create(page) -> None:
     raise RuntimeError("Не найдена кнопка «Создать» в Instagram.")
 
 
-async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None = None) -> str:
+def _validate_vertical_reel(video: Path) -> tuple[int, int]:
+    """Block a non-9:16 source before any Instagram Share click."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "json", str(video)],
+            capture_output=True, text=True, timeout=20, check=True,
+        )
+        stream = json.loads(result.stdout)["streams"][0]
+        width, height = int(stream["width"]), int(stream["height"])
+    except (FileNotFoundError, subprocess.SubprocessError, KeyError,
+            IndexError, ValueError, TypeError, json.JSONDecodeError):
+        raise RuntimeError(
+            "Не удалось проверить формат видео через FFprobe. "
+            "Установи FFmpeg или проверь файл перед отправкой."
+        ) from None
+    if width <= 0 or height <= 0 or abs(width / height - 9 / 16) > 0.012:
+        raise RuntimeError(
+            f"Видео имеет размер {width}×{height}, а нужен вертикальный 9:16 "
+            "(например, 1080×1920). Перерендери ролик в Студии PostingTTII."
+        )
+    return width, height
+
+
+async def _select_vertical_crop(page) -> None:
+    """Use Instagram's crop menu so a 9:16 video is not published as a square.
+
+    Fail closed when the crop choice cannot be confirmed. We intentionally
+    never infer that Instagram kept the original orientation automatically.
+    """
+    controls = [
+        page.get_by_role("button", name=re.compile(
+            r"Crop|Select crop|Aspect ratio|Original size|Обрез|Пропорци|Формат",
+            re.I,
+        )).first,
+        page.locator(
+            'svg[aria-label="Select crop"], svg[aria-label="Crop"], '
+            'svg[aria-label="Select aspect ratio"], '
+            'svg[aria-label="Adjust"], svg[aria-label="Обрезать"], '
+            'svg[aria-label="Выбрать формат"]'
+        ).first,
+        page.locator(
+            '[aria-label="Select crop"], [aria-label="Select aspect ratio"], '
+            '[aria-label="Crop"], [aria-label="Обрезать"]'
+        ).first,
+    ]
+    opened = False
+    for control in controls:
+        try:
+            await control.click(timeout=3000)
+            opened = True
+            break
+        except Exception:
+            continue
+    if not opened:
+        raise RuntimeError(
+            "Формат 9:16 не подтверждён: Instagram не показал меню пропорций. "
+            "Ролик не отправлен, проверь окно Camoufox."
+        )
+    options = [
+        page.get_by_text(re.compile(r"^9\\s*:\\s*16$", re.I)).last,
+        page.get_by_role("button", name=re.compile(r"^9\\s*:\\s*16$")).first,
+        page.get_by_text(re.compile(r"^Original$|^Оригинал$|^Исходный$", re.I)).last,
+    ]
+    for option in options:
+        try:
+            await option.click(timeout=2600)
+            return
+        except Exception:
+            continue
+    raise RuntimeError(
+        "Формат 9:16 не подтверждён: нет пункта «9:16» или «Original». "
+        "Ролик не отправлен, проверь окно Camoufox."
+    )
+
+
+async def _set_instagram_cover(page, cover: Path) -> None:
+    """Upload the cover on Instagram's editing step, before final Next/Share.
+
+    Do not use a generic file input: that could append the image to the post
+    rather than set it as the Reel's cover.
+    """
+    control_name = re.compile(
+        r"^Select from computer$|^Выбрать с компьютера$|"
+        r"^Upload cover$|^Загрузить обложку$|^Choose cover$",
+        re.I,
+    )
+    controls = [
+        page.get_by_role("button", name=control_name).last,
+        page.get_by_text(control_name).last,
+        page.get_by_role("link", name=control_name).last,
+    ]
+    for control in controls:
+        try:
+            async with page.expect_file_chooser(timeout=5000) as chooser_info:
+                await control.click(timeout=3000)
+            chooser = await chooser_info.value
+            await chooser.set_files(str(cover))
+            return
+        except Exception:
+            continue
+    raise RuntimeError(
+        "Обложка не загружена: Instagram не показал кнопку выбора обложки "
+        "на экране редактирования. Публикация остановлена без Share."
+    )
+
+
+async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None = None, *, cover: Path | None = None) -> str:
     """UI-based Instagram upload; stop on ambiguity, never retry Share."""
     item = item if item is not None else {}
     _stage(item, "open_instagram", "Открываю Instagram")
@@ -627,14 +734,29 @@ async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None
             "и поддерживаемый формат файла."
         ) from None
 
-    for i in range(2):
-        _stage(item, "next_" + str(i + 1), f"Подготавливаю видео — шаг {i + 1}/2")
-        try:
-            await _click_action(page, r"Next|Далее", timeout_ms=65000)
-        except Exception:
-            raise RuntimeError(
-                f"Не найден шаг «Далее» ({i + 1}/2). Проверь окно публикации в Edge."
-            ) from None
+    _stage(item, "aspect", "Проверяю 9:16 и выбираю полный вертикальный кадр")
+    _validate_vertical_reel(video)
+    await _select_vertical_crop(page)
+
+    _stage(item, "next_1", "Открываю редактор обложки")
+    try:
+        await _click_action(page, r"Next|Далее", timeout_ms=65000)
+    except Exception:
+        raise RuntimeError(
+            "Не удалось открыть редактор обложки после выбора 9:16."
+        ) from None
+
+    if cover is not None:
+        _stage(item, "cover", "Устанавливаю выбранную заранее обложку")
+        await _set_instagram_cover(page, cover)
+
+    _stage(item, "next_2", "Перехожу к описанию видео")
+    try:
+        await _click_action(page, r"Next|Далее", timeout_ms=65000)
+    except Exception:
+        raise RuntimeError(
+            "Не удалось перейти к описанию после выбора обложки."
+        ) from None
 
     _stage(item, "caption", "Добавляю описание")
     if caption:
@@ -670,7 +792,7 @@ async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None
         return "needs_review"
 
 
-async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str):
+async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str, covers: dict[str, Path] | None = None):
     # A selected source can target multiple Instagram accounts. Clear it from
     # the folder only after every selected upload of this source is confirmed.
     remaining = Counter(path.resolve() for _, path in selected)
@@ -687,7 +809,13 @@ async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str):
             try:
                 _stage(item, "open_profile", "Подключаю профиль браузера")
                 ctx = await _context(account_id)
-                result = await _publish_via_browser(ctx, path, caption, item=item)
+                cover = (covers or {}).get(path.name)
+                if cover is not None:
+                    result = await _publish_via_browser(
+                        ctx, path, caption, item=item, cover=cover,
+                    )
+                else:
+                    result = await _publish_via_browser(ctx, path, caption, item=item)
                 item["status"] = result
                 item["message"] = ("✓ Опубликовано" if result == "published" else
                                    "Результат отправки не подтверждён. Проверь ролик "
@@ -745,6 +873,11 @@ async def publish(body: PublishInput, request: Request):
         raise HTTPException(400, "Одно из видео не найдено в выбранной папке") from exc
     if not all(p.suffix.lower() in VIDEO_SUFFIXES for p in clips):
         raise HTTPException(400, "Для браузерной публикации выбери MP4/MOV")
+    if body.require_covers and any(name not in body.covers for name in names):
+        raise HTTPException(400, "Заранее выбери обложку для каждого отмеченного ролика")
+    if any(name not in names for name in body.covers):
+        raise HTTPException(400, "Список обложек не совпадает с выбранными видео")
+    covers = {name: _cover_path(cover_id) for name, cover_id in body.covers.items()}
     # Deliberate explicit bounded snapshot. Each selected video is queued for
     # each selected account. No scheduled repeats or stealth automation.
     if len(clips) * len(account_ids) > 25:
@@ -756,7 +889,12 @@ async def publish(body: PublishInput, request: Request):
         "accounts": account_ids, "total": len(jobs),
         "progress": 0, "items": [], "cancel": False,
     }
-    CURRENT_TASK = asyncio.create_task(_run_job(CURRENT_JOB, jobs, body.caption))
+    if covers:
+        CURRENT_TASK = asyncio.create_task(
+            _run_job(CURRENT_JOB, jobs, body.caption, covers=covers)
+        )
+    else:
+        CURRENT_TASK = asyncio.create_task(_run_job(CURRENT_JOB, jobs, body.caption))
     return {"ok": True, "job_id": CURRENT_JOB["id"], "total": len(jobs)}
 
 
