@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -19,7 +20,7 @@ from typing import Literal
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageDraw, ImageFilter, UnidentifiedImageError
 from app.config import settings
 from app.video_folders import folder_path, account_folder, account_background
 
@@ -30,9 +31,10 @@ ORIGINALS = ROOT / "originals"
 REGULAR_ORIGINALS = ORIGINALS / "regular"
 BANNERS = ROOT / "banners"
 RENDER_PREVIEWS = ROOT / "render_previews"
+ORBIT_ASSETS = ROOT / "orbit_assets"
 CONFIG = ROOT / "config.json"
 SESSION = ROOT / "telegram"
-for p in (ROOT, BACKGROUNDS, ORIGINALS, REGULAR_ORIGINALS, BANNERS, RENDER_PREVIEWS):
+for p in (ROOT, BACKGROUNDS, ORIGINALS, REGULAR_ORIGINALS, BANNERS, RENDER_PREVIEWS, ORBIT_ASSETS):
     p.mkdir(parents=True, exist_ok=True)
 LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
@@ -148,6 +150,7 @@ class LoginFinish(BaseModel):
 
 class RenderDesign(BaseModel):
     """Saved design and layout in 1080 x 1920 video pixels."""
+    visual_template: Literal["classic", "orbit_dots"] = "classic"
     circle_size: int = Field(default=1040, ge=400, le=1080)
     circle_x: int = Field(default=20, ge=0, le=1080)
     circle_y: int = Field(default=90, ge=0, le=1920)
@@ -178,6 +181,20 @@ class RenderDesign(BaseModel):
     banner_x: int = Field(default=270, ge=-2160, le=2160)
     banner_y: int = Field(default=1550, ge=-3840, le=3840)
     banner_width: int = Field(default=540, ge=100, le=1080)
+
+
+def _design_presets(data: dict) -> dict[str, dict]:
+    """Preserve the existing classic design and store the new style separately."""
+    original = dict(data.get("render_design") or {})
+    saved = dict(data.get("render_design_presets") or {})
+    classic = RenderDesign.model_validate({
+        **original, **saved.get("classic", {}), "visual_template": "classic"
+    }).model_dump()
+    orbit = RenderDesign.model_validate({
+        **classic, **saved.get("orbit_dots", {}), "visual_template": "orbit_dots",
+        **({"timecode_enabled": False} if not saved.get("orbit_dots") else {}),
+    }).model_dump()
+    return {"classic": classic, "orbit_dots": orbit}
 
 
 def saved_design() -> RenderDesign:
@@ -272,6 +289,7 @@ def design_response():
     banner = current_banner(d)
     return {
         "design": RenderDesign.model_validate(d.get("render_design", {})).model_dump(),
+        "presets": _design_presets(d),
         "banner_available": banner is not None,
         "banner_kind": "video" if banner and banner.suffix in {".mp4", ".webm"} else ("image" if banner else None),
     }
@@ -287,6 +305,10 @@ def update_design(body: RenderDesign):
     if JOB["status"] == "running":
         raise HTTPException(409, "Дождись завершения рендера перед изменением оформления")
     d = config()
+    # Snapshot existing settings before switching templates on an older config.
+    presets = _design_presets(d)
+    presets[body.visual_template] = body.model_dump()
+    d["render_design_presets"] = presets
     d["render_design"] = body.model_dump()
     save(d)
     return design_response()
