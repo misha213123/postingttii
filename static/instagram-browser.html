@@ -26,10 +26,8 @@ button.primary{background:linear-gradient(115deg,#5266df,#2e87bf);border-color:#
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .video-list{min-height:130px;max-height:325px;overflow:auto;border:1px solid #2a425f;border-radius:12px;padding:8px;background:#0c192b}
 .video-item{display:flex;align-items:center;gap:10px;padding:10px;border-bottom:1px solid #1e344e;cursor:pointer}
-.video-entry{border-bottom:1px solid #1e344e;padding-bottom:6px}
-.video-entry:last-child{border-bottom:0}
-.video-item{border-bottom:0}.video-item input{width:16px;height:16px;flex-shrink:0}.video-item span{font-size:12px;overflow-wrap:anywhere;flex:1}
-.cover-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 10px 10px 36px}
+.video-item:last-child{border-bottom:0}.video-item input{width:16px;height:16px;flex-shrink:0}.video-item span{font-size:12px;overflow-wrap:anywhere;flex:1}
+.cover-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0 0;border-top:1px solid #304561;margin-top:12px}
 .cover-row label{flex:1;min-width:190px}.cover-row input[type=file]{margin-top:5px;padding:7px;font-size:11px}
 .cover-preview{width:48px;height:85px;object-fit:cover;border:1px solid #486082;border-radius:6px}
 .cover-status{font-size:11px;color:#a4d4c0}.cover-row button{font-size:11px;padding:6px 8px}
@@ -86,8 +84,13 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
      <strong style="font-size:13px">Выбери ролики</strong><div class="row"><button onclick="toggleAllVideos(true)" class="ghost">Все</button><button onclick="toggleAllVideos(false)" class="ghost">Снять</button></div>
    </div>
    <div class="video-list" id="videosList"><p class="muted">Загрузка...</p></div>
-   <p class="muted">У каждого ролика можно заранее загрузить свою обложку (JPG/PNG/WebP). Она будет подготовлена в 1080×1920 и установлена на шаге Cover photo до публикации.</p>
-   <label class="check-line"><input id="requireCovers" type="checkbox" checked> Не публиковать ролики без выбранной обложки</label>
+   <p class="muted">Обложка выбирается один раз в карточке аккаунта выше и применяется ко всем его Reels. Она сохраняется между запусками приложения.</p>
+   <label class="check-line"><input id="requireCovers" type="checkbox" checked> Не публиковать без сохранённой обложки аккаунта</label>
+   <div class="two">
+     <div class="field"><label for="minDelay">Минимальная пауза (мин)</label><input id="minDelay" type="number" min="0" max="1440" step="0.5" value="0"></div>
+     <div class="field"><label for="maxDelay">Максимальная пауза (мин)</label><input id="maxDelay" type="number" min="0" max="1440" step="0.5" value="0"></div>
+   </div>
+   <p class="muted">Пауза между публикациями в очереди. Одинаковые значения — фиксированная задержка; разные — случайное время в выбранном диапазоне. 0/0 — без задержки. Первое видео отправляется сразу.</p>
    <div class="field"><label for="caption">Подпись к видео (необязательно)</label><textarea id="caption" maxlength="2200" placeholder="Описание и хештеги для выбранных видео"></textarea></div>
    <div class="info">При запуске каждый выбранный ролик отправляется на каждый отмеченный аккаунт. Публикации выполняются последовательно, через отдельные браузерные сессии. Если Instagram не подтверждает успешный Share, очередь останавливается для ручной проверки — повторной отправки автоматически нет.</div>
    <label class="check-line"><input id="confirmPublish" type="checkbox"> Подтверждаю публикацию выбранных видео на выбранные аккаунты</label>
@@ -109,7 +112,7 @@ const esc=text=>String(text??'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;',
 let registry={accounts:[],folders:[],job:null};
 let clipList=[];
 const selectedAccounts=new Set(),selectedVideos=new Set();
-const coverMap=new Map(),coverUploading=new Set();
+const coverUploading=new Set();
 async function api(path,options={}){
  const response=await fetch('/api/browser-instagram'+path,options);
  const contentType=response.headers.get('content-type')||'';
@@ -166,19 +169,50 @@ function renderAccounts(){
    '<div class="account-buttons"><button data-test-input="'+esc(a.id)+'">Проверить введённый</button>'+
    '<button data-save-proxy="'+esc(a.id)+'">Сохранить привязку</button>'+
    '<button data-clear-proxy="'+esc(a.id)+'">Убрать прокси</button></div>'+
-   '<p id="proxyResult_'+esc(a.id)+'" class="muted" aria-live="polite"></p></div></article>'
+   '<p id="proxyResult_'+esc(a.id)+'" class="muted" aria-live="polite"></p></div>'+
+   '<div class="cover-row"><label>Одна обложка для всех Reels аккаунта'+
+   '<input type="file" accept="image/jpeg,image/png,image/webp" data-account-cover="'+esc(a.id)+'" '+(coverUploading.has(a.id)?'disabled':'')+'></label>'+
+   (a.cover_url?'<img class="cover-preview" src="'+esc(a.cover_url)+'" alt="Обложка аккаунта">':'')+
+   '<span class="cover-status">'+(coverUploading.has(a.id)?'Загружаю…':a.cover_id?'✓ Сохранена для аккаунта':'Не выбрана')+'</span>'+
+   (a.cover_id?'<button class="ghost" data-clear-account-cover="'+esc(a.id)+'">Убрать</button>':'')+
+   '</div></article>'
   ).join(''):'<p class="muted">Пока нет браузерных Instagram-аккаунтов.</p>';
 }
-$('accountsList').addEventListener('change',e=>{
- if(e.target.dataset.account){const key=e.target.dataset.account;e.target.checked?selectedAccounts.add(key):selectedAccounts.delete(key);}
+$('accountsList').addEventListener('change',async e=>{
+ if(e.target.dataset.account){
+  const key=e.target.dataset.account;
+  e.target.checked?selectedAccounts.add(key):selectedAccounts.delete(key);return;
+ }
+ const id=e.target.dataset.accountCover;
+ if(!id||!e.target.files?.length)return;
+ const file=e.target.files[0];
+ if(file.size>8*1024*1024){
+  message('accountAddResult','Обложка не должна превышать 8 МБ','error');return;
+ }
+ const data=new FormData();data.append('file',file);
+ coverUploading.add(id);renderAccounts();
+ try{
+  const uploaded=await api('/cover',{method:'POST',body:data});
+  await json('/account/'+id+'/cover','PUT',{cover_id:uploaded.cover_id});
+  registry=await api('');renderAccounts();
+  message('accountAddResult','Обложка аккаунта сохранена для всех следующих Reels (1080×1920)','status');
+ }catch(err){message('accountAddResult','Обложка: '+err.message,'error');}
+ finally{coverUploading.delete(id);renderAccounts();}
 });
 $('accountsList').addEventListener('click',async e=>{
  const b=e.target.closest('button');if(!b)return;
  b.disabled=true;
  const id=b.dataset.open||b.dataset.close||b.dataset.remove||
    b.dataset.showProxy||b.dataset.testSaved||b.dataset.testInput||
-   b.dataset.saveProxy||b.dataset.clearProxy||b.dataset.toggleProxy;
+   b.dataset.saveProxy||b.dataset.clearProxy||b.dataset.toggleProxy||
+   b.dataset.clearAccountCover;
  try{
+  if(b.dataset.clearAccountCover){
+    await json('/account/'+id+'/cover','PUT',{cover_id:''});
+    registry=await api('');renderAccounts();
+    message('accountAddResult','Обложка аккаунта убрана','status');
+    return;
+  }
   if(b.dataset.toggleProxy){
     toggleProxyVisibility('proxyInput_'+id,b);
     return;
@@ -260,58 +294,42 @@ async function testNewProxy(){
 async function loadVideos(){
  try{
   const d=await api('/videos?folder_id='+encodeURIComponent($('folderSelect').value));
-  clipList=d.videos;selectedVideos.clear();coverMap.clear();renderVideos();
+  clipList=d.videos;selectedVideos.clear();renderVideos();
  }catch(e){$('videosList').textContent='Ошибка папки: '+e.message;}
 }
 function renderVideos(){
- $('videosList').innerHTML=clipList.length?clipList.map(v=>{
-   const cover=coverMap.get(v.name),pending=coverUploading.has(v.name);
-   return '<div class="video-entry">'+
-     '<label class="video-item"><input type="checkbox" data-video="'+esc(v.name)+'" '+(selectedVideos.has(v.name)?'checked':'')+'><span>'+esc(v.name)+'</span><span class="muted">'+v.size_mb+' МБ</span></label>'+
-     '<div class="cover-row"><label>Обложка 9:16'+
-     '<input type="file" accept="image/jpeg,image/png,image/webp" data-cover="'+esc(v.name)+'" '+(pending?'disabled':'')+'></label>'+
-     (cover?'<img class="cover-preview" src="'+esc(cover.url)+'" alt="Предпросмотр обложки">':'')+
-     '<span class="cover-status">'+(pending?'Загружаю…':cover?'✓ Готова':'Не выбрана')+'</span>'+
-     (cover?'<button type="button" class="ghost" data-clear-cover="'+esc(v.name)+'">Убрать</button>':'')+
-     '</div></div>';
- }).join(''):'<p class="muted">Нет подходящих MP4/MOV в выбранной папке.</p>';
+ $('videosList').innerHTML=clipList.length?clipList.map(v=>
+  '<label class="video-item"><input type="checkbox" data-video="'+esc(v.name)+'" '+(selectedVideos.has(v.name)?'checked':'')+'><span>'+esc(v.name)+'</span><span class="muted">'+v.size_mb+' МБ</span></label>'
+ ).join(''):'<p class="muted">Нет подходящих MP4/MOV в выбранной папке.</p>';
 }
-$('videosList').addEventListener('change',async e=>{
+$('videosList').addEventListener('change',e=>{
  const name=e.target.dataset.video;
- if(name){e.target.checked?selectedVideos.add(name):selectedVideos.delete(name);return;}
- const coverName=e.target.dataset.cover;
- if(!coverName||!e.target.files?.length)return;
- const file=e.target.files[0];
- if(file.size>8*1024*1024){message('publishMessage','Обложка не должна превышать 8 МБ','error');return;}
- const currentFolder=$('folderSelect').value;
- const data=new FormData();data.append('file',file);
- coverUploading.add(coverName);renderVideos();
- try{
-  const response=await api('/cover',{method:'POST',body:data});
-  if(currentFolder===$('folderSelect').value){
-   coverMap.set(coverName,{id:response.cover_id,url:response.preview_url});
-   message('publishMessage','Обложка для '+coverName+' готова (1080×1920)','status');
-  }
- }catch(err){message('publishMessage','Обложка: '+err.message,'error');}
- finally{coverUploading.delete(coverName);renderVideos();}
+ if(name){e.target.checked?selectedVideos.add(name):selectedVideos.delete(name);}
 });
-$('videosList').addEventListener('click',e=>{
- const name=e.target.closest('button')?.dataset.clearCover;
- if(name){coverMap.delete(name);renderVideos();}
-});
-function toggleAllVideos(value){selectedVideos.clear();if(value)for(const v of clipList)selectedVideos.add(v.name);renderVideos();}
+function toggleAllVideos(value){
+ selectedVideos.clear();if(value)for(const v of clipList)selectedVideos.add(v.name);
+ renderVideos();
+}
 async function publishSelected(){
  if(!selectedAccounts.size||!selectedVideos.size){message('publishMessage','Выбери аккаунты и видео','error');return;}
- if(coverUploading.size){message('publishMessage','Дождись загрузки обложек','error');return;}
- if($('requireCovers').checked && [...selectedVideos].some(name=>!coverMap.has(name))){
-  message('publishMessage','Выбери обложку для каждого отмеченного ролика','error');return;
+ if(coverUploading.size){message('publishMessage','Дождись сохранения обложки аккаунта','error');return;}
+ if($('requireCovers').checked && [...selectedAccounts].some(id=>!registry.accounts.find(a=>a.id===id)?.cover_id)){
+  message('publishMessage','Заранее сохрани обложку для каждого отмеченного аккаунта','error');return;
+ }
+ const minDelay=Number($('minDelay').value),maxDelay=Number($('maxDelay').value);
+ if(!Number.isFinite(minDelay)||!Number.isFinite(maxDelay)||minDelay<0||maxDelay<minDelay||maxDelay>1440){
+  message('publishMessage','Проверь задержку: от 0 до 1440 минут, максимум не меньше минимума','error');return;
  }
  if(!$('confirmPublish').checked){message('publishMessage','Подтверди публикацию галочкой','error');return;}
  if(!confirm('Начать отправку '+selectedVideos.size+' видео на '+selectedAccounts.size+' аккаунтов через браузер?'))return;
  $('publishBtn').disabled=true;
  try{
-  const covers=Object.fromEntries([...selectedVideos].filter(name=>coverMap.has(name)).map(name=>[name,coverMap.get(name).id]));
-  const result=await json('/publish','POST',{accounts:[...selectedAccounts],folder_id:$('folderSelect').value,filenames:[...selectedVideos],covers,require_covers:$('requireCovers').checked,caption:$('caption').value,confirmed:true});
+  const result=await json('/publish','POST',{
+   accounts:[...selectedAccounts],folder_id:$('folderSelect').value,
+   filenames:[...selectedVideos],require_covers:$('requireCovers').checked,
+   min_delay_minutes:minDelay,max_delay_minutes:maxDelay,
+   caption:$('caption').value,confirmed:true
+  });
   message('publishMessage','Очередь запущена: '+result.total+' публикаций. Открытые окна браузеров не закрывай.','status');
   await refreshAll();
  }catch(e){message('publishMessage','Ошибка запуска: '+e.message,'error');}
@@ -329,7 +347,9 @@ function renderJob(){
  $('jobHint').textContent=j.status==='needs_review'?
    'Проверь браузер: ролик мог опубликоваться. Автоматического повтора нет.':
    j.status==='stopped'?'Остановлено на ошибке. Проверь этап и открытую страницу браузера перед повтором.':
-   j.status==='running'?'Этап: '+(j.items?.at(-1)?.step_label||'Подготовка'):'';
+   j.status==='running'?(j.waiting
+     ?'Пауза перед следующим роликом: '+Math.max(0,Math.ceil((j.next_publish_at*1000-Date.now())/1000))+' сек'
+     :'Этап: '+(j.items?.at(-1)?.step_label||'Подготовка')):'';
 
  $('jobList').innerHTML=(j.items||[]).length?j.items.slice(-50).reverse().map(i=>
   '<div class="job-item"><b>@'+esc(i.username)+'</b> · '+esc(i.video)+
