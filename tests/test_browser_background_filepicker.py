@@ -182,7 +182,7 @@ class FilePickerTests(unittest.IsolatedAsyncioTestCase):
         page = MockPage()
         with self.assertRaises(RuntimeError) as error:
             await browser._choose_instagram_video(page, Path("fourth.mp4"))
-        self.assertIn("Select from computer", str(error.exception))
+        self.assertIn("Post", str(error.exception))
         self.assertEqual(page.files, [])
 
 
