@@ -1233,9 +1233,22 @@ async def instagram_media_diagnostic(body: MediaDiagnosticRequest):
                                  follow_redirects=False) as client:
         video_check = await probe(client, video, "video")
         cover_check = await probe(client, cover, "cover")
+    # Surface encoding details too: Meta's documented Reels audio target is
+    # 128kbps AAC. Old exports may still contain 192kbps AAC.
+    try:
+        report = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries",
+             "stream=codec_type,codec_name,bit_rate,sample_rate,width,height,avg_frame_rate",
+             "-of", "json", str(video)],
+            capture_output=True, text=True, timeout=15, check=True,
+        )
+        media_streams = json.loads(report.stdout).get("streams", [])
+    except (OSError, subprocess.SubprocessError, ValueError):
+        media_streams = []
     return {"ok": video_check["ok"] and cover_check["ok"],
             "base_url": settings.public_base_url,
             "video": video_check, "cover": cover_check,
+            "streams": media_streams,
             "note": "Это проверка из текущей сети; Meta может видеть URL иначе."}
 
 
