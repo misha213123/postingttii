@@ -124,6 +124,18 @@ IG_CIRCLE_CLAIMS: dict[str, str] = {}
 # The existing per-account cool-downs and between-wave pauses remain active.
 INSTAGRAM_META_LOCKS: dict[int, asyncio.Lock] = {}
 
+
+def _instagram_meta_parallel_limit() -> int:
+    # Cloudflare Quick Tunnel is a single local relay. Keep some parallelism
+    # without forcing it to stream eight source videos and covers at once.
+    try:
+        return max(1, min(8, int(os.getenv("INSTAGRAM_META_PARALLEL", "2"))))
+    except (ValueError, OverflowError):
+        return 2
+
+
+INSTAGRAM_META_DOWNLOAD_SLOTS = asyncio.Semaphore(_instagram_meta_parallel_limit())
+
 def _circle_id(filename: str) -> str | None:
     import re
     m = re.fullmatch(r"tg_([a-zA-Z0-9_]+)_([0-9]+)[.]mp4", Path(filename).name, re.I)
@@ -387,10 +399,13 @@ async def _publish_single_target(
                 cover_token = secrets.token_urlsafe(24)
                 MEDIA_TOKENS[cover_token] = cover_path
                 cover_url = f"{settings.public_base_url}/media/{cover_token}" if settings.public_base_url else ""
-                result = await instagram_upload(
-                    slot, video_url, instagram_caption(caption, video.name, slot),
-                    cover_url=cover_url,
-                )
+                # Cap simultaneous Meta container processing across accounts;
+                # a single public tunnel otherwise serves many heavy MP4s.
+                async with INSTAGRAM_META_DOWNLOAD_SLOTS:
+                    result = await instagram_upload(
+                        slot, video_url, instagram_caption(caption, video.name, slot),
+                        cover_url=cover_url,
+                    )
         else:
             account = store.get("tiktok", slot) or {}
             result = (
@@ -1014,7 +1029,11 @@ async def publish(body: PublishRequest):
                 cover_token = secrets.token_urlsafe(24)
                 MEDIA_TOKENS[cover_token] = cover_path
                 cover_url = f"{settings.public_base_url}/media/{cover_token}"
-                result = await instagram_upload(slot, video_url, instagram_caption(body.caption, video.name, slot), cover_url=cover_url)
+                async with INSTAGRAM_META_DOWNLOAD_SLOTS:
+                    result = await instagram_upload(
+                        slot, video_url, instagram_caption(body.caption, video.name, slot),
+                        cover_url=cover_url,
+                    )
                 asyncio.create_task(_expire_media_token(cover_token, 300))
             else:
                 raise RuntimeError(f"Неизвестная платформа: {platform}")
