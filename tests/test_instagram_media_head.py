@@ -18,7 +18,7 @@ from app.main import app, MEDIA_TOKENS
 class InstagramMediaTransportTests(unittest.TestCase):
     def test_mp4_supports_head_get_and_byte_ranges(self):
         async def exercise():
-            token = "AbCdEf0123456789_AbCdEf01234567"  # 32 URL-safe chars
+            token = "AbCdEf0123456789_AbCdEf012345678"  # 32 URL-safe chars
             content = b"sample-reel-test-payload"
             with tempfile.TemporaryDirectory() as directory:
                 video = Path(directory) / "test.mp4"
