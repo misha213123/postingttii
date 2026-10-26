@@ -44,6 +44,7 @@ class ParallelInstagramTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(main.publish_state, "mark_completed"),
                 patch.object(main, "instagram_caption", return_value="caption"),
                 patch.object(main, "instagram_upload", new=AsyncMock(side_effect=fake_upload)),
+                patch.object(main, "_prepare_instagram_audio", side_effect=lambda path: (path, None)),
                 patch.object(main, "_expire_media_token", new=AsyncMock()),
                 patch.dict(main.INSTAGRAM_META_LOCKS, {}, clear=True),
             ):
@@ -79,6 +80,7 @@ class ParallelInstagramTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(main.publish_state, "mark_completed"),
                 patch.object(main, "instagram_caption", return_value="caption"),
                 patch.object(main, "instagram_upload", new=AsyncMock(side_effect=fake_upload)),
+                patch.object(main, "_prepare_instagram_audio", side_effect=lambda path: (path, None)),
                 patch.object(main, "_expire_media_token", new=AsyncMock()),
                 patch.dict(main.INSTAGRAM_META_LOCKS, {}, clear=True),
             ):
