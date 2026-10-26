@@ -10,6 +10,7 @@ import asyncio
 import io
 import json
 import logging
+import random
 import os
 import re
 import secrets
@@ -115,8 +116,16 @@ def _public_account(account_id: str, data: dict) -> dict:
         (PROFILES_DIR / account_id / "camoufox" if browser == "camoufox"
          else PROFILES_DIR / account_id)
     )
+    cover_id = str(data.get("cover_id") or "")
+    cover_exists = bool(
+        re.fullmatch(r"[a-f0-9]{24}", cover_id)
+        and (COVERS_DIR / f"{cover_id}.jpg").is_file()
+    )
     return {
         "id": account_id, "username": data["username"],
+        "cover_id": cover_id if cover_exists else "",
+        "cover_url": (f"/api/browser-instagram/cover/{cover_id}"
+                      if cover_exists else ""),
         "browser": browser, "profile_path": external,
         "proxy_configured": bool(data.get("proxy")),
         "proxy_label": masked_proxy(data.get("proxy", "")),
@@ -168,13 +177,18 @@ class ProxyInput(BaseModel):
     proxy: str = Field(default="", max_length=1200)
 
 
+class AccountCoverInput(BaseModel):
+    cover_id: str = Field(default="", max_length=24)
+
+
 class PublishInput(BaseModel):
     accounts: list[str] = Field(min_length=1, max_length=25)
     folder_id: str = "default"
     filenames: list[str] = Field(min_length=1, max_length=100)
     caption: str = Field(default="", max_length=2200)
-    covers: dict[str, str] = Field(default_factory=dict)
     require_covers: bool = False
+    min_delay_minutes: float = Field(default=0, ge=0, le=1440)
+    max_delay_minutes: float = Field(default=0, ge=0, le=1440)
     # Require explicit user confirmation of auto Share on selected accounts.
     confirmed: bool = False
 
@@ -249,6 +263,22 @@ def preview_cover(cover_id: str, request: Request):
                         headers={"Cache-Control": "private, no-store"})
 
 
+@router.put("/account/{account_id}/cover")
+def set_account_cover(account_id: str, body: AccountCoverInput, request: Request):
+    """A single stored cover for every Reel published by this account."""
+    _local(request)
+    if CURRENT_JOB and CURRENT_JOB.get("status") == "running":
+        raise HTTPException(409, "Нельзя менять обложку во время публикации")
+    if body.cover_id:
+        _cover_path(body.cover_id)
+    accounts = _read()
+    if account_id not in accounts:
+        raise HTTPException(404, "Браузерный аккаунт не найден")
+    accounts[account_id]["cover_id"] = body.cover_id
+    _write(accounts)
+    return _public_account(account_id, accounts[account_id])
+
+
 @router.post("/account")
 def add_account(body: BrowserAccount, request: Request):
     _local(request)
@@ -274,6 +304,7 @@ def add_account(body: BrowserAccount, request: Request):
     data[key] = {
         "username": username, "proxy": body.proxy.strip(),
         "browser": body.browser, "profile_path": profile_path,
+        "cover_id": "",
     }
     _write(data)
     return _public_account(key, data[key])
@@ -792,7 +823,32 @@ async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None
         return "needs_review"
 
 
-async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str, covers: dict[str, Path] | None = None):
+async def _wait_between_posts(job: dict, minimum: float, maximum: float) -> bool:
+    """Interruptible delay; no sleep before first or after last upload."""
+    seconds = random.uniform(minimum, maximum) * 60
+    if seconds <= 0:
+        return not job.get("cancel")
+    deadline = time.time() + seconds
+    job["next_publish_at"] = deadline
+    job["waiting"] = True
+    try:
+        while not job.get("cancel"):
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return True
+            job["pause_remaining_seconds"] = max(0, int(remaining + 0.999))
+            await asyncio.sleep(min(1.0, remaining))
+        return False
+    finally:
+        job["waiting"] = False
+        job["next_publish_at"] = None
+        job["pause_remaining_seconds"] = 0
+
+
+async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str,
+                   covers: dict[str, Path] | None = None,
+                   min_delay_minutes: float = 0,
+                   max_delay_minutes: float = 0):
     # A selected source can target multiple Instagram accounts. Clear it from
     # the folder only after every selected upload of this source is confirmed.
     remaining = Counter(path.resolve() for _, path in selected)
@@ -809,7 +865,7 @@ async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str, co
             try:
                 _stage(item, "open_profile", "Подключаю профиль браузера")
                 ctx = await _context(account_id)
-                cover = (covers or {}).get(path.name)
+                cover = (covers or {}).get(account_id)
                 if cover is not None:
                     result = await _publish_via_browser(
                         ctx, path, caption, item=item, cover=cover,
@@ -846,11 +902,19 @@ async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str, co
             if item["status"] in ("needs_review", "error"):
                 job["status"] = ("needs_review" if item["status"] == "needs_review" else "stopped")
                 return
+            if index < len(selected) - 1:
+                if not await _wait_between_posts(
+                    job, min_delay_minutes, max_delay_minutes
+                ):
+                    break
         job["status"] = "stopped" if job.get("cancel") else "completed"
     except asyncio.CancelledError:
         job["status"] = "stopped"
         raise
     finally:
+        job["waiting"] = False
+        job["next_publish_at"] = None
+        job["pause_remaining_seconds"] = 0
         job["finished_at"] = int(time.time())
 
 
@@ -873,11 +937,16 @@ async def publish(body: PublishInput, request: Request):
         raise HTTPException(400, "Одно из видео не найдено в выбранной папке") from exc
     if not all(p.suffix.lower() in VIDEO_SUFFIXES for p in clips):
         raise HTTPException(400, "Для браузерной публикации выбери MP4/MOV")
-    if body.require_covers and any(name not in body.covers for name in names):
-        raise HTTPException(400, "Заранее выбери обложку для каждого отмеченного ролика")
-    if any(name not in names for name in body.covers):
-        raise HTTPException(400, "Список обложек не совпадает с выбранными видео")
-    covers = {name: _cover_path(cover_id) for name, cover_id in body.covers.items()}
+    if body.max_delay_minutes < body.min_delay_minutes:
+        raise HTTPException(400, "Максимальная задержка не может быть меньше минимальной")
+    if body.require_covers and any(
+        not known[account_id].get("cover_id") for account_id in account_ids
+    ):
+        raise HTTPException(400, "У каждого выбранного аккаунта должна быть обложка")
+    covers = {
+        account_id: _cover_path(known[account_id]["cover_id"])
+        for account_id in account_ids if known[account_id].get("cover_id")
+    }
     # Deliberate explicit bounded snapshot. Each selected video is queued for
     # each selected account. No scheduled repeats or stealth automation.
     if len(clips) * len(account_ids) > 25:
@@ -888,13 +957,23 @@ async def publish(body: PublishInput, request: Request):
         "created_at": int(time.time()), "finished_at": None,
         "accounts": account_ids, "total": len(jobs),
         "progress": 0, "items": [], "cancel": False,
+        "min_delay_minutes": body.min_delay_minutes,
+        "max_delay_minutes": body.max_delay_minutes,
+        "waiting": False, "next_publish_at": None,
+        "pause_remaining_seconds": 0,
     }
-    if covers:
+    if covers or body.min_delay_minutes or body.max_delay_minutes:
         CURRENT_TASK = asyncio.create_task(
-            _run_job(CURRENT_JOB, jobs, body.caption, covers=covers)
+            _run_job(
+                CURRENT_JOB, jobs, body.caption, covers=covers,
+                min_delay_minutes=body.min_delay_minutes,
+                max_delay_minutes=body.max_delay_minutes,
+            )
         )
     else:
-        CURRENT_TASK = asyncio.create_task(_run_job(CURRENT_JOB, jobs, body.caption))
+        CURRENT_TASK = asyncio.create_task(
+            _run_job(CURRENT_JOB, jobs, body.caption)
+        )
     return {"ok": True, "job_id": CURRENT_JOB["id"], "total": len(jobs)}
 
 
