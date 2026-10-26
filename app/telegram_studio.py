@@ -828,6 +828,80 @@ def _timecode_fontfile() -> str | None:
     return ""
 
 
+def orbit_sprite_path(circle_size: int) -> Path:
+    """Cache a low-cost PNG for the spinning light segments outside the circle.
+
+    Pillow draws the segments only once; FFmpeg rotates the cached 512px
+    sprite instead of evaluating another 1080px geq mask on every frame.
+    """
+    filename = ORBIT_ASSETS / f"orbit_v2_{circle_size}.png"
+    if filename.is_file() and filename.stat().st_size > 0:
+        return filename
+    dimension = 512
+    padding = 36
+    unit = dimension / (circle_size + 2 * padding)
+    center = dimension / 2
+    outer = (circle_size / 2 + 16) * unit
+    segments = Image.new("RGBA", (dimension, dimension), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(segments)
+    arcs = [(4, 42), (61, 88), (107, 146), (171, 211),
+            (235, 275), (295, 329), (341, 356)]
+    for i, (start, end) in enumerate(arcs):
+        color = (92, 226, 255, 255) if i % 2 == 0 else (58, 115, 255, 255)
+        radius = outer + (3 * unit if i % 2 else 0)
+        bounds = (center - radius, center - radius,
+                  center + radius, center + radius)
+        draw.arc(bounds, start, end, fill=color, width=max(3, round(7 * unit)))
+    # Tiny scattered pinpoints make the orbit visually distinct from a solid ring.
+    dot_radius = (circle_size / 2 + 25) * unit
+    for angle in range(45, 340, 16):
+        radians = math.radians(angle)
+        px = center + dot_radius * math.cos(radians)
+        py = center + dot_radius * math.sin(radians)
+        rad = max(1.5, 2.5 * unit)
+        draw.ellipse((px - rad, py - rad, px + rad, py + rad),
+                     fill=(120, 225, 255, 235))
+    glow = segments.filter(ImageFilter.GaussianBlur(radius=4))
+    glow.putalpha(glow.getchannel("A").point(lambda value: int(value * 0.58)))
+    image = Image.alpha_composite(glow, segments)
+    filename.parent.mkdir(parents=True, exist_ok=True)
+    temp = filename.with_name(filename.stem + "_" + uuid.uuid4().hex + ".png")
+    try:
+        image.save(temp, "PNG")
+        temp.replace(filename)
+    finally:
+        temp.unlink(missing_ok=True)
+    return filename
+
+
+def dotted_progress_filter(
+    design: RenderDesign, seconds: float, fps: int, previous: str
+) -> str:
+    """Animated neon dot fill, with no text and very little pixel processing."""
+    w = design.progress_width
+    h = max(12, design.progress_height)
+    x = max(0, min(design.progress_x, 1080 - w))
+    y = max(0, min(design.progress_y, 1920 - h))
+    count = max(9, min(28, round(w / 27)))
+    pitch = w / count
+    mid = h / 2
+    radius = max(3, min(h / 2 - 1, pitch * 0.25))
+    distance = (
+        f"(mod(X\\,{pitch:.4f})-{pitch/2:.4f})"
+        f"*(mod(X\\,{pitch:.4f})-{pitch/2:.4f})+"
+        f"(Y-{mid:.3f})*(Y-{mid:.3f})"
+    )
+    return (
+        f"color=c=0x6ad9ff:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
+        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='if(lte({distance}\\,{radius*radius:.3f})\\,"
+        f"if(lte(X\\,W*min(T/{seconds:.3f}\\,1))\\,255\\,65)\\,0)'"
+        "[progress_dots];"
+        f"[{previous}][progress_dots]overlay={x}:{y}:shortest=1"
+        "[with_progress];"
+    )
+
+
 def render(
     source: Path,
     bg: Path,
@@ -887,8 +961,22 @@ def render(
         f"[bg][circle]overlay={x}:{y}:shortest=1[base_circle];"
     )
     last = "base_circle"
+    orbit = design.visual_template == "orbit_dots"
+    orbit_asset = orbit_sprite_path(size) if orbit else None
+    if orbit:
+        pad = 36
+        filter_chain += (
+            f"[2:v]format=rgba,rotate=a='2*PI*t/7':ow=iw:oh=ih:c=none,"
+            f"scale={size+2*pad}:{size+2*pad}:flags=bilinear[orbit_ring];"
+            f"[{last}][orbit_ring]overlay={x-pad}:{y-pad}:"
+            "shortest=1:format=auto[with_orbit];"
+        )
+        last = "with_orbit"
 
-    if design.progress_enabled:
+    if design.progress_enabled and orbit:
+        filter_chain += dotted_progress_filter(design, seconds, fps, last)
+        last = "with_progress"
+    elif design.progress_enabled:
         px = max(0, min(design.progress_x, 1080 - design.progress_width))
         py = max(0, min(design.progress_y, 1920 - design.progress_height))
         w, h = design.progress_width, design.progress_height
@@ -903,10 +991,10 @@ def render(
         )
         last = "with_progress"
 
-    fontfile = _timecode_fontfile() if design.timecode_enabled else None
+    fontfile = _timecode_fontfile() if design.timecode_enabled and not orbit else None
     # On Windows, never call drawtext without an explicit installed font:
     # MSYS2 builds can access-violate inside Fontconfig in that situation.
-    if design.timecode_enabled and fontfile != "":
+    if design.timecode_enabled and not orbit and fontfile != "":
         tx = min(design.timecode_x, 1060)
         ty = min(design.timecode_y, 1920 - design.timecode_font_size - 4)
         remaining = int(seconds + 0.5)
@@ -925,7 +1013,7 @@ def render(
             f"x={tx}:y={ty}:fix_bounds=1[with_timecode];"
         )
         last = "with_timecode"
-    elif design.timecode_enabled and fontfile == "":
+    elif design.timecode_enabled and not orbit and fontfile == "":
         JOB.setdefault("notes", []).append(
             "Таймкод временно выключен: не найден доступный системный шрифт Windows. "
             "Видео и остальные элементы рендерятся."
@@ -936,12 +1024,14 @@ def render(
     # dashboard can display actual filter and encoder errors on Windows.
     cmd = ["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error",
            "-y", "-i", str(source), *bg_input]
+    if orbit_asset is not None:
+        cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(orbit_asset)]
 
     if design.banner_enabled:
         if not banner or not banner.is_file():
             raise ValueError("Включён рекламный баннер, но файл не загружен")
         cmd += banner_input_args(banner)
-        filter_chain += banner_overlay_filter(design, 2)
+        filter_chain += banner_overlay_filter(design, 3 if orbit else 2)
     else:
         filter_chain += (
             f"[composite]fps={fps},"
