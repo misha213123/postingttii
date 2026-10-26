@@ -692,18 +692,19 @@ async def _choose_instagram_video(page, video: Path) -> None:
     post_name = re.compile(r"^(Post|Публикация|Пост)$", re.I)
 
     async def choose_post_from_menu() -> bool:
-        choices = [
-            page.get_by_role("menuitem", name=post_name).first,
-            page.locator('[role="menu"]').get_by_role(
+        candidates = (
+            lambda: page.get_by_role("menuitem", name=post_name).first,
+            lambda: page.locator('[role="menu"]').get_by_role(
                 "button", name=post_name
             ).first,
-            page.locator('[role="menu"]').get_by_text(post_name).first,
-            page.locator('[role="dialog"]').get_by_role(
+            lambda: page.locator('[role="menu"]').get_by_text(post_name).first,
+            lambda: page.locator('[role="dialog"]').get_by_role(
                 "button", name=post_name
             ).first,
-        ]
-        for choice in choices:
+        )
+        for candidate in candidates:
             try:
+                choice = candidate()
                 if await choice.is_visible():
                     await choice.click(timeout=2400)
                     if _in_reels_feed(page):
