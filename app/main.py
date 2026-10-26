@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 import uvicorn
+import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -1153,6 +1154,70 @@ async function load(){
 }
 load().catch(err=>{root.textContent='Не удалось загрузить обложки: '+err.message;});
 </script></html>""")
+
+
+class MediaDiagnosticRequest(BaseModel):
+    filename: str
+    source_folder: str = "default"
+    slot: int = Field(default=1, ge=1, le=1000)
+
+
+@app.post("/api/instagram/media-diagnostic")
+async def instagram_media_diagnostic(body: MediaDiagnosticRequest):
+    """Test PUBLIC_BASE_URL end to end without posting or exposing media tokens.
+
+    This local-only API checks the actual file and cover via the Cloudflare
+    tunnel. A working callback alone does NOT prove the media route works.
+    """
+    if not settings.public_base_url.startswith("https://"):
+        raise HTTPException(400, "PUBLIC_BASE_URL должен использовать HTTPS")
+    folder = account_folder(body.slot) if body.source_folder == "linked" else body.source_folder
+    video = _safe_video(body.filename, folder)
+    cover = COVER_DIR / f"{body.slot}.jpg"
+    if not cover.is_file():
+        raise HTTPException(404, f"Не найдена обложка Instagram #{body.slot}")
+
+    async def probe(client: httpx.AsyncClient, path: Path, kind: str) -> dict:
+        token = secrets.token_urlsafe(24)
+        MEDIA_TOKENS[token] = path
+        url = f"{settings.public_base_url}/media/{token}"
+        result = {"kind": kind, "file_bytes": path.stat().st_size, "ok": False}
+        try:
+            head = await client.head(url)
+            result["head_status"] = head.status_code
+            result["content_type"] = head.headers.get("content-type", "")
+            result["content_length"] = head.headers.get("content-length", "")
+            async with client.stream("GET", url, headers={"Range": "bytes=0-1023"}) as response:
+                result["range_status"] = response.status_code
+                result["content_range"] = response.headers.get("content-range", "")
+                sample = 0
+                async for chunk in response.aiter_bytes():
+                    sample += len(chunk)
+                    if sample >= 1024:
+                        break
+            result["sample_bytes"] = min(sample, 1024)
+            expected_type = "video/mp4" if kind == "video" else "image/jpeg"
+            result["ok"] = (
+                head.status_code == 200
+                and result["content_type"].lower().startswith(expected_type)
+                and head.headers.get("content-length") == str(path.stat().st_size)
+                and result["range_status"] == 206
+                and sample > 0
+            )
+        except httpx.HTTPError as exc:
+            result["error"] = f"{type(exc).__name__}: {str(exc)[:250]}"
+        finally:
+            MEDIA_TOKENS.pop(token, None)
+        return result
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(25.0, connect=10.0),
+                                 follow_redirects=False) as client:
+        video_check = await probe(client, video, "video")
+        cover_check = await probe(client, cover, "cover")
+    return {"ok": video_check["ok"] and cover_check["ok"],
+            "base_url": settings.public_base_url,
+            "video": video_check, "cover": cover_check,
+            "note": "Это проверка из текущей сети; Meta может видеть URL иначе."}
 
 
 @app.api_route("/media/{token}", methods=["GET", "HEAD"])
