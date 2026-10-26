@@ -641,6 +641,95 @@ async def _open_instagram_create(page) -> None:
     raise RuntimeError("Не найдена кнопка «Создать» в Instagram.")
 
 
+async def _choose_instagram_video(page, video: Path) -> None:
+    """Attach one local video through Instagram's supported file-picker UI.
+
+    The Create button can open a Post/Reel menu; on some layouts the file
+    input does not exist until "Select from computer" is clicked.
+    Never click Share or try to upload a second file as a fallback.
+    """
+    file_path = str(video)
+    choose_name = re.compile(
+        r"^(Select from computer|Select from your computer|"
+        r"Choose from computer|Выбрать с компьютера|"
+        r"Выбрать на компьютере|Выбрать файл|Выберите файл)$",
+        re.I,
+    )
+
+    async def via_chooser() -> bool:
+        controls = [
+            page.get_by_role("button", name=choose_name).last,
+            page.get_by_text(choose_name).last,
+            page.get_by_role("link", name=choose_name).last,
+        ]
+        for control in controls:
+            try:
+                async with page.expect_file_chooser(timeout=3500) as event:
+                    await control.click(timeout=2000)
+                chooser = await event.value
+                await chooser.set_files(file_path)
+                return True
+            except Exception:
+                continue
+        return False
+
+    async def via_input() -> bool:
+        # Prefer the video input inside the active dialog over hidden global
+        # inputs belonging to unrelated Instagram navigation components.
+        selectors = [
+            '[role="dialog"] input[type="file"][accept*="video"]',
+            '[role="dialog"] input[type="file"]',
+            'input[type="file"][accept*="video"]',
+            'input[type="file"][accept*="mp4"]',
+            'input[type="file"]',
+        ]
+        for selector in selectors:
+            field = page.locator(selector).last
+            try:
+                await field.wait_for(state="attached", timeout=1300)
+                await field.set_input_files(file_path, timeout=35000)
+                return True
+            except Exception:
+                continue
+        return False
+
+    # The first Create click often reveals a menu with Post/Reel choices.
+    # Prefer the ordinary Post route: Instagram detects MP4 Reels on desktop.
+    menu_names = (
+        re.compile(r"^Post$|^Публикация$|^Пост$", re.I),
+        re.compile(r"^Reel$|^Reels$|^Рилс$|^Видео Reels$", re.I),
+    )
+    for pattern in menu_names:
+        menu = page.get_by_role("menuitem", name=pattern).first
+        try:
+            if await menu.is_visible():
+                await menu.click(timeout=2200)
+                break
+        except Exception:
+            continue
+
+    if await via_chooser():
+        return
+    if await via_input():
+        return
+
+    # Some Instagram variants put "Post" directly into a popover as text.
+    for pattern in menu_names:
+        choice = page.get_by_text(pattern).last
+        try:
+            await choice.click(timeout=1700)
+        except Exception:
+            continue
+        if await via_chooser() or await via_input():
+            return
+
+    raise RuntimeError(
+        "Не удалось выбрать видео в Instagram: отсутствует кнопка "
+        "«Select from computer» или поле загрузки. "
+        "Открой аккаунт в видимом Camoufox и проверь меню «Создать → Post»."
+    )
+
+
 def _validate_vertical_reel(video: Path) -> tuple[int, int]:
     """Block a non-9:16 source before any Instagram Share click."""
     try:
@@ -782,28 +871,10 @@ async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None
             "публикация остановлена без отправки."
         ) from None
 
-    _stage(item, "choose_video", "Выбираю файл видео")
-    try:
-        # Instagram may show the Post/Reel chooser instead of the upload form.
-        # Prefer Reels for video, but never click Share at this stage.
-        upload = page.locator('input[type="file"]').first
-        if not await _file_input_attached(page, timeout_ms=1800):
-            for name in (r"^Reel$|^Reels$|^Рилс$|^Видео Reels$",
-                         r"^Post$|^Публикация$"):
-                try:
-                    await page.get_by_text(re.compile(name, re.I)).last.click(
-                        timeout=2200
-                    )
-                    break
-                except Exception:
-                    continue
-        await upload.wait_for(state="attached", timeout=20000)
-        await upload.set_input_files(str(video), timeout=35000)
-    except Exception:
-        raise RuntimeError(
-            "Не удалось выбрать видео в Instagram. Проверь окно загрузки "
-            "и поддерживаемый формат файла."
-        ) from None
+    _stage(item, "choose_video", "Выбираю видео через загрузчик Instagram")
+    # Keep actionable selector errors; external Playwright details are
+    # sanitized by the helper instead of leaking cookies or proxy URLs.
+    await _choose_instagram_video(page, video)
 
     _stage(item, "aspect", "Проверяю 9:16 и выбираю полный вертикальный кадр")
     _validate_vertical_reel(video)
