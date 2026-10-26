@@ -1155,7 +1155,7 @@ load().catch(err=>{root.textContent='Не удалось загрузить об
 </script></html>""")
 
 
-@app.get("/media/{token}")
+@app.api_route("/media/{token}", methods=["GET", "HEAD"])
 async def public_media(token: str):
     path = MEDIA_TOKENS.get(token)
     if not path or not path.exists():
