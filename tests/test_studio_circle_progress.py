@@ -17,7 +17,8 @@ def graph_for(design: studio.RenderDesign) -> tuple[str, list[str]]:
         patch.object(studio, "_timecode_fontfile", return_value="_timecode_render_font.ttf"),
         patch.object(studio.subprocess, "run") as call,
     ):
-        studio.render(Path("circle.mp4"), Path("background.mp4"), Path("reel.mp4"), design)
+        studio.render(Path("circle.mp4"), Path("background.mp4"), Path("reel.mp4"),
+                      design.model_copy(update={"render_speed": "original"}))
     args = call.call_args.args[0]
     return args[args.index("-filter_complex") + 1], args
 
@@ -77,7 +78,8 @@ class StyledCircleTests(unittest.TestCase):
                 studio.RenderDesign(**update)
 
     def test_banner_keeps_its_own_chromakey_and_fps(self):
-        design = studio.RenderDesign(banner_enabled=True, output_fps=60)
+        design = studio.RenderDesign(banner_enabled=True, output_fps=60,
+                                     render_speed="original")
         with patch.object(studio, "duration", side_effect=[6.0, 12.0]), \
              patch.object(studio, "is_image_background", return_value=False), \
              patch.object(studio.random, "uniform", return_value=0.0), \
