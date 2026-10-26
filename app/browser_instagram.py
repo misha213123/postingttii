@@ -667,42 +667,60 @@ async def _open_instagram_create(page) -> None:
 
 
 async def _choose_instagram_video(page, video: Path) -> None:
-    """Upload via Create -> Post -> Select from computer, never the Reels feed.
+    """Use the '+' popup's *Post* action in both mobile and desktop layouts.
 
-    The Reels navigation item is not a publish action. Generic "Reels" or
-    "Post" matches in the global timeline must not be clicked.
+    The narrow Instagram layout shows a bottom-left popup:
+        Post / Live video / Ad
+    Its Post entry may be an unlabelled div (not role=menuitem). Choose only
+    the exact visible 'Post' text within this popup. Never click Reels/feed,
+    guess URLs, or press Share as a recovery action.
     """
-    file_path = str(video)
-    choose_name = re.compile(
+    filename = str(video)
+    post_label = re.compile(r"^(Post|Публикация|Пост)$", re.I)
+    choose_label = re.compile(
         r"^(Select from computer|Select from your computer|"
         r"Choose from computer|Выбрать с компьютера|"
         r"Выбрать на компьютере|Выбрать файл|Выберите файл)$",
         re.I,
     )
-    post_name = re.compile(r"^(Post|Публикация|Пост)$", re.I)
 
-    async def choose_post_from_menu() -> bool:
-        # Only look for Post after the '+' control has been clicked.
-        # Instagram's popup may use menuitem, button, or just a div/span,
-        # so exact-text is the last fallback. NEVER search for Reels.
+    async def popup_open() -> bool:
+        """The adjacent Live video/Ad options identify the Create popup."""
+        for name in ("Live video", "Прямой эфир"):
+            try:
+                if await page.get_by_text(name, exact=True).first.is_visible():
+                    return True
+            except Exception:
+                continue
+        # Fallback for desktop, where there may be a single Post entry.
+        try:
+            return await page.get_by_role(
+                "menuitem", name=post_label
+            ).first.is_visible()
+        except Exception:
+            return False
+
+    async def open_post() -> bool:
+        # Prefer exact text. Generic navigation and captions can also
+        # contain 'post', but only the Create popup has 'Live video' beside it.
+        if not await popup_open():
+            return False
         candidates = (
-            lambda: page.get_by_role("menuitem", name=post_name).first,
-            lambda: page.locator('[role="menu"]').get_by_role(
-                "button", name=post_name
-            ).first,
-            lambda: page.locator('[role="menu"]').get_by_text(post_name).first,
-            lambda: page.get_by_role("button", name=post_name).last,
-            lambda: page.get_by_text(post_name).last,
+            lambda: page.get_by_role("menuitem", name=post_label).first,
+            lambda: page.get_by_role("button", name=post_label).first,
+            lambda: page.get_by_text("Post", exact=True).last,
+            lambda: page.get_by_text("Публикация", exact=True).last,
+            lambda: page.get_by_text("Пост", exact=True).last,
         )
         for candidate in candidates:
             try:
-                choice = candidate()
-                if not await choice.is_visible():
+                target = candidate()
+                if not await target.is_visible():
                     continue
-                await choice.click(timeout=2500)
-                if _in_reels_feed(page):
+                await target.click(timeout=3500)
+                if _in_reels_feed(page) or _opened_create_profile_instead(page):
                     raise RuntimeError(
-                        "Instagram открыл ленту Reels вместо формы Post."
+                        "Instagram открыл не форму публикации после Post."
                     )
                 return True
             except RuntimeError:
@@ -711,42 +729,40 @@ async def _choose_instagram_video(page, video: Path) -> None:
                 continue
         return False
 
-    async def via_chooser() -> bool:
-        controls = [
-            page.get_by_role("button", name=choose_name).last,
-            page.get_by_text(choose_name).last,
-            page.get_by_role("link", name=choose_name).last,
-        ]
-        for control in controls:
+    async def upload_from_button() -> bool:
+        candidates = (
+            lambda: page.get_by_role("button", name=choose_label).first,
+            lambda: page.get_by_text("Select from computer", exact=True).first,
+            lambda: page.get_by_text("Выбрать с компьютера", exact=True).first,
+        )
+        for candidate in candidates:
             try:
-                async with page.expect_file_chooser(timeout=3500) as event:
-                    await control.click(timeout=2000)
-                chooser = await event.value
-                await chooser.set_files(file_path)
+                button = candidate()
+                if not await button.is_visible():
+                    continue
+                async with page.expect_file_chooser(timeout=6000) as opened:
+                    await button.click(timeout=3500)
+                chooser = await opened.value
+                await chooser.set_files(filename)
                 return True
             except Exception:
                 continue
         return False
 
-    async def via_input(*, post_selected: bool = False) -> bool:
-        selectors = [
+    async def upload_from_input() -> bool:
+        # The Post editor may inject its file input outside a role=dialog.
+        for selector in (
             '[role="dialog"] input[type="file"][accept*="video"]',
             '[role="dialog"] input[type="file"]',
             '[aria-modal="true"] input[type="file"]',
-        ]
-        # On some Instagram versions the Post dialog contains an input
-        # outside role=dialog. Search these only AFTER selecting Post.
-        if post_selected:
-            selectors.extend([
-                'input[type="file"][accept*="video"]',
-                'input[type="file"][accept*="mp4"]',
-                'input[type="file"]',
-            ])
-        for selector in selectors:
-            field = page.locator(selector).last
+            'input[type="file"][accept*="video"]',
+            'input[type="file"][accept*="mp4"]',
+            'input[type="file"]',
+        ):
             try:
-                await field.wait_for(state="attached", timeout=1300)
-                await field.set_input_files(file_path, timeout=35000)
+                field = page.locator(selector).last
+                await field.wait_for(state="attached", timeout=2200)
+                await field.set_input_files(filename, timeout=35000)
                 return True
             except Exception:
                 continue
@@ -754,33 +770,39 @@ async def _choose_instagram_video(page, video: Path) -> None:
 
     if _opened_create_profile_instead(page):
         raise RuntimeError(
-            "Вместо редактора Instagram открыта страница @create. "
-            "Нужен пункт «+ → Post», а не адрес /create/select/."
+            "Instagram открыл профиль @create вместо редактора. "
+            "Вернись на главную и нажми «+ → Post»."
         )
     if _in_reels_feed(page):
         raise RuntimeError(
-            "Вместо формы публикации открыта лента Reels. "
-            "Вернись на главную Instagram и повтори через «+ → Post»."
+            "Instagram открыл ленту Reels вместо создания публикации."
         )
 
-    # An already-open dialog can offer the file picker immediately.
-    if await via_chooser():
-        return
-    if await via_input():
-        return
-
-    # Otherwise the first '+' click opens Create's popup; select Post
-    # explicitly, then attach the video. Do not use /create/select/ URLs.
-    if not await choose_post_from_menu():
+    # IMPORTANT: Select Post *before* searching for video inputs. On the
+    # narrow layout the '+' popup contains no file upload widget and trying
+    # unrelated hidden inputs can disrupt or dismiss the popup.
+    if await popup_open():
+        if not await open_post():
+            raise RuntimeError(
+                "Меню «+» открыто, но не удалось нажать Post. "
+                "Проверь нижнее меню Camoufox."
+            )
+    elif not await _file_input_attached(page, timeout_ms=900):
         raise RuntimeError(
-            "После нажатия «+» не появился пункт «Post / Публикация». "
-            "Проверь раскрытое меню Camoufox; загрузка остановлена."
+            "Не найдено меню «+ → Post» или форма загрузки Instagram. "
+            "Открой Camoufox в обычном режиме и проверь пункт Post."
         )
-    if await via_chooser() or await via_input(post_selected=True):
+
+    # Instagram creates the input asynchronously, often after animation.
+    if await upload_from_input():
         return
+    if await upload_from_button():
+        return
+    # Some builds create the input only after a click on the Choose button.
+    # Do not attempt clicking a Reels navigation element as a fallback.
     raise RuntimeError(
-        "Instagram открыл Post, но не показал «Select from computer» "
-        "или поле загрузки. Проверь окно Camoufox."
+        "Пункт Post выбран, но Instagram не показал поле для MP4 "
+        "или кнопку «Select from computer». Проверь редактор Camoufox."
     )
 
 
