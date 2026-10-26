@@ -425,6 +425,7 @@ async def _publish_single_target(
 
     media_token = secrets.token_urlsafe(24)
     cover_token: str | None = None
+    prepared_cleanup: Path | None = None
     MEDIA_TOKENS[media_token] = video
     video_url = (
         f"{settings.public_base_url}/media/{media_token}"
@@ -454,6 +455,10 @@ async def _publish_single_target(
                 # Cap simultaneous Meta container processing across accounts;
                 # a single public tunnel otherwise serves many heavy MP4s.
                 async with INSTAGRAM_META_DOWNLOAD_SLOTS:
+                    prepared_media, prepared_cleanup = await asyncio.to_thread(
+                        _prepare_instagram_audio, video
+                    )
+                    MEDIA_TOKENS[media_token] = prepared_media
                     result = await instagram_upload(
                         slot, video_url, instagram_caption(caption, video.name, slot),
                         cover_url=cover_url,
@@ -477,7 +482,7 @@ async def _publish_single_target(
         if platform == "instagram":
             # Meta may still fetch both the video and its cover after a
             # container is processed. Expire both tokens after five minutes.
-            asyncio.create_task(_expire_media_token(media_token, 300))
+            asyncio.create_task(_expire_media_token(media_token, 300, prepared_cleanup))
             if cover_token is not None:
                 asyncio.create_task(_expire_media_token(cover_token, 300))
         else:
@@ -1036,6 +1041,7 @@ async def publish(body: PublishRequest):
 
     media_token = secrets.token_urlsafe(24)
     MEDIA_TOKENS[media_token] = video
+    prepared_cleanup: Path | None = None
     video_url = f"{settings.public_base_url}/media/{media_token}" if settings.public_base_url else ""
 
     results = []
@@ -1082,6 +1088,11 @@ async def publish(body: PublishRequest):
                 MEDIA_TOKENS[cover_token] = cover_path
                 cover_url = f"{settings.public_base_url}/media/{cover_token}"
                 async with INSTAGRAM_META_DOWNLOAD_SLOTS:
+                    if prepared_cleanup is None:
+                        prepared_media, prepared_cleanup = await asyncio.to_thread(
+                            _prepare_instagram_audio, video
+                        )
+                        MEDIA_TOKENS[media_token] = prepared_media
                     result = await instagram_upload(
                         slot, video_url, instagram_caption(body.caption, video.name, slot),
                         cover_url=cover_url,
@@ -1115,7 +1126,7 @@ async def publish(body: PublishRequest):
 
     # Keep the original media token alive while Meta may still request it.
     if any(target.startswith("instagram:") for target in targets):
-        asyncio.create_task(_expire_media_token(media_token, 300))
+        asyncio.create_task(_expire_media_token(media_token, 300, prepared_cleanup))
     else:
         MEDIA_TOKENS.pop(media_token, None)
     return {
