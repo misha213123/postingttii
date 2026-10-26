@@ -87,8 +87,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
    <p class="muted">Обложка выбирается один раз в карточке аккаунта выше и применяется ко всем его Reels. Она сохраняется между запусками приложения.</p>
    <label class="check-line"><input id="requireCovers" type="checkbox" checked> Не публиковать без сохранённой обложки аккаунта</label>
    <div class="two">
-     <div class="field"><label for="minDelay">Минимальная пауза (мин)</label><input id="minDelay" type="number" min="0" max="1440" step="0.5" value="0"></div>
-     <div class="field"><label for="maxDelay">Максимальная пауза (мин)</label><input id="maxDelay" type="number" min="0" max="1440" step="0.5" value="0"></div>
+     <div class="field"><label for="minDelay">Минимальная пауза (мин)</label><input id="minDelay" type="number" min="0" max="1440" step="0.01" value="0"></div>
+     <div class="field"><label for="maxDelay">Максимальная пауза (мин)</label><input id="maxDelay" type="number" min="0" max="1440" step="0.01" value="0"></div>
    </div>
    <p class="muted">Пауза между публикациями в очереди. Одинаковые значения — фиксированная задержка; разные — случайное время в выбранном диапазоне. 0/0 — без задержки. Первое видео отправляется сразу.</p>
    <div class="field"><label for="caption">Подпись к видео (необязательно)</label><textarea id="caption" maxlength="2200" placeholder="Описание и хештеги для выбранных видео"></textarea></div>
