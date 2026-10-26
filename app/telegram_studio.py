@@ -1076,7 +1076,7 @@ def render(
           if performance["video_threads"] is not None else []),
         "-profile:v", "high", "-level:v", "5.1" if fps == 60 else "4.2",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
         "-movflags", "+faststart", str(target),
     ]
     try:
