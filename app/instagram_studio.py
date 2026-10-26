@@ -509,7 +509,7 @@ def render(source, target, background, layout: InstagramLayout | None = None,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
         "-c:v", "libx264",
         *h264_quality_args(layout.quality_preset, standard_crf="19"),
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", str(target),
     ]
     try:
