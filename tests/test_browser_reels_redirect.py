@@ -93,6 +93,16 @@ class ReelsRedirectTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Reels", str(error.exception))
         self.assertEqual(page.visited, [])
 
+    async def test_fake_create_profile_rejected_explicitly(self):
+        page = ReelsRedirectPage()
+        page.url = "https://www.instagram.com/create/select/"
+        self.assertTrue(browser._opened_create_profile_instead(page))
+        with self.assertRaises(RuntimeError) as error:
+            await browser._choose_instagram_video(page, Path("not_uploaded.mp4"))
+        self.assertIn("@create", str(error.exception))
+        self.assertEqual(page.selected_files, [])
+        self.assertEqual(page.visited, [])
+
     async def test_create_and_upload_never_click_global_reels_link(self):
         page = ReelsRedirectPage()
         page.menu_open = True
