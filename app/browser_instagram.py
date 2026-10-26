@@ -593,14 +593,19 @@ async def _click_action(page, text: str, timeout_ms: int = 15000):
 
 
 async def _file_input_attached(page, timeout_ms: int = 1200) -> bool:
-    """Check only the create dialog; does not submit or mutate the post."""
-    try:
-        await page.locator('input[type="file"]').first.wait_for(
-            state="attached", timeout=timeout_ms,
-        )
-        return True
-    except Exception:
-        return False
+    """Only a file input inside Instagram's Create modal counts as open."""
+    for selector in (
+        '[role="dialog"] input[type="file"]',
+        '[aria-modal="true"] input[type="file"]',
+    ):
+        try:
+            await page.locator(selector).first.wait_for(
+                state="attached", timeout=timeout_ms,
+            )
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def _in_reels_feed(page) -> bool:
@@ -711,14 +716,20 @@ async def _choose_instagram_video(page, video: Path) -> None:
                 continue
         return False
 
-    async def via_input() -> bool:
+    async def via_input(*, post_selected: bool = False) -> bool:
         selectors = [
             '[role="dialog"] input[type="file"][accept*="video"]',
             '[role="dialog"] input[type="file"]',
-            'input[type="file"][accept*="video"]',
-            'input[type="file"][accept*="mp4"]',
-            'input[type="file"]',
+            '[aria-modal="true"] input[type="file"]',
         ]
+        # On some Instagram versions the Post dialog contains an input
+        # outside role=dialog. Search these only AFTER selecting Post.
+        if post_selected:
+            selectors.extend([
+                'input[type="file"][accept*="video"]',
+                'input[type="file"][accept*="mp4"]',
+                'input[type="file"]',
+            ])
         for selector in selectors:
             field = page.locator(selector).last
             try:
@@ -748,7 +759,7 @@ async def _choose_instagram_video(page, video: Path) -> None:
             "После нажатия «+» не появился пункт «Post / Публикация». "
             "Проверь раскрытое меню Camoufox; загрузка остановлена."
         )
-    if await via_chooser() or await via_input():
+    if await via_chooser() or await via_input(post_selected=True):
         return
     raise RuntimeError(
         "Instagram открыл Post, но не показал «Select from computer» "
