@@ -169,6 +169,9 @@ class RenderDesign(BaseModel):
     output_fps: Literal[30, 60] = 60
     smooth_motion: bool = False
     quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
+    # Resource-saving mode is the default for both existing and new designs.
+    # Users can explicitly restore the previous 60fps/full-filter renderer.
+    render_speed: Literal["quiet", "balanced", "original"] = "quiet"
     background_mode: Literal["shuffle", "single"] = "shuffle"
     background_name: str = ""
     chromakey_enabled: bool = False
@@ -254,6 +257,28 @@ def h264_quality_args(quality_preset: str, *, standard_crf: str = "18") -> list[
     return ["-preset", "medium", "-crf", standard_crf]
 
 
+def render_performance(design: RenderDesign) -> dict:
+    """Cap CPU load without altering resolution, layout, audio or effects.
+
+    Quiet is deliberately capped at 30fps and disables expensive optional
+    sharpening/denoising and optical-flow interpolation, while maintaining
+    1080x1920, the white circle, overlay, progress and banner.
+    """
+    if design.render_speed == "quiet":
+        return dict(fps=30, motion=False, quality="standard",
+                    filter_threads=2, video_threads=2,
+                    encoder=["-preset", "veryfast", "-crf", "19"])
+    if design.render_speed == "balanced":
+        return dict(fps=design.output_fps, motion=False,
+                    quality=design.quality_preset, filter_threads=4,
+                    video_threads=4,
+                    encoder=h264_quality_args(design.quality_preset))
+    return dict(fps=design.output_fps, motion=design.smooth_motion,
+                quality=design.quality_preset, filter_threads=None,
+                video_threads=None,
+                encoder=h264_quality_args(design.quality_preset))
+
+
 def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
     """Composite a video or image banner with 60/30fps and gentle fade-in.
 
@@ -264,7 +289,8 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
         f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
         if design.chromakey_enabled else ""
     )
-    fps = design.output_fps
+    performance = render_performance(design)
+    fps = performance["fps"]
     # Classic keeps its original transition; the second style first shows
     # ONLY the background and then reveals the banner with the circle.
     delayed = design.visual_template == "orbit_dots"
@@ -276,7 +302,7 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
         f"fade=t=in:st={fade_start}:d={fade_duration}:alpha=1[banner];"
         f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
         f"format=auto:shortest=1,fps={fps},"
-        f"{quality_filter_segment(design.quality_preset)}format=yuv420p[v]"
+        f"{quality_filter_segment(performance['quality'])}format=yuv420p[v]"
     )
 
 
@@ -921,13 +947,14 @@ def render(
     border_radius = size // 2
     x = max(0, min(design.circle_x, 1080 - size))
     y = max(0, min(design.circle_y, 1920 - size))
-    fps = design.output_fps
+    performance = render_performance(design)
+    fps = performance["fps"]
 
     # Optional optical-flow interpolation is considerably slower, but creates
     # genuinely new frames rather than duplicating 30fps source frames.
     motion = (
         "minterpolate=fps=60:mi_mode=mci:mc_mode=obmc:me_mode=bidir,"
-        if fps == 60 and design.smooth_motion else f"fps={fps},"
+        if fps == 60 and performance["motion"] else f"fps={fps},"
     )
     circle_filter = (
         f"[0:v]{motion}scale={size}:{size}:force_original_aspect_ratio=increase:"
@@ -1023,7 +1050,10 @@ def render(
     # Suppress the enormous FFmpeg version/configuration banner so the
     # dashboard can display actual filter and encoder errors on Windows.
     cmd = ["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error",
-           "-y", "-i", str(source), *bg_input]
+           "-y"]
+    if performance["filter_threads"] is not None:
+        cmd += ["-filter_complex_threads", str(performance["filter_threads"])]
+    cmd += ["-i", str(source), *bg_input]
     if orbit_asset is not None:
         cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(orbit_asset)]
 
@@ -1035,13 +1065,15 @@ def render(
     else:
         filter_chain += (
             f"[composite]fps={fps},"
-            f"{quality_filter_segment(design.quality_preset)}format=yuv420p[v]"
+            f"{quality_filter_segment(performance['quality'])}format=yuv420p[v]"
         )
 
     cmd += [
         "-filter_complex", filter_chain,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
-        "-c:v", "libx264", *h264_quality_args(design.quality_preset),
+        "-c:v", "libx264", *performance["encoder"],
+        *(["-threads", str(performance["video_threads"])]
+          if performance["video_threads"] is not None else []),
         "-profile:v", "high", "-level:v", "5.1" if fps == 60 else "4.2",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
