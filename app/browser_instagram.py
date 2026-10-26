@@ -15,7 +15,7 @@ import secrets
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -34,6 +34,7 @@ ACCOUNTS_FILE = DATA_DIR / "accounts.enc"
 # The Playwright driver is intentionally held for the life of the local app.
 PLAYWRIGHT = None
 CONTEXTS: dict[str, Any] = {}
+CAMOUFOX_HANDLES: dict[str, Any] = {}
 OPEN_LOCKS: dict[str, asyncio.Lock] = {}
 PUBLISH_LOCK = asyncio.Lock()
 CURRENT_JOB: dict[str, Any] | None = None
@@ -53,7 +54,7 @@ def _brief_error(exc: Exception) -> str:
         message = str(exc)
         if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не нашёл ", "Проверь ", "Не удалось ")):
             return message
-    return "Ошибка взаимодействия с Edge или Instagram. Проверь браузер, вход и подключение."
+    return "Ошибка взаимодействия с Edge/Camoufox или Instagram. Проверь браузер, вход и подключение."
 
 
 def _stage(item: dict, stage: str, label: str) -> None:
@@ -100,12 +101,21 @@ def _write(data: dict[str, dict]) -> None:
 
 
 def _public_account(account_id: str, data: dict) -> dict:
+    browser = data.get("browser", "edge")
+    external = data.get("profile_path", "") if browser == "camoufox" else ""
+    profile = (
+        Path(os.path.expandvars(os.path.expanduser(external)))
+        if external else
+        (PROFILES_DIR / account_id / "camoufox" if browser == "camoufox"
+         else PROFILES_DIR / account_id)
+    )
     return {
         "id": account_id, "username": data["username"],
+        "browser": browser, "profile_path": external,
         "proxy_configured": bool(data.get("proxy")),
         "proxy_label": masked_proxy(data.get("proxy", "")),
         "browser_open": account_id in CONTEXTS,
-        "has_profile": (PROFILES_DIR / account_id).exists(),
+        "has_profile": profile.is_dir(),
     }
 
 
@@ -122,9 +132,30 @@ def _profile_dir(account_id: str) -> Path:
     return PROFILES_DIR / account_id
 
 
+def _external_profile(value: str) -> str:
+    """Link to the user's existing persistent Camoufox profile without copying it."""
+    raw = value.strip()
+    if not raw:
+        return ""
+    path = Path(os.path.expandvars(os.path.expanduser(raw))).resolve()
+    home = Path.home().resolve()
+    if home not in path.parents or not path.is_dir():
+        raise HTTPException(
+            400, "Профиль Camoufox должен существовать внутри домашней папки Windows. "
+                 "Проверь путь и закрой старый Camoufox перед подключением.",
+        )
+    return str(path)
+
+
+def _browser_name(account_id: str) -> str:
+    return "Camoufox" if _account(account_id).get("browser") == "camoufox" else "Edge"
+
+
 class BrowserAccount(BaseModel):
     username: str = Field(min_length=1, max_length=30)
     proxy: str = Field(default="", max_length=1200)
+    browser: Literal["edge", "camoufox"] = "edge"
+    profile_path: str = Field(default="", max_length=1024)
 
 
 class ProxyInput(BaseModel):
@@ -164,12 +195,22 @@ def add_account(body: BrowserAccount, request: Request):
         parse_proxy(body.proxy)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    profile_path = _external_profile(body.profile_path) if body.browser == "camoufox" else ""
+    if body.browser != "camoufox" and body.profile_path.strip():
+        raise HTTPException(400, "Внешний профиль поддерживается только для Camoufox")
     data = _read()
     existing = next((key for key, a in data.items() if a["username"] == username), None)
     if existing:
         raise HTTPException(409, "Аккаунт уже добавлен")
+    if profile_path and any(
+        a.get("profile_path") == profile_path for a in data.values()
+    ):
+        raise HTTPException(409, "Этот профиль Camoufox уже подключён")
     key = secrets.token_hex(12)
-    data[key] = {"username": username, "proxy": body.proxy.strip()}
+    data[key] = {
+        "username": username, "proxy": body.proxy.strip(),
+        "browser": body.browser, "profile_path": profile_path,
+    }
     _write(data)
     return _public_account(key, data[key])
 
@@ -179,7 +220,7 @@ def set_account_proxy(account_id: str, body: ProxyInput, request: Request):
     """Proxy changes take effect on next browser launch, never mid-session."""
     _local(request)
     if account_id in CONTEXTS:
-        raise HTTPException(409, "Сначала нажми «Закрыть Edge» у аккаунта, чтобы поменять прокси")
+        raise HTTPException(409, "Сначала нажми «Закрыть» у аккаунта, чтобы поменять прокси")
     if CURRENT_JOB and CURRENT_JOB.get("status") == "running":
         raise HTTPException(409, "Не меняй прокси во время активной публикации")
     try:
@@ -251,6 +292,13 @@ async def _driver():
     return PLAYWRIGHT
 
 
+async def _close_camoufox_handle(manager: Any):
+    try:
+        await manager.__aexit__(None, None, None)
+    except Exception:
+        log.warning("Camoufox profile cleanup failed")
+
+
 async def _context(account_id: str):
     account = _account(account_id)
     if account_id in CONTEXTS:
@@ -259,32 +307,63 @@ async def _context(account_id: str):
     async with lock:
         if account_id in CONTEXTS:
             return CONTEXTS[account_id]
-        driver = await _driver()
-        profile = _profile_dir(account_id)
+        engine = account.get("browser", "edge")
+        if engine == "camoufox":
+            linked = account.get("profile_path", "")
+            profile = (Path(_external_profile(linked)) if linked else
+                       _profile_dir(account_id) / "camoufox")
+        else:
+            profile = _profile_dir(account_id)
         profile.mkdir(parents=True, exist_ok=True)
-        opts = dict(headless=False, viewport={"width": 1280, "height": 900},
-                    locale="en-US", accept_downloads=False)
+        opts = {}
         if account.get("proxy"):
             try:
                 proxy = parse_proxy(account["proxy"])
-            except ValueError as exc:
-                raise HTTPException(400, "У аккаунта сохранён неверный прокси") from exc
+            except ValueError:
+                raise HTTPException(400, "У аккаунта сохранён неверный прокси") from None
             if proxy:
                 opts["proxy"] = proxy
-        try:
-            context = await driver.chromium.launch_persistent_context(
-                str(profile), channel="msedge", **opts
+        if engine == "camoufox":
+            try:
+                from camoufox.async_api import AsyncCamoufox
+            except ImportError:
+                raise HTTPException(
+                    503, "Camoufox не установлен в PostingTTII. Выполни pip install "
+                         "-r requirements.txt и python -m camoufox fetch.",
+                ) from None
+            manager = AsyncCamoufox(
+                headless=False, os="windows", persistent_context=True,
+                user_data_dir=str(profile), **opts,
             )
-        except Exception as exc:
-            raise HTTPException(503, "Не удалось открыть Edge. Закрой старый профиль и проверь Playwright.") from exc
+            try:
+                context = await manager.__aenter__()
+            except Exception:
+                raise HTTPException(
+                    503, "Не удалось открыть Camoufox. Закрой прежний Camoufox и launch.py "
+                         "с этим профилем, проверь браузер и прокси.",
+                ) from None
+            CAMOUFOX_HANDLES[account_id] = manager
+        else:
+            driver = await _driver()
+            try:
+                context = await driver.chromium.launch_persistent_context(
+                    str(profile), channel="msedge", headless=False,
+                    viewport={"width": 1280, "height": 900},
+                    locale="en-US", accept_downloads=False, **opts,
+                )
+            except Exception:
+                raise HTTPException(
+                    503, "Не удалось открыть Edge. Закрой старый профиль и проверь Playwright.",
+                ) from None
         CONTEXTS[account_id] = context
 
-        # When user closes the visible Edge window manually, Playwright
-        # closes the persistent context. Evict its stale handle immediately:
-        # otherwise subsequent Open/Publish calls use a dead session.
         def on_close(*_):
             if CONTEXTS.get(account_id) is context:
                 CONTEXTS.pop(account_id, None)
+                handle = CAMOUFOX_HANDLES.pop(account_id, None)
+                if handle:
+                    asyncio.create_task(_close_camoufox_handle(handle))
+
         if callable(getattr(context, "on", None)):
             context.on("close", on_close)
         return context
@@ -292,7 +371,10 @@ async def _context(account_id: str):
 
 async def close_account_context(account_id: str):
     context = CONTEXTS.pop(account_id, None)
-    if context:
+    manager = CAMOUFOX_HANDLES.pop(account_id, None)
+    if manager:
+        await _close_camoufox_handle(manager)
+    elif context:
         try:
             await context.close()
         except Exception:
@@ -314,6 +396,7 @@ async def open_account(account_id: str, request: Request):
         if active_upload and not existing_context:
             raise HTTPException(409, "Этот браузер сейчас готовится к публикации. Открой его после запуска.")
         ctx = await _context(account_id)
+        browser_name = _browser_name(account_id)
         # Reuse an Instagram tab, not an unrelated tab with a 2FA provider.
         page = next((p for p in ctx.pages if "instagram.com" in p.url), None)
         if page is None:
@@ -326,7 +409,7 @@ async def open_account(account_id: str, request: Request):
                 "ok": True,
                 "message": ("Публикация выполняется — окно выведено вперёд без обновления."
                             if active_upload else
-                            "Edge уже открыт. Страница сохранена для проверки ошибки."),
+                            f"{browser_name} уже открыт. Страница сохранена для проверки ошибки."),
             }
         try:
             await page.goto("https://www.instagram.com/",
@@ -335,11 +418,11 @@ async def open_account(account_id: str, request: Request):
             log.warning("Browser IG page navigation failed for profile %s: %s",
                         account_id[:8], type(exc).__name__)
             raise HTTPException(
-                502, "Edge открыт, но Instagram не загрузился. Проверь прокси, "
-                     "подключение и страницу в окне Edge.",
+                502, f"{browser_name} открыт, но Instagram не загрузился. Проверь прокси, "
+                     f"подключение и страницу в окне {browser_name}.",
             ) from None
         await page.bring_to_front()
-        return {"ok": True, "message": "Edge открыл Instagram. Проверь вход и свою страницу."}
+        return {"ok": True, "message": f"{browser_name} открыл Instagram. Проверь вход и свою страницу."}
     except HTTPException:
         raise
     except Exception as exc:
@@ -347,7 +430,7 @@ async def open_account(account_id: str, request: Request):
                   account_id[:8], type(exc).__name__)
         await close_account_context(account_id)
         raise HTTPException(
-            503, "Не удалось открыть профиль Edge. Возможно, окно было закрыто "
+            503, "Не удалось открыть профиль Edge/Camoufox. Возможно, окно было закрыто "
                  "вручную — попробуй открыть снова.",
         ) from None
 
@@ -484,7 +567,7 @@ async def _run_job(job: dict, selected: list[tuple[str, Path]], caption: str):
             job["items"].append(item)
             job["progress"] = index
             try:
-                _stage(item, "open_profile", "Подключаю профиль Edge")
+                _stage(item, "open_profile", "Подключаю профиль браузера")
                 ctx = await _context(account_id)
                 result = await _publish_via_browser(ctx, path, caption, item=item)
                 item["status"] = result
@@ -576,7 +659,7 @@ async def shutdown_browser_instagram():
             await CURRENT_TASK
         except asyncio.CancelledError:
             pass
-    for account_id in list(CONTEXTS):
+    for account_id in set(CONTEXTS) | set(CAMOUFOX_HANDLES):
         await close_account_context(account_id)
     if PLAYWRIGHT is not None:
         try:
