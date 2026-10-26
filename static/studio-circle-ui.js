@@ -22,7 +22,7 @@
   const templateSelect=document.createElement('select');
   for(const [name,title] of [
     ['classic','Шаблон 1 · обычная обводка и полоска'],
-    ['orbit_dots','Шаблон 2 · вращающаяся обводка и точки (без времени)'],
+    ['orbit_dots','Шаблон 2 · белый бегущий блик и загрузка (без времени)'],
   ]){
     const option=document.createElement('option');
     option.value=name;option.textContent=title;templateSelect.append(option);
@@ -94,8 +94,6 @@
   progress.title='Перемести прогресс; потяни маркер для размера';
   fill.className='studio-progress-fill';grip.className='studio-progress-grip';grip.dataset.resize='progress';
   progress.append(fill,grip);
-  const dotsRow=document.createElement('div');
-  dotsRow.className='studio-dot-row';progress.append(dotsRow);
   const orbitLayer=document.createElement('div');
   orbitLayer.className='studio-orbit-ring';
   orbitLayer.setAttribute('aria-hidden','true');
@@ -116,12 +114,10 @@
     const percent=Math.max(0,Math.min(1,current/duration));
     fill.style.width=(percent*100)+'%';
     timecode.textContent=labelTime(current)+' / '+labelTime(duration);
-    const dots=[...dotsRow.children];
-    const completed=Math.round(percent*dots.length);
-    for(let i=0;i<dots.length;i++){
-      dots[i].classList.toggle('filled',i<completed);
-      dots[i].classList.toggle('head',completed>0&&i===completed-1);
-    }
+    // The second style shows the existing backdrop alone for 0.38 seconds;
+    // circle, white moving highlight, progress and banner then fade in.
+    stage.classList.toggle('studio-intro-frame',
+      designState.visual_template==='orbit_dots' && current<0.38);
   }
   function sync(){
     const state=designState;
@@ -143,21 +139,13 @@
     const orbit=state.visual_template==='orbit_dots';
     templateSelect.value=orbit?'orbit_dots':'classic';
     checks.timecode_enabled.disabled=orbit;
-    progress.classList.toggle('studio-progress-dots',orbit);
+    progress.classList.toggle('studio-progress-loading',orbit);
     orbitLayer.hidden=!orbit;
     const margin=36;
     orbitLayer.style.left=((state.circle_x-margin)/1080*100)+'%';
     orbitLayer.style.top=((state.circle_y-margin)/1920*100)+'%';
     orbitLayer.style.width=((state.circle_size+2*margin)/1080*100)+'%';
     orbitLayer.style.height=((state.circle_size+2*margin)/1920*100)+'%';
-    const dotCount=Math.max(9,Math.min(28,Math.round(state.progress_width/27)));
-    if(dotsRow.children.length!==dotCount){
-      dotsRow.replaceChildren();
-      for(let i=0;i<dotCount;i++){
-        const dot=document.createElement('span');
-        dot.className='studio-dot';dotsRow.append(dot);
-      }
-    }
     const scaleFactor=stage.getBoundingClientRect().width/1080;
     for(const circle of [sample,document.getElementById('designCirclePlaceholder')]){
       circle.style.boxSizing='border-box';
