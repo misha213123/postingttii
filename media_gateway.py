@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(
     title="PostingTTII media gateway",
@@ -108,14 +111,20 @@ async def media(token: str, request: Request):
             client.build_request(request.method, upstream_url, headers=headers),
             stream=True,
         )
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         await client.aclose()
+        logger.warning("Media relay unavailable: method=%s error=%s",
+                       request.method, type(exc).__name__)
         raise HTTPException(status_code=502, detail="Local video server unavailable")
 
     if upstream.status_code not in (200, 206):
+        logger.warning("Media relay rejected: method=%s upstream=%d range=%s",
+                       request.method, upstream.status_code,
+                       bool(request.headers.get("range")))
+        code = 404 if upstream.status_code == 404 else 502
         await upstream.aclose()
         await client.aclose()
-        raise HTTPException(status_code=404, detail="Media not found")
+        raise HTTPException(status_code=code, detail="Media upstream failed")
 
     response_headers = {
         k: v for k, v in upstream.headers.items() if k.lower() in _ALLOWED_RESPONSE_HEADERS
@@ -126,11 +135,28 @@ async def media(token: str, request: Request):
         await client.aclose()
 
     if request.method == "HEAD":
+        logger.info("Media relay HEAD: status=%d length=%s range=%s",
+                    upstream.status_code, response_headers.get("content-length", "?"),
+                    bool(request.headers.get("range")))
         await close_upstream()
         return Response(status_code=upstream.status_code, headers=response_headers)
 
+    async def monitored_stream():
+        sent_bytes = 0
+        completed = False
+        try:
+            async for chunk in upstream.aiter_raw():
+                sent_bytes += len(chunk)
+                yield chunk
+            completed = True
+        finally:
+            logger.info("Media relay GET: status=%d sent_bytes=%d expected=%s complete=%s range=%s",
+                        upstream.status_code, sent_bytes,
+                        response_headers.get("content-length", "?"), completed,
+                        bool(request.headers.get("range")))
+
     return StreamingResponse(
-        upstream.aiter_raw(),
+        monitored_stream(),
         status_code=upstream.status_code,
         headers=response_headers,
         background=BackgroundTask(close_upstream),
