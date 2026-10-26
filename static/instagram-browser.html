@@ -72,7 +72,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
   <section class="card">
    <div class="row" style="justify-content:space-between"><h2>02 / Аккаунты и сессии</h2><span class="chip" id="accountCount">0</span></div>
    <div id="accountsList"><p class="muted">Загружаем...</p></div>
-   <p class="muted">Нажми «Открыть Camoufox» или «Открыть Edge» и войди вручную, если сессия ещё не сохранена. Для изменения прокси закрой браузер аккаунта.</p>
+   <p class="muted">Для Camoufox кнопка «Работа в фоне» скрывает окно браузера, но оставляет тот же профиль и прокси. Сначала авторизуйся в видимом режиме. Перед сменой режима закрой профиль. Если Instagram попросит проверку входа, временно верни видимый режим.</p>
   </section>
  </div>
  <div>
@@ -156,9 +156,10 @@ function renderAccounts(){
  root.innerHTML=registry.accounts.length?registry.accounts.map(a=>
   '<article class="account-card">'+
    '<label class="check-line"><input type="checkbox" data-account="'+esc(a.id)+'" '+(selectedAccounts.has(a.id)?'checked':'')+'><span class="account-name">@'+esc(a.username)+'</span></label>'+
-   '<div class="account-sub">'+esc(a.browser==='camoufox'?'Camoufox':'Edge')+' · Прокси: '+esc(a.proxy_label)+' · '+(a.browser_open?'🟢 Браузер открыт':a.has_profile?'Профиль на диске':'Новый профиль')+(a.profile_path?' · Связан существующий профиль':'')+'</div>'+
-   '<div class="account-buttons"><button data-open="'+esc(a.id)+'">Открыть '+(a.browser==='camoufox'?'Camoufox':'Edge')+'</button>'+
+   '<div class="account-sub">'+esc(a.browser==='camoufox'?'Camoufox':'Edge')+' · Прокси: '+esc(a.proxy_label)+' · '+(a.browser_open?(a.headless?'🟢 Фоновый процесс запущен':'🟢 Браузер открыт'):a.has_profile?'Профиль на диске':'Новый профиль')+(a.profile_path?' · Связан существующий профиль':'')+'</div>'+
+   '<div class="account-buttons"><button data-open="'+esc(a.id)+'">'+(a.headless?'Запустить Camoufox (фон)':'Открыть '+(a.browser==='camoufox'?'Camoufox':'Edge'))+'</button>'+
    '<button data-close="'+esc(a.id)+'">Закрыть</button>'+
+   (a.browser==='camoufox'?'<button class="ghost" data-toggle-headless="'+esc(a.id)+'" '+(a.browser_open?'disabled title="Сначала закрой браузер"':'')+'>'+(a.headless?'☑ Работа в фоне: ВКЛ':'□ Работа в фоне: ВЫКЛ')+'</button>':'')+
    '<button data-show-proxy="'+esc(a.id)+'">⚙ Прокси</button>'+
    '<button data-test-saved="'+esc(a.id)+'" '+(!a.proxy_configured?'disabled':'')+'>Проверить IP</button>'+
    '<button class="danger" data-remove="'+esc(a.id)+'">Удалить из списка</button></div>'+
@@ -205,8 +206,19 @@ $('accountsList').addEventListener('click',async e=>{
  const id=b.dataset.open||b.dataset.close||b.dataset.remove||
    b.dataset.showProxy||b.dataset.testSaved||b.dataset.testInput||
    b.dataset.saveProxy||b.dataset.clearProxy||b.dataset.toggleProxy||
-   b.dataset.clearAccountCover;
+   b.dataset.clearAccountCover||b.dataset.toggleHeadless;
  try{
+  if(b.dataset.toggleHeadless){
+    const account=registry.accounts.find(a=>a.id===id);
+    if(!account)return;
+    await json('/account/'+id+'/headless','PUT',{enabled:!account.headless});
+    registry=await api('');renderAccounts();
+    message('accountAddResult',
+      !account.headless?'Фоновый режим включён. Закрой отдельный Camoufox перед публикацией.':
+      'Обычный режим включён. Теперь Camoufox откроет видимое окно.',
+      'status');
+    return;
+  }
   if(b.dataset.clearAccountCover){
     await json('/account/'+id+'/cover','PUT',{cover_id:''});
     registry=await api('');renderAccounts();
