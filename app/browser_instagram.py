@@ -630,8 +630,8 @@ async def _select_vertical_crop(page) -> None:
             "Ролик не отправлен, проверь окно Camoufox."
         )
     options = [
-        page.get_by_text(re.compile(r"^9\\s*:\\s*16$", re.I)).last,
-        page.get_by_role("button", name=re.compile(r"^9\\s*:\\s*16$")).first,
+        page.get_by_text(re.compile(r"^9\s*:\s*16$", re.I)).last,
+        page.get_by_role("button", name=re.compile(r"^9\s*:\s*16$")).first,
         page.get_by_text(re.compile(r"^Original$|^Оригинал$|^Исходный$", re.I)).last,
     ]
     for option in options:
