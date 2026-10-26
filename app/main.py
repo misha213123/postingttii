@@ -6,6 +6,7 @@ import secrets
 import shutil
 import subprocess
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Literal
@@ -156,13 +157,64 @@ def _circle_conflict(filename: str, target: str) -> bool:
 
 
 
-async def _expire_media_token(token: str, delay_seconds: int = 300) -> None:
-    """Keep an Instagram source URL alive briefly after publish/error.
+def _prepare_instagram_audio(source: Path) -> tuple[Path, Path | None]:
+    """Prepare an older Reel for the documented 128kbps AAC requirement.
 
-    Meta can continue reading the source video while finalizing a Reel.
+    Stream-copy H.264 video (no new circle render or heavy CPU work) and
+    re-encode only a noncompliant audio stream to AAC 48kHz 128kbps stereo.
+    Returns (public_media_path, optional_temporary_path_to_expire).
     """
-    await asyncio.sleep(delay_seconds)
-    MEDIA_TOKENS.pop(token, None)
+    info = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0",
+         "-show_entries", "stream=codec_name,bit_rate,sample_rate,channels",
+         "-of", "json", str(source)],
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+    tracks = json.loads(info.stdout).get("streams", [])
+    if not tracks:
+        return source, None
+    track = tracks[0]
+    bitrate = int(track.get("bit_rate") or 0)
+    rate = int(track.get("sample_rate") or 0)
+    channels = int(track.get("channels") or 0)
+    if (track.get("codec_name") == "aac" and 0 < bitrate <= 132000
+            and 0 < rate <= 48000 and 1 <= channels <= 2):
+        return source, None
+
+    cache = settings.data_dir / "instagram_meta_prepared"
+    cache.mkdir(parents=True, exist_ok=True)
+    fd, pathname = tempfile.mkstemp(prefix="meta_", suffix=".mp4", dir=cache)
+    os.close(fd)
+    temp = Path(pathname)
+    try:
+        completed = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-i", str(source), "-map", "0:v:0", "-map", "0:a:0",
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+             "-ar", "48000", "-ac", "2", "-movflags", "+faststart",
+             str(temp)],
+            capture_output=True, text=True, timeout=180, check=True,
+        )
+        if not temp.is_file() or temp.stat().st_size <= 0:
+            raise RuntimeError("Не удалось подготовить AAC 128kbps для Meta")
+        return temp, temp
+    except Exception:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+async def _expire_media_token(
+    token: str, delay_seconds: int = 300, cleanup_path: Path | None = None
+) -> None:
+    """Keep Meta media available briefly, then remove optional prepared copy."""
+    try:
+        await asyncio.sleep(delay_seconds)
+    finally:
+        MEDIA_TOKENS.pop(token, None)
+        if cleanup_path is not None:
+            expected = (settings.data_dir / "instagram_meta_prepared").resolve()
+            if cleanup_path.resolve().parent == expected:
+                cleanup_path.unlink(missing_ok=True)
 
 
 class CaptionRequest(BaseModel):
