@@ -265,10 +265,15 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
         if design.chromakey_enabled else ""
     )
     fps = design.output_fps
+    # Classic keeps its original transition; the second style first shows
+    # ONLY the background and then reveals the banner with the circle.
+    delayed = design.visual_template == "orbit_dots"
+    fade_start = SECOND_TEMPLATE_INTRO_START if delayed else 0
+    fade_duration = SECOND_TEMPLATE_FADE_SECONDS if delayed else 0.30
     return (
         f"[{banner_input_index}:v]scale={design.banner_width}:-1:flags=lanczos,"
         f"fps={fps},format=rgba,{banner_key}format=rgba,"
-        "fade=t=in:st=0:d=0.30:alpha=1[banner];"
+        f"fade=t=in:st={fade_start}:d={fade_duration}:alpha=1[banner];"
         f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
         f"format=auto:shortest=1,fps={fps},"
         f"{quality_filter_segment(design.quality_preset)}format=yuv420p[v]"
