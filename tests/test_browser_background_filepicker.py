@@ -86,7 +86,7 @@ class MockControl:
     def last(self): return self
 
     async def is_visible(self):
-        return False
+        return self.action == "post"
 
     async def click(self, timeout=0):
         if self.action == "post":
@@ -141,6 +141,8 @@ class MockPage:
         self.files = []
 
     def get_by_role(self, kind, name=None):
+        if kind == "menuitem" and self.menu:
+            return MockControl(self, "post")
         if kind == "button" and self.chooser:
             return MockControl(self, "pick")
         return MockControl(self)
