@@ -35,7 +35,10 @@
 }
 @keyframes studioOrbitRotate{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 .studio-progress-edit.studio-progress-dots{
-  border:0;background:none;box-shadow:none;min-height:10px;
+  border:1px solid #9ccaff55;
+  background:rgba(4,19,38,.55);
+  box-shadow:0 0 6px #217dc066,inset 0 0 4px #a4c6ff33;
+  border-radius:16px;min-height:13px;padding:0 4px;
 }
 .studio-progress-dots .studio-progress-fill{display:none}
 .studio-dot-row{display:none;position:absolute;inset:0;align-items:center;justify-content:space-between;pointer-events:none}
