@@ -1107,7 +1107,7 @@ def render(
                 source, bg, target,
                 design.model_copy(update={"timecode_enabled": False}), banner,
             )
-        if (design.quality_preset != "standard" and
+        if (performance["quality"] != "standard" and
                 (access_violation or "No such filter" in details or
                  "Error initializing complex filters" in details)):
             # Optional visual filters must never make the previously working
