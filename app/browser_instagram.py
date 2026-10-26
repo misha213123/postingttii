@@ -7,18 +7,22 @@ Instagram verification. All configuration and browser state is local to the PC.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
 import re
 import secrets
+import subprocess
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.config import settings
 from app.store import store
@@ -30,6 +34,8 @@ router = APIRouter(prefix="/api/browser-instagram", tags=["browser-instagram"])
 DATA_DIR = settings.data_dir / "browser_instagram"
 PROFILES_DIR = DATA_DIR / "profiles"
 ACCOUNTS_FILE = DATA_DIR / "accounts.enc"
+COVERS_DIR = DATA_DIR / "covers"
+COVER_LIMIT = 8 * 1024 * 1024
 
 # The Playwright driver is intentionally held for the life of the local app.
 PLAYWRIGHT = None
@@ -52,7 +58,7 @@ def _brief_error(exc: Exception) -> str:
         # Only our explicitly-authored workflow errors use RuntimeError;
         # external Playwright errors need a generic sanitized explanation.
         message = str(exc)
-        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не найдена ", "Не нашёл ", "Проверь ", "Не удалось ")):
+        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не найдена ", "Не нашёл ", "Проверь ", "Не удалось ", "Видео ", "Формат ", "Обложка ")):
             return message
     return "Ошибка взаимодействия с Edge/Camoufox или Instagram. Проверь браузер, вход и подключение."
 
@@ -167,6 +173,8 @@ class PublishInput(BaseModel):
     folder_id: str = "default"
     filenames: list[str] = Field(min_length=1, max_length=100)
     caption: str = Field(default="", max_length=2200)
+    covers: dict[str, str] = Field(default_factory=dict)
+    require_covers: bool = False
     # Require explicit user confirmation of auto Share on selected accounts.
     confirmed: bool = False
 
@@ -183,6 +191,62 @@ def status(request: Request):
         "folders": folders,
         "job": dict(CURRENT_JOB) if CURRENT_JOB else None,
     }
+
+
+def _cover_path(cover_id: str) -> Path:
+    """Never accept a user-supplied path as a cover reference."""
+    if not re.fullmatch(r"[a-f0-9]{24}", cover_id):
+        raise HTTPException(400, "Некорректный идентификатор обложки")
+    path = COVERS_DIR / (cover_id + ".jpg")
+    if not path.is_file():
+        raise HTTPException(400, "Обложка не найдена. Выбери файл заново.")
+    return path
+
+
+@router.post("/cover", status_code=201)
+async def upload_cover(request: Request, file: UploadFile = File(...)):
+    """One cover image per prepared Reel, kept only on local disk."""
+    _local(request)
+    if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
+        raise HTTPException(400, "Обложка должна быть JPG, PNG или WebP")
+    try:
+        data = await file.read(COVER_LIMIT + 1)
+    finally:
+        await file.close()
+    if not data or len(data) > COVER_LIMIT:
+        raise HTTPException(400, "Размер обложки должен быть от 1 байта до 8 МБ")
+    try:
+        with Image.open(io.BytesIO(data)) as original:
+            if original.format not in ("JPEG", "PNG", "WEBP"):
+                raise HTTPException(400, "Неподдерживаемый формат изображения")
+            if original.width < 180 or original.height < 320:
+                raise HTTPException(400, "Обложка слишком маленькая. Выбери изображение 9:16.")
+            picture = ImageOps.exif_transpose(original).convert("RGB")
+            # Make the output consistently 1080x1920 for the Instagram Reel.
+            cover = ImageOps.fit(
+                picture, (1080, 1920), method=Image.Resampling.LANCZOS,
+                centering=(0.5, 0.5),
+            )
+        COVERS_DIR.mkdir(parents=True, exist_ok=True)
+        cover_id = secrets.token_hex(12)
+        cover.save(COVERS_DIR / (cover_id + ".jpg"), format="JPEG", quality=88,
+                   optimize=True, subsampling=0)
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, ValueError, OSError, Image.DecompressionBombError):
+        raise HTTPException(400, "Не удалось прочитать обложку. Нужен JPG/PNG/WebP.") from None
+    return {
+        "ok": True, "cover_id": cover_id,
+        "preview_url": "/api/browser-instagram/cover/" + cover_id,
+        "width": 1080, "height": 1920,
+    }
+
+
+@router.get("/cover/{cover_id}")
+def preview_cover(cover_id: str, request: Request):
+    _local(request)
+    return FileResponse(_cover_path(cover_id), media_type="image/jpeg",
+                        headers={"Cache-Control": "private, no-store"})
 
 
 @router.post("/account")
