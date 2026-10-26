@@ -63,14 +63,12 @@ class InstagramCreateRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page.icon.click_calls, 0)
         page.goto.assert_not_awaited()
 
-    async def test_all_missing_falls_back_to_first_party_creator_page(self):
+    async def test_missing_create_never_opens_fake_create_profile(self):
         page = FakePage(icon=False)
-        async def navigate(*_, **__):
-            page.file.attached = True
-        page.goto.side_effect = navigate
-        await browser._open_instagram_create(page)
-        page.goto.assert_awaited_once()
-        self.assertIn("www.instagram.com/create/select/", page.goto.call_args.args[0])
+        with self.assertRaises(RuntimeError) as error:
+            await browser._open_instagram_create(page)
+        self.assertIn("Create", str(error.exception))
+        page.goto.assert_not_awaited()
 
     async def test_missing_create_reports_specific_error_without_proxy_secrets(self):
         page = FakePage(icon=False)
