@@ -13,40 +13,49 @@
 .design-preview>.preview-banner{animation:studioBannerAppear .3s ease-out}
 @keyframes studioBannerAppear{from{opacity:0}to{opacity:1}}
 
-/* Template 2: the original 9:16 backdrop stays intact. Only the ring and
-   progress controls change. These effects are purely decorative in preview;
-   FFmpeg renders the real rotating sprite and elapsed dots. */
+/* Second template: EXACTLY the same layout and white border as the first,
+   with one subtle white arc rotating around it. No glow, neon or dotted bar. */
 .studio-orbit-ring{
   position:absolute;z-index:5;pointer-events:none;border-radius:50%;
   background:conic-gradient(
-    from 10deg,
-    #62deff 0deg 34deg,transparent 34deg 52deg,
-    #2267ff 52deg 82deg,transparent 82deg 106deg,
-    #90eaff 106deg 144deg,transparent 144deg 162deg,
-    #2c7aff 162deg 204deg,transparent 204deg 227deg,
-    #73ebff 227deg 273deg,transparent 273deg 290deg,
-    #3b77ff 290deg 334deg,transparent 334deg 349deg,
-    #e0fbff 349deg 358deg,transparent 358deg 360deg
+    from 0deg,
+    transparent 0deg 291deg,
+    rgba(255,255,255,.75) 292deg,
+    #fff 302deg 336deg,
+    rgba(255,255,255,.75) 346deg,
+    transparent 347deg 360deg
   );
-  -webkit-mask:radial-gradient(farthest-side,transparent 87%,#000 90% 95%,transparent 98%);
-  mask:radial-gradient(farthest-side,transparent 87%,#000 90% 95%,transparent 98%);
-  filter:drop-shadow(0 0 5px #34baff);
-  animation:studioOrbitRotate 7s linear infinite;
+  -webkit-mask:radial-gradient(farthest-side,transparent 91%,#000 92% 94%,transparent 95%);
+  mask:radial-gradient(farthest-side,transparent 91%,#000 92% 94%,transparent 95%);
+  animation:studioOrbitRotate 6s linear infinite;
+  transition:opacity .28s ease;
 }
 @keyframes studioOrbitRotate{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-.studio-progress-edit.studio-progress-dots{
-  border:1px solid #9ccaff55;
-  background:rgba(4,19,38,.55);
-  box-shadow:0 0 6px #217dc066,inset 0 0 4px #a4c6ff33;
-  border-radius:16px;min-height:13px;padding:0 4px;
+.studio-progress-edit.studio-progress-loading{
+  border:0;background:rgba(255,255,255,.34);border-radius:50px;
+  box-shadow:none;min-height:3px;overflow:visible;
 }
-.studio-progress-dots .studio-progress-fill{display:none}
-.studio-dot-row{display:none;position:absolute;inset:0;align-items:center;justify-content:space-between;pointer-events:none}
-.studio-progress-dots .studio-dot-row{display:flex}
-.studio-dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:#31618b;
-  box-shadow:0 0 3px #4489bd70;transition:background .12s,box-shadow .12s}
-.studio-dot.filled{background:#71dbff;box-shadow:0 0 5px #54cfff}
-.studio-dot.head{background:white;box-shadow:0 0 7px 3px #46dcff99}
-.studio-progress-dots .studio-progress-grip{right:-11px;top:-4px;background:#7bdaff}
+.studio-progress-loading .studio-progress-fill{
+  display:block;background:#fff;border-radius:50px;
+}
+.studio-progress-loading .studio-progress-grip{right:-6px}
 .studio-effects-panel select{max-width:100%;font-size:12px}
-@media (prefers-reduced-motion:reduce){.studio-orbit-ring{animation-duration:0s}}
+
+/* Live preview mirrors the video: backdrop first, then the composition.
+   The transition does not affect the first template at all. */
+#designPreview.studio-intro-frame .preview-circle,
+#designPreview.studio-intro-frame #designCircleDrag,
+#designPreview.studio-intro-frame .studio-orbit-ring,
+#designPreview.studio-intro-frame #studioProgressDrag,
+#designPreview.studio-intro-frame #tgBannerMove,
+#designPreview.studio-intro-frame #designBanner,
+#designPreview.studio-intro-frame #designBannerVideo,
+#designPreview.studio-intro-frame #chromaPreviewCanvas{opacity:0!important}
+#designPreview .preview-circle,
+#designPreview #designCircleDrag,
+#designPreview #studioProgressDrag,
+#designPreview #tgBannerMove,
+#designPreview #designBanner,
+#designPreview #designBannerVideo,
+#designPreview #chromaPreviewCanvas{transition:opacity .28s ease}
+@media (prefers-reduced-motion:reduce){.studio-orbit-ring{animation:none}}
