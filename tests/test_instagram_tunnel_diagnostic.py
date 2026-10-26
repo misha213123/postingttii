@@ -41,10 +41,14 @@ class MediaDiagnosticTests(unittest.TestCase):
                         return httpx.Response(status, headers={
                             "content-type": mime, "content-length": str(len(raw))
                         })
-                    return httpx.Response(206, headers={
-                        "content-type": mime,
-                        "content-range": f"bytes 0-{len(raw)-1}/{len(raw)}",
-                        "content-length": str(len(raw)),
+                    if request.headers.get("range"):
+                        return httpx.Response(206, headers={
+                            "content-type": mime,
+                            "content-range": f"bytes 0-{len(raw)-1}/{len(raw)}",
+                            "content-length": str(len(raw)),
+                        }, content=raw)
+                    return httpx.Response(200, headers={
+                        "content-type": mime, "content-length": str(len(raw)),
                     }, content=raw)
 
                 def tunnel_client(*args, **kwargs):
@@ -68,9 +72,12 @@ class MediaDiagnosticTests(unittest.TestCase):
                 self.assertEqual(set(main.MEDIA_TOKENS), before)
                 self.assertEqual(response.status_code, 200)
                 data = response.json()
-                self.assertEqual(len(calls), 4)
+                self.assertEqual(len(calls), 5 if broken_video else 6)
                 self.assertEqual(data["video"]["range_status"], 206)
                 self.assertEqual(data["cover"]["head_status"], 200)
+                self.assertTrue(data["cover"]["full_ok"])
+                if not broken_video:
+                    self.assertTrue(data["video"]["full_ok"])
                 return data
 
         return asyncio.run(run())
