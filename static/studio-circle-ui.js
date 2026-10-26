@@ -37,7 +37,6 @@
     }
     sync();
   };
-  if(window.studioLoadedPresets)window.setStudioTemplatePresets(window.studioLoadedPresets);
   templateSelect.addEventListener('change',()=>{
     const old=designState.visual_template||'classic';
     templates[old]={...designState,visual_template:old};
@@ -177,6 +176,7 @@
   }
   const previousUpdate=updateDesignPreview;
   updateDesignPreview=function(){previousUpdate();sync();};
+  if(window.studioLoadedPresets)window.setStudioTemplatePresets(window.studioLoadedPresets);
   sync();
   sample.addEventListener('timeupdate',playback);
   sample.addEventListener('loadedmetadata',playback);
