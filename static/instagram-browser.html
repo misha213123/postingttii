@@ -37,15 +37,26 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
 </style></head><body><main>
 <header>
  <div><a href="/">← PostingTTII</a><div class="eyebrow" style="margin-top:16px">Отдельный режим · без Meta API</div><h1>Instagram · браузер</h1>
- <p class="muted">Браузерная публикация через Edge, выбор аккаунтов и видео, отдельные сессии</p></div>
+ <p class="muted">Браузерная публикация через Camoufox или Edge, выбор аккаунтов и видео, отдельные сессии</p></div>
  <button class="ghost" onclick="refreshAll()">↻ Обновить</button>
 </header>
-<div class="notice">Этот режим не использует Meta Graph API и не управляет Meta 1 / Meta 2. Первоначальный вход в аккаунты выполняется вручную в окне Edge. Если Instagram запросит подтверждение, пройди его самостоятельно. Instagram может менять интерфейс или требовать подтверждение — в таком случае проверь публикацию самостоятельно.</div>
+<div class="notice">Этот режим не использует Meta Graph API и не управляет Meta 1 / Meta 2. Первоначальный вход в аккаунты выполняется вручную в выбранном браузере. Если Instagram запросит подтверждение, пройди его самостоятельно. Instagram может менять интерфейс или требовать подтверждение — в таком случае проверь публикацию самостоятельно.</div>
 <div class="grid" style="margin-top:18px">
  <div>
   <section class="card">
    <h2>01 / Добавить аккаунт</h2>
    <div class="field"><label for="newUsername">Instagram username</label><input id="newUsername" autocomplete="off" placeholder="@instagram_account"></div>
+   <div class="field"><label for="newBrowser">Браузер для публикации</label>
+     <select id="newBrowser" onchange="toggleBrowserFields()">
+       <option value="camoufox">Camoufox · без Meta</option>
+       <option value="edge">Microsoft Edge · без Meta</option>
+     </select></div>
+   <div class="field" id="camoufoxProfileFields">
+     <label for="newProfilePath">Путь к существующему профилю Camoufox (необязательно)</label>
+     <input id="newProfilePath" type="text" autocomplete="off" spellcheck="false"
+       placeholder="%USERPROFILE%\Desktop\Camoufox\profiles\instagram_1">
+     <p class="muted">Чтобы использовать уже открытый Instagram, укажи папку профиля из launch.py. Закрой прежнее окно Camoufox и launch.py перед запуском из PostingTTII. Если поле пустое — создастся отдельный новый профиль.</p>
+   </div>
    <div class="field"><label for="newProxy">Личный резидентский прокси (необязательно)</label>
      <input id="newProxy" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="host:port:user:password или http://user:pass@host:port">
      <button type="button" class="ghost" id="newProxyVisibility" onclick="toggleProxyVisibility('newProxy',this)">Скрыть ввод</button>
@@ -57,7 +68,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
   <section class="card">
    <div class="row" style="justify-content:space-between"><h2>02 / Аккаунты и сессии</h2><span class="chip" id="accountCount">0</span></div>
    <div id="accountsList"><p class="muted">Загружаем...</p></div>
-   <p class="muted">Нажми «Открыть Edge» и войди вручную. Сессия сохраняется для следующих публикаций. Для смены прокси сначала закрой окно Edge этого аккаунта.</p>
+   <p class="muted">Нажми «Открыть Camoufox» или «Открыть Edge» и войди вручную, если сессия ещё не сохранена. Для изменения прокси закрой браузер аккаунта.</p>
   </section>
  </div>
  <div>
@@ -133,8 +144,8 @@ function renderAccounts(){
  root.innerHTML=registry.accounts.length?registry.accounts.map(a=>
   '<article class="account-card">'+
    '<label class="check-line"><input type="checkbox" data-account="'+esc(a.id)+'" '+(selectedAccounts.has(a.id)?'checked':'')+'><span class="account-name">@'+esc(a.username)+'</span></label>'+
-   '<div class="account-sub">Прокси: '+esc(a.proxy_label)+' · '+(a.browser_open?'🟢 Браузер открыт':a.has_profile?'Сессия на диске':'Новый профиль')+'</div>'+
-   '<div class="account-buttons"><button data-open="'+esc(a.id)+'">Открыть Edge</button>'+
+   '<div class="account-sub">'+esc(a.browser==='camoufox'?'Camoufox':'Edge')+' · Прокси: '+esc(a.proxy_label)+' · '+(a.browser_open?'🟢 Браузер открыт':a.has_profile?'Профиль на диске':'Новый профиль')+(a.profile_path?' · Связан существующий профиль':'')+'</div>'+
+   '<div class="account-buttons"><button data-open="'+esc(a.id)+'">Открыть '+(a.browser==='camoufox'?'Camoufox':'Edge')+'</button>'+
    '<button data-close="'+esc(a.id)+'">Закрыть</button>'+
    '<button data-show-proxy="'+esc(a.id)+'">⚙ Прокси</button>'+
    '<button data-test-saved="'+esc(a.id)+'" '+(!a.proxy_configured?'disabled':'')+'>Проверить IP</button>'+
@@ -186,10 +197,10 @@ $('accountsList').addEventListener('click',async e=>{
     const value=b.dataset.clearProxy?'':$('proxyInput_'+id).value;
     await json('/account/'+id+'/proxy','PUT',{proxy:value});
     registry=await api('');renderAccounts();
-    message('accountAddResult','Настройки прокси сохранены. Открой Edge заново, чтобы применить.','status');
+    message('accountAddResult','Настройки прокси сохранены. Открой браузер заново, чтобы применить.','status');
     return;
   }
-  if(b.dataset.open){await api('/account/'+id+'/open',{method:'POST'});alert('Edge открыт. Войди вручную в нужный Instagram.');}
+  if(b.dataset.open){const result=await api('/account/'+id+'/open',{method:'POST'});message('accountAddResult',result.message||'Браузер открыт. Проверь Instagram.','status');}
   if(b.dataset.close)await api('/account/'+id+'/close',{method:'POST'});
   if(b.dataset.remove){
    if(!confirm('Удалить аккаунт из браузерного списка? Локальный профиль на диске останется.'))return;
@@ -199,13 +210,18 @@ $('accountsList').addEventListener('click',async e=>{
  }catch(err){alert('Ошибка действия с аккаунтом: '+err.message);}
  finally{b.disabled=false;}
 });
+function toggleBrowserFields(){
+ $('camoufoxProfileFields').hidden=$('newBrowser').value!=='camoufox';
+}
 async function addAccount(){
  const username=$('newUsername').value.trim(),proxy=$('newProxy').value.trim();
+ const browser=$('newBrowser').value;
+ const profile_path=browser==='camoufox' ? $('newProfilePath').value.trim() : '';
  try{
-  await json('/account','POST',{username,proxy});
-  $('newUsername').value='';$('newProxy').value='';
+  await json('/account','POST',{username,proxy,browser,profile_path});
+  $('newUsername').value='';$('newProxy').value='';$('newProfilePath').value='';
   registry=await api('');renderAccounts();
-  message('accountAddResult','Аккаунт добавлен. Теперь нажми «Открыть Edge» для входа.','status');
+  message('accountAddResult','Аккаунт добавлен. Нажми «Открыть '+(browser==='camoufox'?'Camoufox':'Edge')+'».','status');
  }catch(e){message('accountAddResult',e.message,'error');}
 }
 function proxyResultText(d){
@@ -254,7 +270,7 @@ async function publishSelected(){
  $('publishBtn').disabled=true;
  try{
   const result=await json('/publish','POST',{accounts:[...selectedAccounts],folder_id:$('folderSelect').value,filenames:[...selectedVideos],caption:$('caption').value,confirmed:true});
-  message('publishMessage','Очередь запущена: '+result.total+' публикаций. Открытые окна Edge не закрывай.','status');
+  message('publishMessage','Очередь запущена: '+result.total+' публикаций. Открытые окна браузеров не закрывай.','status');
   await refreshAll();
  }catch(e){message('publishMessage','Ошибка запуска: '+e.message,'error');}
  finally{$('publishBtn').disabled=false;}
@@ -270,7 +286,7 @@ function renderJob(){
  $('publishBtn').disabled=j.status==='running';
  $('jobHint').textContent=j.status==='needs_review'?
    'Проверь браузер: ролик мог опубликоваться. Автоматического повтора нет.':
-   j.status==='stopped'?'Остановлено на ошибке. Проверь этап и открытую страницу Edge перед повтором.':
+   j.status==='stopped'?'Остановлено на ошибке. Проверь этап и открытую страницу браузера перед повтором.':
    j.status==='running'?'Этап: '+(j.items?.at(-1)?.step_label||'Подготовка'):'';
 
  $('jobList').innerHTML=(j.items||[]).length?j.items.slice(-50).reverse().map(i=>
