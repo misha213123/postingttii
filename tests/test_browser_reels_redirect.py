@@ -30,7 +30,7 @@ class Control:
             raise TimeoutError("no such action")
 
     async def is_visible(self):
-        return self.role == "post" and self.page.url.endswith("/create/select/")
+        return self.role == "post" and self.page.menu_open
 
     async def wait_for(self, **_):
         if not self.page.post_selected and not self.page.initial_file:
@@ -49,6 +49,7 @@ class ReelsRedirectPage:
         self.redirect_from_create = redirect_from_create
         self.initial_file = False
         self.post_selected = False
+        self.menu_open = False
         self.selected_files = []
         self.visited = []
         self.reels_text_was_clicked = False
@@ -76,25 +77,28 @@ class ReelsRedirectPage:
 
 
 class ReelsRedirectTests(unittest.IsolatedAsyncioTestCase):
-    async def test_reels_feed_is_recovered_before_video_selection(self):
+    async def test_reels_feed_blocks_upload_without_navigating_to_fake_create_url(self):
         page = ReelsRedirectPage(start_in_reels=True)
-        await browser._choose_instagram_video(page, Path("reel.mp4"))
-        self.assertEqual(page.selected_files, ["reel.mp4"])
-        self.assertIn("https://www.instagram.com/create/select/", page.visited)
+        with self.assertRaises(RuntimeError) as error:
+            await browser._choose_instagram_video(page, Path("reel.mp4"))
+        self.assertIn("Reels", str(error.exception))
+        self.assertEqual(page.selected_files, [])
+        self.assertEqual(page.visited, [])
         self.assertFalse(page.reels_text_was_clicked)
 
-    async def test_create_icon_redirect_to_feed_is_not_accepted_as_create(self):
+    async def test_create_icon_redirect_to_feed_is_rejected_without_profile_url(self):
         page = ReelsRedirectPage(redirect_from_create=True)
-        await browser._open_instagram_create(page)
-        self.assertEqual(page.url, "https://www.instagram.com/create/select/")
-        self.assertNotIn("reels", page.url)
-        self.assertIn("https://www.instagram.com/create/select/", page.visited)
+        with self.assertRaises(RuntimeError) as error:
+            await browser._open_instagram_create(page)
+        self.assertIn("Reels", str(error.exception))
+        self.assertEqual(page.visited, [])
 
     async def test_create_and_upload_never_click_global_reels_link(self):
         page = ReelsRedirectPage()
-        page.url = "https://www.instagram.com/create/select/"
+        page.menu_open = True
         await browser._choose_instagram_video(page, Path("uploaded.mp4"))
         self.assertFalse(page.reels_text_was_clicked)
+        self.assertEqual(page.visited, [])
         self.assertEqual(page.selected_files, ["uploaded.mp4"])
 
 
