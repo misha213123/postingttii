@@ -804,10 +804,11 @@ async def _choose_instagram_video(page, video: Path) -> None:
                 "Открой Camoufox в обычном режиме и проверь пункт Post."
             )
 
-    # Instagram creates the input asynchronously, often after animation.
-    if await upload_from_input():
-        return
+    # Prefer the visible Post-editor button over hidden page-level inputs.
+    # Instagram creates the MP4 input asynchronously on some layouts.
     if await upload_from_button():
+        return
+    if await upload_from_input():
         return
     # Some builds create the input only after a click on the Choose button.
     # Do not attempt clicking a Reels navigation element as a fallback.
