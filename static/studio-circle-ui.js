@@ -117,7 +117,8 @@
     // The second style shows the existing backdrop alone for 0.38 seconds;
     // circle, white moving highlight, progress and banner then fade in.
     stage.classList.toggle('studio-intro-frame',
-      designState.visual_template==='orbit_dots' && current<0.38);
+      designState.visual_template==='orbit_dots' &&
+      sample.readyState>=2 && !sample.paused && current<0.38);
   }
   function sync(){
     const state=designState;
