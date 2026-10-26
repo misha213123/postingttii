@@ -30,7 +30,7 @@ class BannerPositionTests(unittest.TestCase):
     def test_negative_banner_position_flows_to_ffmpeg_overlay(self):
         design = tg.RenderDesign(banner_enabled=True,
                                  banner_x=-420, banner_y=-135,
-                                 quality_preset="maximum")
+                                 quality_preset="maximum", render_speed="original")
         graph = tg.banner_overlay_filter(design, 2)
         self.assertIn("overlay=-420:-135", graph)
         self.assertIn("hqdn3d=", graph)
@@ -45,6 +45,7 @@ class BannerPositionTests(unittest.TestCase):
         self.assertEqual(effective.quality_preset, "maximum")
         self.assertEqual(effective.banner_x, -700)
         self.assertEqual(effective.banner_y, 2010)
+        self.assertEqual(effective.render_speed, "original")
 
 
 class HighQualityGraphTests(unittest.TestCase):
@@ -59,7 +60,7 @@ class HighQualityGraphTests(unittest.TestCase):
 
     def test_maximum_preset_encodes_at_higher_fidelity(self):
         design = tg.RenderDesign(output_fps=30, timecode_enabled=False,
-                                 quality_preset="maximum")
+                                 quality_preset="maximum", render_speed="original")
         with (
             patch.object(tg, "duration", side_effect=[2.0, 8.0]),
             patch.object(tg.random, "uniform", return_value=0.0),
@@ -104,7 +105,7 @@ class EnhancementFallbackTests(unittest.TestCase):
             1, ["ffmpeg"], stderr="No such filter: hqdn3d",
         )
         design = tg.RenderDesign(timecode_enabled=False,
-                                 quality_preset="enhanced")
+                                 quality_preset="enhanced", render_speed="original")
         with (
             patch.object(tg, "duration", side_effect=[2.0, 8.0, 2.0, 8.0]),
             patch.object(tg.random, "uniform", return_value=0.0),
