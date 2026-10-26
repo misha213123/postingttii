@@ -37,7 +37,7 @@ class FakePage:
         self.goto = AsyncMock()
 
     def locator(self, selector):
-        if selector == 'input[type="file"]':
+        if 'input[type="file"]' in selector and ('[role="dialog"]' in selector or '[aria-modal="true"]' in selector):
             return self.file
         if selector.startswith('svg[aria-label='):
             return self.icon
