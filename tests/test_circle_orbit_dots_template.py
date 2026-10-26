@@ -1,4 +1,4 @@
-"""Second Reel template: spinning orbit and dotted progress, no timestamp.
+"""Second Reel template: white moving rim, normal loading bar, no timestamp.
 
 The first Telegram circle template remains the default and is unchanged.
 """
@@ -54,6 +54,12 @@ class CircleStyleTests(unittest.TestCase):
                 self.assertEqual(image.size, (512, 512))
                 self.assertEqual(image.getpixel((256, 256))[3], 0)
                 self.assertGreater(image.getchannel("A").getbbox()[2], 400)
+                rgba = image.convert("RGBA")
+                pix = rgba.getpixel((256, 256))
+                self.assertEqual(pix[3], 0)
+                colored = [(r,g,b) for r,g,b,a in rgba.getdata() if a > 220]
+                self.assertTrue(colored)
+                self.assertTrue(all(r == g == b == 255 for r,g,b in colored))
 
 
 class CircleFFmpegTests(unittest.TestCase):
@@ -73,19 +79,22 @@ class CircleFFmpegTests(unittest.TestCase):
         argv = run.call_args.args[0]
         return argv, argv[argv.index("-filter_complex") + 1]
 
-    def test_new_template_has_genuinely_rotating_ring_and_filling_dots(self):
+    def test_new_template_has_white_moving_ring_loading_bar_and_intro(self):
         # Even if a legacy profile had timecode_enabled=True, never print time.
         argv, graph = self._render(tg.RenderDesign(
             visual_template="orbit_dots", timecode_enabled=True
         ))
-        self.assertIn("rotate=a='2*PI*t/7'", graph)
+        self.assertIn("rotate=a='2*PI*t/6'", graph)
         self.assertIn("[2:v]format=rgba,rotate=", graph)
         self.assertIn("[orbit_ring]", graph)
-        self.assertIn("[progress_dots]", graph)
-        self.assertIn("mod(X", graph)
+        self.assertIn("[loading_track]", graph)
+        self.assertIn("[loading_fill]", graph)
         self.assertIn("min(T/2.000", graph)
+        self.assertIn("[circle]fade=t=in:st=0.38", graph)
+        self.assertIn("fade=t=in:st=0.38:d=0.28:alpha=1[orbit_ring]", graph)
+        self.assertIn("enable='gte(t,0.38)'", graph)
         self.assertNotIn("drawtext", graph)
-        self.assertNotIn("[progress_track]", graph)
+        self.assertNotIn("[progress_dots]", graph)
         self.assertIn("orbit.png", argv)
         self.assertIn("-framerate", argv)
 
@@ -98,6 +107,7 @@ class CircleFFmpegTests(unittest.TestCase):
         self.assertIn("[3:v]scale=", graph)
         self.assertIn("[2:v]format=rgba,rotate=", graph)
         self.assertEqual(argv.count("banner.png"), 1)
+        self.assertIn("fade=t=in:st=0.38:d=0.28:alpha=1[banner]", graph)
 
     def test_legacy_template_uses_same_progress_and_no_orbit(self):
         argv, graph = self._render(tg.RenderDesign(
@@ -125,12 +135,14 @@ class TemplateUiTests(unittest.TestCase):
         self.assertIn("window.setStudioTemplatePresets", self.js)
         self.assertIn("d.presets||{}", self.html)
 
-    def test_preview_has_spinning_outer_ring_and_dot_fill(self):
+    def test_preview_has_clean_white_ring_loading_and_no_time(self):
         self.assertIn("studio-orbit-ring", self.css)
         self.assertIn("studioOrbitRotate", self.css)
-        self.assertIn("studio-dot.filled", self.css)
-        self.assertIn("studio-dot.head", self.css)
+        self.assertIn("studio-progress-loading", self.css)
+        self.assertIn("studio-intro-frame", self.js)
         self.assertIn("timecode.hidden=orbit", self.js)
+        self.assertNotIn("studio-dot.filled", self.css)
+        self.assertNotIn("studio-progress-dots", self.js)
 
 
 if __name__ == "__main__":
