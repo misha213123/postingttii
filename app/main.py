@@ -1286,6 +1286,22 @@ async def instagram_media_diagnostic(body: MediaDiagnosticRequest):
                 and result["range_status"] == 206
                 and sample > 0
             )
+            # A 1KB range can pass while large transfers fail in a Quick
+            # Tunnel. For reasonably-sized media also verify a full GET.
+            if result["ok"] and path.stat().st_size <= 25 * 1024 * 1024:
+                async with client.stream("GET", url) as full:
+                    transferred = 0
+                    async for chunk in full.aiter_bytes():
+                        transferred += len(chunk)
+                    result["full_status"] = full.status_code
+                    result["full_bytes"] = transferred
+                    result["full_ok"] = (
+                        full.status_code == 200
+                        and transferred == path.stat().st_size
+                    )
+                    result["ok"] = bool(result["full_ok"])
+            elif result["ok"]:
+                result["full_get_skipped"] = "Файл больше 25 МБ"
         except httpx.HTTPError as exc:
             result["error"] = f"{type(exc).__name__}: {str(exc)[:250]}"
         finally:
