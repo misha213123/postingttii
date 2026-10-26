@@ -86,7 +86,7 @@ class MockControl:
     def last(self): return self
 
     async def is_visible(self):
-        return self.action == "post"
+        return self.action in {"post", "pick"}
 
     async def click(self, timeout=0):
         if self.action == "post":
