@@ -127,6 +127,7 @@ def _public_account(account_id: str, data: dict) -> dict:
         "cover_url": (f"/api/browser-instagram/cover/{cover_id}"
                       if cover_exists else ""),
         "browser": browser, "profile_path": external,
+        "headless": bool(data.get("headless", False)) if browser == "camoufox" else False,
         "proxy_configured": bool(data.get("proxy")),
         "proxy_label": masked_proxy(data.get("proxy", "")),
         "browser_open": account_id in CONTEXTS,
@@ -175,6 +176,10 @@ class BrowserAccount(BaseModel):
 
 class ProxyInput(BaseModel):
     proxy: str = Field(default="", max_length=1200)
+
+
+class HeadlessInput(BaseModel):
+    enabled: bool = False
 
 
 class AccountCoverInput(BaseModel):
@@ -304,10 +309,31 @@ def add_account(body: BrowserAccount, request: Request):
     data[key] = {
         "username": username, "proxy": body.proxy.strip(),
         "browser": body.browser, "profile_path": profile_path,
-        "cover_id": "",
+        "cover_id": "", "headless": False,
     }
     _write(data)
     return _public_account(key, data[key])
+
+
+@router.put("/account/{account_id}/headless")
+def configure_camoufox_headless(account_id: str, body: HeadlessInput, request: Request):
+    """Headless is opt-in and can change only while the profile is closed."""
+    _local(request)
+    accounts = _read()
+    account = accounts.get(account_id)
+    if account is None:
+        raise HTTPException(404, "Браузерный Instagram-аккаунт не найден")
+    if account.get("browser", "edge") != "camoufox":
+        raise HTTPException(400, "Фоновый режим доступен только для Camoufox")
+    if account_id in CONTEXTS or account_id in CAMOUFOX_HANDLES:
+        raise HTTPException(
+            409, "Закрой Camoufox кнопкой «Закрыть» перед сменой режима",
+        )
+    if CURRENT_JOB and CURRENT_JOB.get("status") == "running":
+        raise HTTPException(409, "Фоновый режим нельзя менять во время публикации")
+    account["headless"] = body.enabled
+    _write(accounts)
+    return _public_account(account_id, account)
 
 
 @router.put("/account/{account_id}/proxy")
@@ -427,7 +453,8 @@ async def _context(account_id: str):
                          "-r requirements.txt и python -m camoufox fetch.",
                 ) from None
             manager = AsyncCamoufox(
-                headless=False, os="windows", persistent_context=True,
+                headless=bool(account.get("headless", False)),
+                os="windows", persistent_context=True,
                 user_data_dir=str(profile), **opts,
             )
             try:
@@ -499,12 +526,18 @@ async def open_account(account_id: str, request: Request):
         if existing_context or active_upload:
             # Also preserve the failed upload page after the job is stopped:
             # clicking 'Open Edge' should reveal the error, not erase it.
-            await page.bring_to_front()
+            hidden = bool(_read().get(account_id, {}).get("headless", False))
+            if not hidden:
+                await page.bring_to_front()
             return {
                 "ok": True,
-                "message": ("Публикация выполняется — окно выведено вперёд без обновления."
-                            if active_upload else
-                            f"{browser_name} уже открыт. Страница сохранена для проверки ошибки."),
+                "message": (
+                    "Camoufox работает в фоне. Профиль не перезагружен."
+                    if hidden else
+                    ("Публикация выполняется — окно выведено вперёд без обновления."
+                     if active_upload else
+                     f"{browser_name} уже открыт. Страница сохранена для проверки ошибки.")
+                ),
             }
         try:
             await page.goto("https://www.instagram.com/",
@@ -516,8 +549,15 @@ async def open_account(account_id: str, request: Request):
                 502, f"{browser_name} открыт, но Instagram не загрузился. Проверь прокси, "
                      f"подключение и страницу в окне {browser_name}.",
             ) from None
-        await page.bring_to_front()
-        return {"ok": True, "message": f"{browser_name} открыл Instagram. Проверь вход и свою страницу."}
+        hidden = bool(_read().get(account_id, {}).get("headless", False))
+        if not hidden:
+            await page.bring_to_front()
+        return {
+            "ok": True,
+            "message": ("Camoufox запущен в фоне. Для ручного входа переключи режим на видимый."
+                        if hidden else
+                        f"{browser_name} открыл Instagram. Проверь вход и свою страницу."),
+        }
     except HTTPException:
         raise
     except Exception as exc:
@@ -718,13 +758,13 @@ async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None
         if page is None:
             page = pages[0] if pages else await ctx.new_page()
     except Exception:
-        raise RuntimeError("Не удалось подключиться к окну Edge. Закрой профиль и открой заново.") from None
+        raise RuntimeError("Не удалось подключиться к Camoufox/Edge. Закрой профиль и открой заново.") from None
     try:
         await page.goto("https://www.instagram.com/",
                         wait_until="domcontentloaded", timeout=45000)
     except Exception:
         raise RuntimeError(
-            "Не удалось загрузить instagram.com. Проверь страницу в Edge "
+            "Не удалось загрузить instagram.com. Проверь страницу в Camoufox/Edge "
             "и подключение через свой прокси."
         ) from None
 
