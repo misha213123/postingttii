@@ -52,7 +52,7 @@ def _brief_error(exc: Exception) -> str:
         # Only our explicitly-authored workflow errors use RuntimeError;
         # external Playwright errors need a generic sanitized explanation.
         message = str(exc)
-        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не нашёл ", "Проверь ", "Не удалось ")):
+        if message.startswith(("Требуется ", "Instagram ", "Не найден ", "Не найдена ", "Не нашёл ", "Проверь ", "Не удалось ")):
             return message
     return "Ошибка взаимодействия с Edge/Camoufox или Instagram. Проверь браузер, вход и подключение."
 
@@ -457,6 +457,55 @@ async def _click_action(page, text: str, timeout_ms: int = 15000):
         await page.get_by_text(re.compile(r"^(" + text + r")$", re.I)).last.click(timeout=timeout_ms)
 
 
+async def _file_input_attached(page, timeout_ms: int = 1200) -> bool:
+    """Check only the create dialog; does not submit or mutate the post."""
+    try:
+        await page.locator('input[type="file"]').first.wait_for(
+            state="attached", timeout=timeout_ms,
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def _open_instagram_create(page) -> None:
+    """Support both expanded and icon-only Instagram sidebar layouts.
+
+    Instagram changes its navigation markup frequently. Prefer a visible,
+    named Create link/button; fall back to the + icon's accessible SVG label.
+    Only a single successful click is made.
+    """
+    if await _file_input_attached(page, timeout_ms=800):
+        return  # The user already opened the create dialog.
+    role_name = re.compile(r"^(Create|New post|Создать|Новая публикация)$", re.I)
+    candidates = [
+        page.locator('a[href="/create/select/"], a[href="/create/"], a[href^="/create/"]').first,
+        page.get_by_role("link", name=role_name).first,
+        page.get_by_role("button", name=role_name).first,
+        page.locator(
+            'svg[aria-label="New post"], svg[aria-label="Create"], '
+            'svg[aria-label="Создать"], svg[aria-label="Новая публикация"]'
+        ).first,
+        page.get_by_text(role_name).first,
+    ]
+    for candidate in candidates:
+        try:
+            await candidate.click(timeout=2400)
+            return
+        except Exception:
+            continue
+    # Last resort: navigate only to Instagram's own creator URL. Navigation
+    # cannot publish a video, and the next stage verifies the file chooser.
+    try:
+        await page.goto("https://www.instagram.com/create/select/",
+                        wait_until="domcontentloaded", timeout=15000)
+        if await _file_input_attached(page, timeout_ms=1800):
+            return
+    except Exception:
+        pass
+    raise RuntimeError("Не найдена кнопка «Создать» в Instagram.")
+
+
 async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None = None) -> str:
     """UI-based Instagram upload; stop on ambiguity, never retry Share."""
     item = item if item is not None else {}
@@ -483,24 +532,29 @@ async def _publish_via_browser(ctx, video: Path, caption: str, item: dict | None
     # Never automate login, additional account verification or CAPTCHA.
     _stage(item, "create", "Открываю создание публикации")
     try:
-        create = page.locator('a[href="/create/select/"], a[href="/create/"]').first
-        try:
-            await create.click(timeout=8000)
-        except Exception:
-            await page.get_by_role("link", name=re.compile(r"Create|Создать", re.I)).first.click(timeout=12000)
+        await _open_instagram_create(page)
     except Exception:
         raise RuntimeError(
-            "Не найдена кнопка «Создать» в Instagram. Открой Edge и проверь, "
-            "что аккаунт вошёл в систему."
+            "Не найдена кнопка «Создать» в Instagram. В Camoufox/Edge проверь "
+            "значок «+» слева и обнови страницу. Если Instagram изменил меню, "
+            "публикация остановлена без отправки."
         ) from None
 
     _stage(item, "choose_video", "Выбираю файл видео")
     try:
-        await page.get_by_text(re.compile(r"^Post$|^Публикация$", re.I)).last.click(timeout=2500)
-    except Exception:
-        pass
-    try:
+        # Instagram may show the Post/Reel chooser instead of the upload form.
+        # Prefer Reels for video, but never click Share at this stage.
         upload = page.locator('input[type="file"]').first
+        if not await _file_input_attached(page, timeout_ms=1800):
+            for name in (r"^Reel$|^Reels$|^Рилс$|^Видео Reels$",
+                         r"^Post$|^Публикация$"):
+                try:
+                    await page.get_by_text(re.compile(name, re.I)).last.click(
+                        timeout=2200
+                    )
+                    break
+                except Exception:
+                    continue
         await upload.wait_for(state="attached", timeout=20000)
         await upload.set_input_files(str(video), timeout=35000)
     except Exception:
