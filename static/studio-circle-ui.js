@@ -9,7 +9,7 @@
     progress_enabled:true,progress_x:310,progress_y:1190,
     progress_width:460,progress_height:9,
     timecode_enabled:true,timecode_x:445,timecode_y:1220,
-    timecode_font_size:32,output_fps:60,smooth_motion:false
+    timecode_font_size:32,output_fps:60,smooth_motion:false,render_speed:'quiet'
   };
   for(const key in defaults)if(designState[key]===undefined)designState[key]=defaults[key];
   const controls=document.createElement('div');
@@ -76,6 +76,24 @@
   slider('Толщина полосы','progress_height',3,30);
   checkbox('Показывать таймкод','timecode_enabled');
   slider('Размер таймкода','timecode_font_size',18,64);
+  const speedRow=document.createElement('label');
+  speedRow.textContent='Нагрузка на компьютер';
+  const speed=document.createElement('select');
+  for(const [value,title] of [
+    ['quiet','Тихий и быстрый · 30 FPS · 2 потока'],
+    ['balanced','Сбалансированный · 30/60 FPS · 4 потока'],
+    ['original','Без ограничений · максимальная нагрузка']
+  ]){
+    const option=document.createElement('option');
+    option.value=value;option.textContent=title;speed.append(option);
+  }
+  speedRow.append(speed);controls.append(speedRow);
+  const speedHint=document.createElement('span');
+  speedHint.className='hint';controls.append(speedHint);
+  speed.addEventListener('change',()=>{
+    designState.render_speed=speed.value;
+    updateDesignPreview();saveRenderDesign();
+  });
   const fpsRow=document.createElement('label'),fps=document.createElement('select');
   fpsRow.textContent='Частота кадров MP4';
   for(const n of [30,60]){
@@ -137,6 +155,16 @@
     for(const key in checks)checks[key].checked=!!state[key];
     color.value=state.circle_border_color;
     fps.value=String(state.output_fps);
+    speed.value=state.render_speed||'quiet';
+    const quiet=speed.value==='quiet';
+    fps.disabled=quiet;
+    checks.smooth_motion.disabled=speed.value!=='original';
+    speedHint.textContent=quiet?
+      'Эффективно 30 FPS, H.264 veryfast, без тяжёлых фильтров и интерполяции. '+
+      'Размер 1080×1920, фон, кружок, обводка, прогресс и баннер сохраняются.':
+      speed.value==='balanced'?
+      'Оставляет выбранные FPS и качество, но ограничивает FFmpeg четырьмя потоками.':
+      'Все фильтры и выбранные FPS без ограничения потоков — максимальная нагрузка.';
     const orbit=state.visual_template==='orbit_dots';
     templateSelect.value=orbit?'orbit_dots':'classic';
     checks.timecode_enabled.disabled=orbit;
