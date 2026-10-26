@@ -101,6 +101,9 @@ def video_banner_design(layout: InstagramLayout | None = None) -> RenderDesign:
         if value is not None:
             updates[key] = value
     updates["quality_preset"] = layout.quality_preset
+    # Telegram resource-saving mode must not silently change the separate
+    # ordinary-Instagram-video export profile (including its ad banner).
+    updates["render_speed"] = "original"
     return design.model_copy(update=updates)
 
 
