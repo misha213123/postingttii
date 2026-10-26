@@ -727,6 +727,27 @@ async def _choose_instagram_video(page, video: Path) -> None:
                 raise
             except Exception:
                 continue
+        # Instagram can render several exact "Post" nodes in the DOM.
+        # A .last locator may point to an invisible one; try visible matches.
+        for label in ("Post", "Публикация", "Пост"):
+            try:
+                matches = await page.get_by_text(label, exact=True).all()
+            except Exception:
+                continue
+            for target in reversed(matches):
+                try:
+                    if not await target.is_visible():
+                        continue
+                    await target.click(timeout=3500)
+                    if _in_reels_feed(page) or _opened_create_profile_instead(page):
+                        raise RuntimeError(
+                            "Instagram открыл не форму публикации после Post."
+                        )
+                    return True
+                except RuntimeError:
+                    raise
+                except Exception:
+                    continue
         return False
 
     async def upload_from_button() -> bool:
