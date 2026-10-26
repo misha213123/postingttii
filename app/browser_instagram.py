@@ -616,6 +616,13 @@ def _in_reels_feed(page) -> bool:
     ))
 
 
+def _opened_create_profile_instead(page) -> bool:
+    return bool(re.search(
+        r"instagram\.com/create/select/?(?:[?#]|$)",
+        str(getattr(page, "url", "")), re.I,
+    ))
+
+
 async def _open_instagram_create(page) -> None:
     """Click Instagram's actual Create control; never navigate to /create/select/.
 
@@ -642,6 +649,11 @@ async def _open_instagram_create(page) -> None:
             await candidate.click(timeout=2600)
         except Exception:
             continue
+        if _opened_create_profile_instead(page):
+            raise RuntimeError(
+                "Instagram открыл профиль @create вместо редактора. "
+                "Проверь кнопку «+» в боковой панели."
+            )
         if _in_reels_feed(page):
             raise RuntimeError(
                 "Instagram открыл ленту Reels вместо меню «Создать». "
@@ -740,6 +752,11 @@ async def _choose_instagram_video(page, video: Path) -> None:
                 continue
         return False
 
+    if _opened_create_profile_instead(page):
+        raise RuntimeError(
+            "Вместо редактора Instagram открыта страница @create. "
+            "Нужен пункт «+ → Post», а не адрес /create/select/."
+        )
     if _in_reels_feed(page):
         raise RuntimeError(
             "Вместо формы публикации открыта лента Reels. "
