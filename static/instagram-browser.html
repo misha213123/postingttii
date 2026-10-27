@@ -61,11 +61,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
        placeholder="%USERPROFILE%\Desktop\Camoufox\profiles\instagram_1">
      <p class="muted">Чтобы использовать уже открытый Instagram, укажи папку профиля из launch.py. Закрой прежнее окно Camoufox и launch.py перед запуском из PostingTTII. Если поле пустое — создастся отдельный новый профиль.</p>
    </div>
-   <div class="field"><label for="newProxy">Личный резидентский прокси (необязательно)</label>
+   <div class="field"><label for="newProxyMode">Подключение аккаунта</label>
+     <select id="newProxyMode" onchange="toggleNewProxyMode()">
+       <option value="direct">Без прокси — обычный интернет компьютера</option>
+       <option value="proxy">Через прокси — указать адрес и доступ</option>
+     </select></div>
+   <div id="newProxyBlock" hidden><div class="field"><label for="newProxy">Настройки прокси</label>
      <input id="newProxy" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="host:port:user:password или http://user:pass@host:port">
      <button type="button" class="ghost" id="newProxyVisibility" onclick="toggleProxyVisibility('newProxy',this)">Скрыть ввод</button>
-     <p class="muted">Форматы: IP:порт:логин:пароль, http://IP:порт:логин:пароль или http://логин:пароль@IP:порт. HTTP/HTTPS с авторизацией и SOCKS5 без авторизации. После сохранения пароль скрыт.</p></div>
-   <div class="row"><button class="ghost" id="testProxyBtn" onclick="testNewProxy()">Проверить прокси и IP</button>
+     <p class="muted">Форматы: IP:порт:логин:пароль, http://IP:порт:логин:пароль или http://логин:пароль@IP:порт. HTTP/HTTPS с авторизацией и SOCKS5 без авторизации. После сохранения пароль скрыт.</p></div></div>
+   <div class="row"><button class="ghost" id="testProxyBtn" onclick="testNewProxy()" hidden>Проверить прокси и IP</button>
      <button class="primary" onclick="addAccount()">+ Добавить аккаунт</button></div>
    <p id="accountAddResult" class="muted" aria-live="polite"></p>
   </section>
@@ -156,20 +161,26 @@ function renderAccounts(){
  root.innerHTML=registry.accounts.length?registry.accounts.map(a=>
   '<article class="account-card">'+
    '<label class="check-line"><input type="checkbox" data-account="'+esc(a.id)+'" '+(selectedAccounts.has(a.id)?'checked':'')+'><span class="account-name">@'+esc(a.username)+'</span></label>'+
-   '<div class="account-sub">'+esc(a.browser==='camoufox'?'Camoufox':'Edge')+' · Прокси: '+esc(a.proxy_label)+' · '+(a.browser_open?(a.headless?'🟢 Фоновый процесс запущен':'🟢 Браузер открыт'):a.has_profile?'Профиль на диске':'Новый профиль')+(a.profile_path?' · Связан существующий профиль':'')+'</div>'+
+   '<div class="account-sub">'+esc(a.browser==='camoufox'?'Camoufox':'Edge')+' · '+(a.proxy_mode==='proxy'?'Прокси: '+esc(a.proxy_label):'Без прокси · прямое подключение')+' · '+(a.browser_open?(a.headless?'🟢 Фоновый процесс запущен':'🟢 Браузер открыт'):a.has_profile?'Профиль на диске':'Новый профиль')+(a.profile_path?' · Связан существующий профиль':'')+'</div>'+
+   '<div class="field"><label>Подключение этого аккаунта</label>'+
+   '<select data-account-proxy-mode="'+esc(a.id)+'" '+(a.browser_open?'disabled title="Сначала закрой браузер"':'')+'>'+
+   '<option value="direct" '+(a.proxy_mode==='direct'?'selected':'')+'>Без прокси</option>'+
+   '<option value="proxy" '+(a.proxy_mode==='proxy'?'selected':'')+' '+(!a.proxy_configured?'disabled':'')+'>Через прокси'+(!a.proxy_configured?' (сначала сохрани прокси)':'')+'</option>'+
+   '</select></div>'+
    '<div class="account-buttons"><button data-open="'+esc(a.id)+'">'+(a.headless?'Запустить Camoufox (фон)':'Открыть '+(a.browser==='camoufox'?'Camoufox':'Edge'))+'</button>'+
    '<button data-close="'+esc(a.id)+'">Закрыть</button>'+
    (a.browser==='camoufox'?'<button class="ghost" data-toggle-headless="'+esc(a.id)+'" '+(a.browser_open?'disabled title="Сначала закрой браузер"':'')+'>'+(a.headless?'☑ Работа в фоне: ВКЛ':'□ Работа в фоне: ВЫКЛ')+'</button>':'')+
    '<button data-show-proxy="'+esc(a.id)+'">⚙ Прокси</button>'+
-   '<button data-test-saved="'+esc(a.id)+'" '+(!a.proxy_configured?'disabled':'')+'>Проверить IP</button>'+
+   '<button data-test-saved="'+esc(a.id)+'" '+(!a.proxy_configured?'disabled':'')+'>Проверить прокси</button>'+
    '<button class="danger" data-remove="'+esc(a.id)+'">Удалить из списка</button></div>'+
    '<div id="proxyPanel_'+esc(a.id)+'" hidden style="border-top:1px solid #304561;margin-top:11px;padding-top:9px">'+
-   '<label for="proxyInput_'+esc(a.id)+'">Новый прокси (оставь пустым, чтобы отключить)</label>'+
+   '<label for="proxyInput_'+esc(a.id)+'">Прокси (сохранение автоматически включает режим «Через прокси»)</label>'+
    '<input id="proxyInput_'+esc(a.id)+'" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="host:port:user:password" style="margin:8px 0">'+
    '<button type="button" class="ghost" data-toggle-proxy="'+esc(a.id)+'">Скрыть ввод</button>'+
    '<div class="account-buttons"><button data-test-input="'+esc(a.id)+'">Проверить введённый</button>'+
-   '<button data-save-proxy="'+esc(a.id)+'">Сохранить привязку</button>'+
-   '<button data-clear-proxy="'+esc(a.id)+'">Убрать прокси</button></div>'+
+   '<button data-save-proxy="'+esc(a.id)+'">Сохранить и включить прокси</button>'+
+   '<button data-clear-proxy="'+esc(a.id)+'">Удалить сохранённый прокси</button></div>'+
+   '<p class="muted">Можно выбрать «Без прокси» выше, не удаляя сохранённый адрес. После изменения открой браузер заново.</p>'+
    '<p id="proxyResult_'+esc(a.id)+'" class="muted" aria-live="polite"></p></div>'+
    '<div class="cover-row"><label>Одна обложка для всех Reels аккаунта'+
    '<input type="file" accept="image/jpeg,image/png,image/webp" data-account-cover="'+esc(a.id)+'" '+(coverUploading.has(a.id)?'disabled':'')+'></label>'+
@@ -180,6 +191,22 @@ function renderAccounts(){
   ).join(''):'<p class="muted">Пока нет браузерных Instagram-аккаунтов.</p>';
 }
 $('accountsList').addEventListener('change',async e=>{
+ const modeAccount=e.target.dataset.accountProxyMode;
+ if(modeAccount){
+  const mode=e.target.value;
+  try{
+   await json('/account/'+modeAccount+'/proxy-mode','PUT',{mode});
+   registry=await api('');renderAccounts();
+   message('accountAddResult',
+     mode==='direct'?'Без прокси: при следующем открытии браузер пойдёт через интернет компьютера.':
+     'Прокси включён: при следующем открытии браузера будет использован сохранённый прокси.',
+     'status');
+  }catch(err){
+   registry=await api('');renderAccounts();
+   message('accountAddResult','Подключение: '+err.message,'error');
+  }
+  return;
+ }
  if(e.target.dataset.account){
   const key=e.target.dataset.account;
   e.target.checked?selectedAccounts.add(key):selectedAccounts.delete(key);return;
@@ -252,7 +279,7 @@ $('accountsList').addEventListener('click',async e=>{
     const value=b.dataset.clearProxy?'':$('proxyInput_'+id).value;
     await json('/account/'+id+'/proxy','PUT',{proxy:value});
     registry=await api('');renderAccounts();
-    message('accountAddResult','Настройки прокси сохранены. Открой браузер заново, чтобы применить.','status');
+    message('accountAddResult',value?'Прокси сохранён и включён. Открой браузер заново.':'Прокси удалён; включён режим без прокси. Открой браузер заново.','status');
     return;
   }
   if(b.dataset.open){const result=await api('/account/'+id+'/open',{method:'POST'});message('accountAddResult',result.message||'Браузер открыт. Проверь Instagram.','status');}
@@ -268,13 +295,22 @@ $('accountsList').addEventListener('click',async e=>{
 function toggleBrowserFields(){
  $('camoufoxProfileFields').hidden=$('newBrowser').value!=='camoufox';
 }
+function toggleNewProxyMode(){
+ const enabled=$('newProxyMode').value==='proxy';
+ $('newProxyBlock').hidden=!enabled;
+ $('testProxyBtn').hidden=!enabled;
+}
 async function addAccount(){
- const username=$('newUsername').value.trim(),proxy=$('newProxy').value.trim();
+ const username=$('newUsername').value.trim();
+ const proxy_mode=$('newProxyMode').value;
+ const proxy=proxy_mode==='proxy' ? $('newProxy').value.trim() : '';
+ if(proxy_mode==='proxy'&&!proxy){message('accountAddResult','Для режима через прокси введи его адрес и доступ','error');return;}
  const browser=$('newBrowser').value;
  const profile_path=browser==='camoufox' ? $('newProfilePath').value.trim() : '';
  try{
-  await json('/account','POST',{username,proxy,browser,profile_path});
+  await json('/account','POST',{username,proxy,proxy_mode,browser,profile_path});
   $('newUsername').value='';$('newProxy').value='';$('newProfilePath').value='';
+  $('newProxyMode').value='direct';toggleNewProxyMode();
   registry=await api('');renderAccounts();
   message('accountAddResult','Аккаунт добавлен. Нажми «Открыть '+(browser==='camoufox'?'Camoufox':'Edge')+'».','status');
  }catch(e){message('accountAddResult',e.message,'error');}
@@ -294,6 +330,7 @@ function toggleProxyVisibility(inputId,button){
 
 async function testNewProxy(){
   const input=$('newProxy'),btn=$('testProxyBtn'),value=input.value.trim();
+  if($('newProxyMode').value!=='proxy'){message('accountAddResult','Сначала выбери режим «Через прокси»','error');return;}
   if(!value){message('accountAddResult','Сначала укажи адрес прокси','error');return;}
   btn.disabled=true;message('accountAddResult','Проверяю соединение через указанный прокси...');
   try{
@@ -382,5 +419,5 @@ async function poll(){
   renderJob();
  }catch(e){}
 }
-refreshAll();setInterval(poll,4000);
+toggleNewProxyMode();refreshAll();setInterval(poll,4000);
 </script></body></html>
