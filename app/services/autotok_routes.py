@@ -100,9 +100,18 @@ async def autotok_health(request: Request):
     """Read-only local preflight; no login, upload or cookies are exposed."""
     _local_only(request)
     binary = autotok_bridge.executable()
+    version = ""
+    if binary:
+        try:
+            exit_code, result = await autotok_bridge.run_cli("--version", timeout=12)
+            if exit_code == 0:
+                version = result.strip().splitlines()[0][:80] if result.strip() else ""
+        except (RuntimeError, OSError, asyncio.TimeoutError, IndexError):
+            pass
     return {
         "installed": bool(binary),
         "login_supported": bool(binary),
+        "version": version,
         "hint": (
             "AutoTok доступен. Для входа выбери свободный TikTok-слот."
             if binary else
