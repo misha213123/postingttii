@@ -50,6 +50,46 @@ def _save(slot: int, name: str) -> None:
     })
 
 
+@router.get("/health")
+async def autotok_health(request: Request):
+    """Read-only local preflight; no login, upload or cookies are exposed."""
+    _local_only(request)
+    binary = autotok_bridge.executable()
+    return {
+        "installed": bool(binary),
+        "login_supported": bool(binary),
+        "hint": (
+            "AutoTok доступен. Для входа выбери свободный TikTok-слот."
+            if binary else
+            "AutoTok не установлен. Выполни uv tool install autotok "
+            "и autotok install-browser, затем перезапусти PostingTTII."
+        ),
+    }
+
+
+@router.post("/verify/{slot}")
+async def verify_connected(slot: int, request: Request):
+    """Verify one connected AutoTok account before selecting it for a job."""
+    _local_only(request)
+    _slot(slot)
+    account = store.get("tiktok", slot)
+    if not account:
+        raise HTTPException(404, "Сначала подключи TikTok-аккаунт в этом слоте")
+    if account.get("provider") != "autotok":
+        raise HTTPException(
+            400, "Этот слот подключён через TikTok OAuth, не через AutoTok",
+        )
+    alias = autotok_bridge.validate_name(str(account.get("autotok_account") or ""))
+    try:
+        await autotok_bridge.check_account(alias)
+    except RuntimeError as exc:
+        raise HTTPException(
+            409, "TikTok не подтверждает сохранённую сессию. "
+                 "Нужен повторный вход вручную. " + str(exc),
+        ) from None
+    return {"ok": True, "slot": slot, "name": alias, "ready": True}
+
+
 @router.post("/import")
 async def import_existing(body: AccountRequest, request: Request):
     _local_only(request)
@@ -101,7 +141,7 @@ async def start_login(body: AccountRequest, request: Request):
     _no_duplicate(body.slot, name)
     binary = autotok_bridge.executable()
     if not binary:
-        raise HTTPException(503, "AutoTok не найден. Установи: uv tool install autotok")
+        raise HTTPException(503, "AutoTok не найден. Выполни: uv tool install autotok; autotok install-browser")
     try:
         proc = await asyncio.create_subprocess_exec(
             binary, "login", "-n", name,
