@@ -64,6 +64,67 @@ class AutoTokSessionCheckTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[2], "account2")
 
 
+class TikTokInvalidParametersTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invalid_parameters_code9_is_rejected_and_never_marked_published(self):
+        account = {"provider": "autotok", "autotok_account": "account5"}
+        with (
+            patch.object(autotok_bridge.store, "get", return_value=account),
+            patch.object(autotok_bridge, "run_cli", new=AsyncMock(
+                return_value=(1, "TikTok rejected the post: Invalid parameters (status_code=9)")
+            )) as upload,
+            patch("pathlib.Path.is_file", return_value=True),
+        ):
+            with self.assertRaises(RuntimeError) as failure:
+                await autotok_bridge.publish(
+                    2, __import__("pathlib").Path("tg_memfunny_75.mp4"), ""
+                )
+        self.assertIn("status_code=9", str(failure.exception))
+        self.assertIn("Автоповтора нет", str(failure.exception))
+        upload.assert_awaited_once()
+
+    async def test_even_zero_exit_cannot_hide_tiktok_api_rejection(self):
+        account = {"provider": "autotok", "autotok_account": "account5"}
+        with (
+            patch.object(autotok_bridge.store, "get", return_value=account),
+            patch.object(autotok_bridge, "run_cli", new=AsyncMock(
+                return_value=(0, "Invalid parameters (status_code=9)")
+            )),
+            patch("pathlib.Path.is_file", return_value=True),
+        ):
+            with self.assertRaises(RuntimeError):
+                await autotok_bridge.publish(
+                    2, __import__("pathlib").Path("another.mp4"), ""
+                )
+
+
+class TikTokIdentityDisplayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_handle_is_manual_and_keeps_existing_session_unchanged(self):
+        account = {
+            "provider": "autotok", "autotok_account": "account5",
+            "label": "account5", "id": "account5",
+        }
+        with (
+            patch.object(autotok_routes.store, "get", return_value=account),
+            patch.object(autotok_routes.store, "save") as save,
+        ):
+            response = await autotok_routes.set_tiktok_identity(
+                2, autotok_routes.TikTokIdentityRequest(username="@sample_tiktok"),
+                local_request(),
+            )
+        self.assertEqual(response["username"], "sample_tiktok")
+        self.assertEqual(response["source"], "manual")
+        self.assertIn("/@sample_tiktok", response["profile_url"])
+        payload = save.call_args.args[2]
+        self.assertEqual(payload["autotok_account"], "account5")
+        self.assertEqual(payload["tiktok_username"], "sample_tiktok")
+
+    async def test_profile_url_can_be_pasted_as_username(self):
+        result = autotok_routes._normalize_tiktok_username(
+            "https://www.tiktok.com/@sample_tiktok?lang=ru"
+        )
+        self.assertEqual(result, "sample_tiktok")
+
+
 class TikTokVerificationRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_verify_saved_account_success(self):
         account = {"provider": "autotok", "autotok_account": "account1"}
