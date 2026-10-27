@@ -107,6 +107,32 @@ def _write(data: dict[str, dict]) -> None:
         pass
 
 
+def _proxy_mode(data: dict) -> str:
+    """Legacy accounts infer their mode from saved proxy credentials."""
+    mode = data.get("proxy_mode")
+    if mode in ("direct", "proxy"):
+        return mode
+    return "proxy" if data.get("proxy") else "direct"
+
+
+def _launch_proxy_options(data: dict) -> dict:
+    """Per-account browser network options; never leak saved credentials."""
+    if _proxy_mode(data) == "direct":
+        return {}
+    raw = data.get("proxy", "").strip()
+    if not raw:
+        raise HTTPException(
+            400, "Для режима «Через прокси» сначала сохрани адрес прокси аккаунта",
+        )
+    try:
+        proxy = parse_proxy(raw)
+    except ValueError:
+        raise HTTPException(400, "У аккаунта сохранён неверный прокси") from None
+    if not proxy:
+        raise HTTPException(400, "Не удалось прочитать прокси аккаунта")
+    return {"proxy": proxy}
+
+
 def _public_account(account_id: str, data: dict) -> dict:
     browser = data.get("browser", "edge")
     external = data.get("profile_path", "") if browser == "camoufox" else ""
@@ -128,6 +154,7 @@ def _public_account(account_id: str, data: dict) -> dict:
                       if cover_exists else ""),
         "browser": browser, "profile_path": external,
         "headless": bool(data.get("headless", False)) if browser == "camoufox" else False,
+        "proxy_mode": _proxy_mode(data),
         "proxy_configured": bool(data.get("proxy")),
         "proxy_label": masked_proxy(data.get("proxy", "")),
         "browser_open": account_id in CONTEXTS,
@@ -170,12 +197,17 @@ def _browser_name(account_id: str) -> str:
 class BrowserAccount(BaseModel):
     username: str = Field(min_length=1, max_length=30)
     proxy: str = Field(default="", max_length=1200)
+    proxy_mode: Literal["direct", "proxy"] | None = None
     browser: Literal["edge", "camoufox"] = "edge"
     profile_path: str = Field(default="", max_length=1024)
 
 
 class ProxyInput(BaseModel):
     proxy: str = Field(default="", max_length=1200)
+
+
+class ProxyModeInput(BaseModel):
+    mode: Literal["direct", "proxy"]
 
 
 class HeadlessInput(BaseModel):
@@ -290,6 +322,9 @@ def add_account(body: BrowserAccount, request: Request):
     username = body.username.strip().lstrip("@").lower()
     if not USER_RE.fullmatch(username):
         raise HTTPException(400, "Введи корректный Instagram username")
+    proxy_mode = body.proxy_mode or ("proxy" if body.proxy.strip() else "direct")
+    if proxy_mode == "proxy" and not body.proxy.strip():
+        raise HTTPException(400, "Выбери или введи прокси для этого режима")
     try:
         parse_proxy(body.proxy)
     except ValueError as exc:
@@ -308,6 +343,7 @@ def add_account(body: BrowserAccount, request: Request):
     key = secrets.token_hex(12)
     data[key] = {
         "username": username, "proxy": body.proxy.strip(),
+        "proxy_mode": proxy_mode,
         "browser": body.browser, "profile_path": profile_path,
         "cover_id": "", "headless": False,
     }
@@ -336,11 +372,32 @@ def configure_camoufox_headless(account_id: str, body: HeadlessInput, request: R
     return _public_account(account_id, account)
 
 
+@router.put("/account/{account_id}/proxy-mode")
+def set_account_proxy_mode(account_id: str, body: ProxyModeInput, request: Request):
+    """Switch direct/proxy for an existing account without deleting the proxy."""
+    _local(request)
+    if account_id in CONTEXTS or account_id in CAMOUFOX_HANDLES:
+        raise HTTPException(
+            409, "Закрой браузер аккаунта перед сменой подключения",
+        )
+    if CURRENT_JOB and CURRENT_JOB.get("status") == "running":
+        raise HTTPException(409, "Не меняй подключение во время публикации")
+    data = _read()
+    if account_id not in data:
+        raise HTTPException(404, "Браузерный аккаунт не найден")
+    account = data[account_id]
+    if body.mode == "proxy":
+        _launch_proxy_options({**account, "proxy_mode": "proxy"})
+    account["proxy_mode"] = body.mode
+    _write(data)
+    return _public_account(account_id, account)
+
+
 @router.put("/account/{account_id}/proxy")
 def set_account_proxy(account_id: str, body: ProxyInput, request: Request):
     """Proxy changes take effect on next browser launch, never mid-session."""
     _local(request)
-    if account_id in CONTEXTS:
+    if account_id in CONTEXTS or account_id in CAMOUFOX_HANDLES:
         raise HTTPException(409, "Сначала нажми «Закрыть» у аккаунта, чтобы поменять прокси")
     if CURRENT_JOB and CURRENT_JOB.get("status") == "running":
         raise HTTPException(409, "Не меняй прокси во время активной публикации")
@@ -352,6 +409,8 @@ def set_account_proxy(account_id: str, body: ProxyInput, request: Request):
     if account_id not in data:
         raise HTTPException(404, "Браузерный аккаунт не найден")
     data[account_id]["proxy"] = body.proxy.strip()
+    # Saving a proxy explicitly enables it; clearing it enables direct mode.
+    data[account_id]["proxy_mode"] = "proxy" if body.proxy.strip() else "direct"
     _write(data)
     return _public_account(account_id, data[account_id])
 
@@ -436,14 +495,7 @@ async def _context(account_id: str):
         else:
             profile = _profile_dir(account_id)
         profile.mkdir(parents=True, exist_ok=True)
-        opts = {}
-        if account.get("proxy"):
-            try:
-                proxy = parse_proxy(account["proxy"])
-            except ValueError:
-                raise HTTPException(400, "У аккаунта сохранён неверный прокси") from None
-            if proxy:
-                opts["proxy"] = proxy
+        opts = _launch_proxy_options(account)
         if engine == "camoufox":
             try:
                 from camoufox.async_api import AsyncCamoufox
@@ -452,6 +504,11 @@ async def _context(account_id: str):
                     503, "Camoufox не установлен в PostingTTII. Выполни pip install "
                          "-r requirements.txt и python -m camoufox fetch.",
                 ) from None
+            # An old persistent profile may contain manual Firefox proxy
+            # preferences. In direct mode explicitly reset them at launch.
+            # Proxy mode instead relies on Camoufox/Playwright proxy options.
+            if _proxy_mode(account) == "direct":
+                opts["firefox_user_prefs"] = {"network.proxy.type": 0}
             manager = AsyncCamoufox(
                 headless=bool(account.get("headless", False)),
                 os="windows", persistent_context=True,
