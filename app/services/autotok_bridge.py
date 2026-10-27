@@ -97,6 +97,24 @@ async def publish(slot: int, video_path: Path, caption: str) -> dict:
         "-t", caption[:2200], "-vi", "0",
         timeout=1800,
     )
+    # An explicit rejection from TikTok is not a successful publish.
+    # Do not retry automatically: some failures can occur after a post was
+    # accepted, and a blind retry may create a duplicate.
+    rejection = re.search(
+        r"Invalid parameters\s*\\(status_code=(\\d+)\\)",
+        output, re.IGNORECASE,
+    )
+    if rejection:
+        raise RuntimeError(
+            "TikTok отклонил параметры публикации "
+            f"(Invalid parameters, status_code={rejection.group(1)}). "
+            "Сессия AutoTok сама по себе может быть действительной. "
+            "Проверь ролик в профиле, затем версию AutoTok "
+            "(autotok --version; uv tool upgrade autotok). "
+            "Если ошибка повторяется на версии 2.1.0 или новее, "
+            "проверь ручную загрузку через TikTok Studio и сообщи "
+            "разработчику AutoTok код ошибки. Автоповтора нет."
+        )
     if code:
         raise RuntimeError("AutoTok upload failed: " + output[-1200:])
     match = _PUBLISHED_RE.search(output)
