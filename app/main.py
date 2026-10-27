@@ -354,6 +354,7 @@ async def status(folder_id: str = "default"):
             "tiktok": bool(settings.tiktok_client_key and settings.tiktok_client_secret) or bool(autotok_bridge.executable()),
             "autotok": bool(autotok_bridge.executable()),
             "tiktok_enabled": settings.tiktok_enabled,
+            "tiktok_account2_browser": os.getenv("TIKTOK_ACCOUNT2_BROWSER", "0").strip().lower() in {"1", "true", "yes", "on"},
             "instagram": bool(settings.instagram_client_id and settings.instagram_client_secret),
             "instagram_public_url": bool(settings.public_base_url),
             "instagram_second_app": bool(settings.instagram_client_id_2 and settings.instagram_client_secret_2),
