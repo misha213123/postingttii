@@ -25,7 +25,7 @@ def _normalize_tiktok_username(raw: str) -> str:
     value = raw.strip()
     if not value:
         return ""
-    value = re.sub(r"^https?://(?:www\\.)?tiktok\\.com/@", "", value, flags=re.I)
+    value = re.sub(r"^https?://(?:www\.)?tiktok\.com/@", "", value, flags=re.I)
     value = value.split("?", 1)[0].rstrip("/")
     value = value.lstrip("@")
     if not re.fullmatch(r"[A-Za-z0-9._]{2,24}", value) or value.endswith("."):
