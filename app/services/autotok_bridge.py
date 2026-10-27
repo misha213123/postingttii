@@ -59,8 +59,19 @@ async def run_cli(*args: str, timeout: int = 90) -> tuple[int, str]:
 async def check_account(name: str) -> None:
     name = validate_name(name)
     code, output = await run_cli("accounts", "check", name, timeout=90)
-    if code or "session OK" not in output:
-        raise RuntimeError("Сессия TikTok не подтверждена: " + output[-800:])
+    # AutoTok versions vary their success wording. A successful CLI exit
+    # is authoritative; require no magic English substring such as
+    # "session OK", which causes valid accounts to be rejected.
+    failure = re.search(
+        r"session\\s+(?:rejected|expired|invalid)|not\\s+logged\\s+in|"
+        r"not\\s+authenticated|login\\s+required",
+        output, re.IGNORECASE,
+    )
+    if code != 0 or failure:
+        raise RuntimeError(
+            "Сессия TikTok не подтверждена. Открой AutoTok и проверь вход "
+            f"для аккаунта {name}: autotok accounts check {name}"
+        )
 
 
 async def publish(slot: int, video_path: Path, caption: str) -> dict:
@@ -74,7 +85,7 @@ async def publish(slot: int, video_path: Path, caption: str) -> dict:
     # Only the second account takes the separate UI path, with the existing
     # AutoTok session. Never try both uploaders for the same video: a failed
     # publication acknowledgment must not trigger a duplicate post.
-    browser_mode = os.getenv("TIKTOK_ACCOUNT2_BROWSER", "1").strip().lower()
+    browser_mode = os.getenv("TIKTOK_ACCOUNT2_BROWSER", "0").strip().lower()
     if slot == 2 and alias == "account2" and browser_mode in {"1", "true", "yes", "on"}:
         from app.services.tiktok_browser_upload import publish_browser_account2
         return await asyncio.to_thread(publish_browser_account2, video_path, caption, alias)
