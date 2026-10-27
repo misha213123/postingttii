@@ -296,54 +296,43 @@ function renderPlatforms(){
   t.className='card platform';
   const ready=!!state.configured.autotok;
   t.innerHTML='<div class="platform-head"><h3>TikTok</h3><span class="'+(ready?'good':'bad')+'" style="font-size:11px">'+(ready?'AutoTok готов':'AutoTok не найден')+'</span></div>';
-  const firstAvailable=[1,2].find(slot=>!connected('tiktok',slot));
-  if(firstAvailable){
-    const buttons=document.createElement('div');
-    buttons.style.marginBottom='9px';
-    for(const [mode,label] of [['import','+ Импорт TikTok'],['login','+ Войти TikTok']]){
-      const button=document.createElement('button');
-      button.className='secondary';
-      button.style.marginRight='6px';
-      button.textContent=label;
-      button.onclick=()=>connectTikTok(firstAvailable,mode);
-      buttons.append(button);
-    }
-    t.append(buttons);
-  }
-  const accounts=document.createElement('div');
-  accounts.className='account-row';
-  let count=0;
+  const health=document.createElement('p');
+  health.className='note';health.id='tiktokHealthNote';
+  health.textContent='Проверяю AutoTok…';t.append(health);
+  const accounts=document.createElement('div');accounts.className='account-row';
   for(const slot of [1,2]){
     const a=connected('tiktok',slot);
-    if(!a)continue;
-    count++;
-    const section=document.createElement('div');
-    section.className='account';
+    const section=document.createElement('div');section.className='account';
     const heading=document.createElement('b');
-    heading.textContent=a.label||'TikTok #'+slot;
+    heading.textContent=a?(a.label||a.id||'TikTok #'+slot):'TikTok #'+slot+' · свободен';
     section.append(heading);
-    const label=document.createElement('div');
-    label.className='label good';
-    label.textContent=a.label||'Подключён';
-    section.append(label);
-    const button=document.createElement('button');
-    button.className='danger';
-    button.textContent='Отключить';
-    button.onclick=()=>disconnect('tiktok',slot);
-    section.append(button);
-    accounts.append(section);
+    const info=document.createElement('div');
+    info.className='label muted';info.id='tiktokState'+slot;
+    info.textContent=a?'Добавлен · проверь сохранённую сессию':'Не подключён';
+    section.append(info);
+    const actions=document.createElement('div');actions.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
+    function addButton(label,click,cls='secondary'){
+      const btn=document.createElement('button');btn.className=cls;
+      btn.style.cssText='font-size:11px;padding:6px 9px';btn.textContent=label;
+      btn.onclick=click;actions.append(btn);
+    }
+    if(a){
+      if(a.provider==='autotok'){
+        addButton('Проверить сессию',()=>verifyTikTok(slot));
+        addButton('Переподключить',()=>reloginTikTok(slot));
+      }
+      addButton('Отключить',()=>disconnect('tiktok',slot),'danger');
+    }else{
+      addButton('Войти TikTok',()=>connectTikTok(slot,'login'));
+      addButton('Импорт AutoTok',()=>connectTikTok(slot,'import'));
+    }
+    section.append(actions);accounts.append(section);
   }
-  if(count)t.append(accounts);
-  else {
-    const empty=document.createElement('div');
-    empty.className='label muted';
-    empty.textContent='Нет подключённых аккаунтов.';
-    t.append(empty);
-  }
-  const note=document.createElement('p');
-  note.className='note';
-  note.textContent='Импорт — подключить существующий AutoTok аккаунт. Войти — открыть новый вход AutoTok.';
+  t.append(accounts);
+  const note=document.createElement('p');note.className='note';
+  note.textContent='Вход — через обычное окно TikTok. Подключение подтверждается проверкой AutoTok. «Переподключить» повторно открывает вход без удаления аккаунта. Для загрузки сначала проверь сессию.';
   t.append(note);
+  refreshTikTokHealth();
   root.appendChild(t);
 }
 
@@ -448,10 +437,47 @@ function startEdgeConnectionCheck(slot){
   },10*60*1000);
 }
 
+const tiktokPollers=new Map();
+function tikState(slot,message,bad=false){
+  const target=document.getElementById('tiktokState'+slot);
+  if(target){target.textContent=message;target.className='label '+(bad?'bad':'muted');}
+}
+async function refreshTikTokHealth(){
+  const el=document.getElementById('tiktokHealthNote');if(!el)return;
+  try{const r=await fetch('/api/autotok/health',{cache:'no-store'});
+    const data=await r.json();
+    if(el.isConnected)el.textContent=data.hint||'';
+  }catch(err){if(el.isConnected)el.textContent='AutoTok: не удалось проверить установку';}
+}
+function watchTikTokLogin(slot){
+  if(tiktokPollers.has(slot))clearInterval(tiktokPollers.get(slot));
+  const start=Date.now();
+  const poll=async()=>{
+    try{const r=await fetch('/api/autotok/login/'+slot,{cache:'no-store'});
+      const result=await r.json();
+      if(!r.ok)throw Error(result.detail||'HTTP '+r.status);
+      if(result.status==='done'){
+        clearInterval(tiktokPollers.get(slot));tiktokPollers.delete(slot);
+        await load();tikState(slot,'Сессия TikTok подтверждена');
+      }else if(result.status==='error'){
+        clearInterval(tiktokPollers.get(slot));tiktokPollers.delete(slot);
+        tikState(slot,'Ошибка входа: '+(result.error||'неизвестная'),true);
+      }else if(Date.now()-start>10*60*1000){
+        clearInterval(tiktokPollers.get(slot));tiktokPollers.delete(slot);
+        tikState(slot,'Время ожидания входа истекло',true);
+      }else tikState(slot,'Ожидаю авторизацию в TikTok…');
+    }catch(err){tikState(slot,'Не удалось проверить вход: '+err.message,true);}
+  };
+  tiktokPollers.set(slot,setInterval(poll,3000));poll();
+}
 async function connectTikTok(slot,mode){
-  if(!state.configured.autotok){alert('Установи AutoTok: uv tool install autotok');return;}
-  const name=prompt(mode==='import'?'Имя уже подключённого AutoTok аккаунта':'Имя новой сессии AutoTok','account'+slot);
+  if(!state.configured.autotok){
+    alert('Установи AutoTok: uv tool install autotok, затем autotok install-browser');
+    return;
+  }
+  const name=prompt(mode==='import'?'Имя сохранённой сессии AutoTok':'Название новой сессии TikTok','account'+slot);
   if(!name)return;
+  tikState(slot,mode==='import'?'Проверяю сохранённый аккаунт…':'Открываю окно входа…');
   try{
     const r=await fetch('/api/autotok/'+mode,{
       method:'POST',headers:{'Content-Type':'application/json'},
@@ -459,21 +485,28 @@ async function connectTikTok(slot,mode){
     });
     const data=await r.json();
     if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
-    if(mode==='import'){await load();return;}
-    alert('AutoTok откроет браузер для входа. После авторизации дождись подтверждения в панели.');
-    const timer=setInterval(async()=>{
-      try{
-        const res=await fetch('/api/autotok/login/'+slot);
-        const status=await res.json();
-        if(status.status==='done'){
-          clearInterval(timer);await load();
-        }else if(status.status==='error'){
-          clearInterval(timer);alert('TikTok: '+status.error);
-        }
-      }catch(err){console.warn('Проверка входа AutoTok:',err);}
-    },3000);
-    setTimeout(()=>clearInterval(timer),10*60*1000);
-  }catch(err){alert('TikTok: '+err.message);}
+    if(mode==='import'){await load();tikState(slot,'Сессия подтверждена');return;}
+    watchTikTokLogin(slot);
+  }catch(err){tikState(slot,'Ошибка: '+err.message,true);alert('TikTok: '+err.message);}
+}
+async function verifyTikTok(slot){
+  tikState(slot,'Проверяю сохранённую сессию…');
+  try{
+    const r=await fetch('/api/autotok/verify/'+slot,{method:'POST'});
+    const data=await r.json();
+    if(!r.ok)throw Error(data.detail||'HTTP '+r.status);
+    tikState(slot,'Сессия действительна · попробуй один ролик');
+  }catch(err){tikState(slot,'Сессия не подтверждена: '+err.message,true);}
+}
+async function reloginTikTok(slot){
+  if(!confirm('Повторно войти в TikTok #'+slot+'? Откроется окно авторизации.'))return;
+  tikState(slot,'Открываю повторный вход…');
+  try{
+    const r=await fetch('/api/autotok/relogin/'+slot,{method:'POST'});
+    const data=await r.json();
+    if(!r.ok)throw Error(data.detail||'HTTP '+r.status);
+    watchTikTokLogin(slot);
+  }catch(err){tikState(slot,'Ошибка повторного входа: '+err.message,true);}
 }
 
 async function refreshCoverStates(){
