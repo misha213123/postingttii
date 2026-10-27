@@ -298,7 +298,10 @@ function renderPlatforms(){
   t.innerHTML='<div class="platform-head"><h3>TikTok</h3><span class="'+(ready?'good':'bad')+'" style="font-size:11px">'+(ready?'AutoTok готов':'AutoTok не найден')+'</span></div>';
   const health=document.createElement('p');
   health.className='note';health.id='tiktokHealthNote';
-  health.textContent='Проверяю AutoTok…';t.append(health);
+  health.textContent=state.configured.tiktok_account2_browser
+    ? 'ВНИМАНИЕ: второй слот всё ещё использует экспериментальную загрузку Chrome (TIKTOK_ACCOUNT2_BROWSER=1). Установи TIKTOK_ACCOUNT2_BROWSER=0 в .env.'
+    : 'Основной способ публикации: AutoTok для обоих слотов. Проверяю установленный AutoTok…';
+  t.append(health);
   const accounts=document.createElement('div');accounts.className='account-row';
   for(const slot of [1,2]){
     const a=connected('tiktok',slot);
@@ -446,7 +449,9 @@ async function refreshTikTokHealth(){
   const el=document.getElementById('tiktokHealthNote');if(!el)return;
   try{const r=await fetch('/api/autotok/health',{cache:'no-store'});
     const data=await r.json();
-    if(el.isConnected)el.textContent=data.hint||'';
+    if(el.isConnected)el.textContent=state.configured.tiktok_account2_browser
+      ? 'ВНИМАНИЕ: TIKTOK_ACCOUNT2_BROWSER=1 включает старый экспериментальный Chrome для второго аккаунта. Поставь =0 в .env и перезапусти приложение. '+(data.hint||'')
+      : (data.hint||'');
   }catch(err){if(el.isConnected)el.textContent='AutoTok: не удалось проверить установку';}
 }
 function watchTikTokLogin(slot){
