@@ -63,8 +63,8 @@ async def check_account(name: str) -> None:
     # is authoritative; require no magic English substring such as
     # "session OK", which causes valid accounts to be rejected.
     failure = re.search(
-        r"session\\s+(?:rejected|expired|invalid)|not\\s+logged\\s+in|"
-        r"not\\s+authenticated|login\\s+required",
+        r"session\s+(?:rejected|expired|invalid)|not\s+logged\s+in|"
+        r"not\s+authenticated|login\s+required",
         output, re.IGNORECASE,
     )
     if code != 0 or failure:
