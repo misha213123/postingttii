@@ -16,20 +16,24 @@ def clean_tiktok_caption(caption: str, filename: str) -> str:
     if not stem:
         return text
 
-    # Strip a technical name at the beginning even if immediately followed
-    # by text, e.g. tg_ekmzk_65Тикток-подборка.
-    text = re.sub(
-        r"^\s*(?:(?:имя|название)\s+файла\s*[:\-]\s*)?"
-        + re.escape(stem) + r"(?:\.mp4)?",
-        "", text, flags=re.IGNORECASE,
+    # Imported technical identifiers may be glued to a word; ordinary
+    # filenames must have a boundary so "fun.mp4" does not damage "funny".
+    machine_label = bool(
+        re.fullmatch(r"tg[_-][A-Za-z0-9_-]+", stem, flags=re.IGNORECASE)
     )
+    prefix_pattern = (
+        r"^\s*(?:(?:имя|название)\s+файла\s*[:\-]\s*)?"
+        + re.escape(stem) + r"(?:\.mp4)?"
+        + ("" if machine_label else r"(?=\W|$)")
+    )
+    text = re.sub(prefix_pattern, "", text, flags=re.IGNORECASE)
     text = re.sub(re.escape(name), "", text, flags=re.IGNORECASE)
     text = re.sub(
         r"(?<!\w)" + re.escape(stem) + r"(?!\w)",
         "", text, flags=re.IGNORECASE,
     )
     # Imported Telegram labels may be concatenated even in the middle.
-    if re.fullmatch(r"tg[_-][A-Za-z0-9_-]+", stem, flags=re.IGNORECASE):
+    if machine_label:
         text = re.sub(re.escape(stem), "", text, flags=re.IGNORECASE)
 
     text = re.sub(r"\s+", " ", text).lstrip(" :—–|_,.;-").strip()
