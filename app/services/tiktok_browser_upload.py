@@ -24,6 +24,7 @@ from app.config import settings
 STUDIO_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload"
 POST_BUTTON = re.compile(r"^(Post|Publish|Опубликовать|Публикуване|Publier)$", re.I)
 PUBLIC_OPTION = re.compile(r"^(Everyone|Public|Все|Для всех)$", re.I)
+COPYRIGHT_PENDING = re.compile(r"copyright check is incomplete", re.I)
 
 
 def _session(alias: str) -> tuple[list[dict], str | None]:
@@ -121,6 +122,16 @@ def _public_selected(page) -> bool:
         choice = scope.get_by_text(PUBLIC_OPTION)
         for n in range(min(choice.count(), 8)):
             if choice.nth(n).is_visible():
+                return True
+    return False
+
+
+def _copyright_check_pending(page) -> bool:
+    """Do not auto-confirm an unfinished TikTok copyright review."""
+    for scope in _scopes(page):
+        pending = scope.get_by_text(COPYRIGHT_PENDING)
+        for index in range(min(pending.count(), 3)):
+            if pending.nth(index).is_visible():
                 return True
     return False
 
@@ -256,6 +267,13 @@ def publish_browser_account2(video: Path, caption: str, alias: str = "account2")
             # Do not retry a submitted Post even if confirmation times out.
             for _ in range(80):
                 page = _active_page(context, page, phase)
+                if _copyright_check_pending(page):
+                    raise RuntimeError(
+                        "TikTok Studio показал: copyright check is incomplete. "
+                        "Публикация не подтверждена; кнопка 'Post now' автоматически "
+                        "не нажимается. Дождись завершения проверки и проверь "
+                        "раздел Posts до новой попытки."
+                    )
                 if "/tiktokstudio/content" in page.url:
                     return {
                         "id": None, "platform": "tiktok", "provider": "browser",
