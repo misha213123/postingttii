@@ -485,7 +485,7 @@ async function refreshTikTokHealth(){
     const data=await r.json();
     if(el.isConnected)el.textContent=state.configured.tiktok_account2_browser
       ? 'ВНИМАНИЕ: TIKTOK_ACCOUNT2_BROWSER=1 включает старый экспериментальный Chrome для второго аккаунта. Поставь =0 в .env и перезапусти приложение. '+(data.hint||'')
-      : (data.hint||'');
+      : ((data.version?'Установлен '+data.version+'. ':'')+(data.hint||''));
   }catch(err){if(el.isConnected)el.textContent='AutoTok: не удалось проверить установку';}
 }
 function watchTikTokLogin(slot){
