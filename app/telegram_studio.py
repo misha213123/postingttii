@@ -439,15 +439,16 @@ def delete_banner():
     return design_response()
 
 
-RenderMode = Literal["circles", "videos", "instagram"]
+RenderMode = Literal["circles", "videos", "instagram", "instagram_circles"]
 
 
 def latest_render_path(mode: RenderMode) -> tuple[Path | None, dict]:
     """Only serve a renderer-produced MP4, not any user-specified path."""
-    prefixes = {"circles": "tg_", "videos": "tgvideo_", "instagram": "ig_"}
-    if mode == "instagram":
+    prefixes = {"circles": "tg_", "videos": "tgvideo_", "instagram": "ig_", "instagram_circles": "igc_"}
+    if mode in ("instagram", "instagram_circles"):
         from app.instagram_studio import load as instagram_load
-        entry = instagram_load().get("last_output") or {}
+        key = "last_output_circles" if mode == "instagram_circles" else "last_output"
+        entry = instagram_load().get(key) or {}
     else:
         entry = (config().get("last_outputs") or {}).get(mode) or {}
     value = entry.get("path", "")
