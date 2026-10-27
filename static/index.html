@@ -71,7 +71,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 .queue{margin-top:12px;padding:12px}
 .queue-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
 .queue-head h2{font-size:17px;margin:0}
-.queue-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.queue-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:10px}
 .stat{background:var(--panel2);border:1px solid #1e2a38;border-radius:10px;padding:9px}
 .stat span{display:block;color:var(--muted);font-size:10px}.stat b{font-size:16px}
 .job-list{max-height:58vh;overflow:auto;display:grid;gap:7px}
@@ -95,6 +95,7 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 .account-job-bar{height:6px;background:#253244;border-radius:20px;overflow:hidden;margin-top:7px}
 .account-job-bar>div{height:100%;background:#60a5fa;transition:width .3s}
 .account-job-bar>div.finished{background:#4ade80}
+.account-job-bar>div.failed{background:#fb7185}
 .queue-footnote{font-size:11px;color:var(--muted);margin-top:12px}
 @media(max-width:1100px){.account-job-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:680px){.account-job-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -186,7 +187,8 @@ select{width:100%;background:#080d13;border:1px solid #2a3747;color:var(--text);
 
     <div class="queue-stats">
       <div class="stat"><span>Всего</span><b id="statTotal">0</b></div>
-      <div class="stat"><span>Готово</span><b id="statDone">0</b></div>
+      <div class="stat"><span>Опубликовано</span><b id="statDone">0</b></div>
+      <div class="stat"><span>Ошибки</span><b id="statFailed">0</b></div>
       <div class="stat"><span>Следующее</span><b id="statNext">—</b></div>
       <div class="stat"><span>Интервал</span><b id="statInterval">—</b></div>
     </div>
@@ -838,8 +840,13 @@ function targetText(t){
   return t.message||t.status;
 }
 function renderJob(job){
+  const allTargetStates=(job.items||[]).flatMap(item=>Object.values(item.targets||{}));
+  const published=allTargetStates.filter(s=>s.status==='done').length;
+  const failures=allTargetStates.filter(s=>s.status==='error').length;
+  const skipped=allTargetStates.filter(s=>s.status==='already').length;
   document.getElementById('statTotal').textContent=job.total_videos||0;
-  document.getElementById('statDone').textContent=job.completed_videos||0;
+  document.getElementById('statDone').textContent=published;
+  document.getElementById('statFailed').textContent=failures;
   document.getElementById('statInterval').textContent=job.wait_kind==='between_waves'?(job.wave_min_minutes||22)+'–'+(job.wave_max_minutes||28)+' мин':(job.interval_seconds||60)+'–'+(job.interval_max_seconds||160)+' сек';
   let next='—';
   if(job.next_video_at)next=fmtTime(Math.max(0,job.next_video_at-Math.floor(Date.now()/1000)));
@@ -849,7 +856,9 @@ function renderJob(job){
   const labels={queued:'Очередь создана',running:'Публикую',waiting:'Ожидание между публикациями',waiting_account:'Жду паузу аккаунта',done:'Очередь завершена',cancelled:'Очередь остановлена',error:'Ошибка очереди'};
   const subtitle=job.status==='waiting'
     ?(job.wait_kind==='between_waves'?'Длинная пауза между парами':'Короткая пауза перед вторым роликом')
-    :(labels[job.status]||job.status);
+    :(job.status==='done'&&failures
+      ?'Очередь обработана, ошибок: '+failures+' · опубликовано: '+published
+      :labels[job.status]||job.status);
   document.getElementById('queueSubtitle').textContent=job.cancel_requested
     ?'Останавливаю очередь: новые публикации не начнутся, жду текущий запрос'
     :(
@@ -860,7 +869,9 @@ function renderJob(job){
   const stopBtn=document.getElementById('cancelBatch');
   stopBtn.disabled=Boolean(job.cancel_requested)||['done','cancelled','error'].includes(job.status);
   stopBtn.textContent=job.cancel_requested?'Останавливаю...':'Остановить очередь';
-  document.getElementById('statDone').title='Перенесено из inbox: '+(job.archived_count||0);
+  document.getElementById('statDone').title='Успешно опубликовано в этой очереди: '+published+
+    '; ранее опубликованные (пропущенные): '+skipped+
+    '; перенесено файлов из inbox: '+(job.archived_count||0);
   const root=document.getElementById('jobList');
   const items=job.items||[];
   const accounts=(job.targets||[]).filter(t=>['instagram:','tiktok:','youtube:'].some(prefix=>t.startsWith(prefix)));
@@ -872,10 +883,11 @@ function renderJob(job){
     const finished=assigned.length>0&&completed===assigned.length;
     const percent=assigned.length?Math.round(completed/assigned.length*100):0;
     const failed=assigned.find(item=>item.targets?.[target]?.status==='error');
+    const confirmed=assigned.filter(item=>item.targets?.[target]?.status==='done').length;
     const failureText=failed?.targets?.[target]?.message||'';
-    const status=failed?'Ошибка: '+failureText:
-      (finished?'Готово':active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео — выбери больше роликов');
-    return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+completed+' / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(finished?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
+    const status=failed?'Отклонено: '+failureText:
+      (finished?'Опубликовано: '+confirmed:active?(t.status==='queued'?'В очереди':targetText(t)):'Нет назначенных видео — выбери больше роликов');
+    return '<div class="account-job-card '+(t.status==='publishing'?'live':'')+'"><div class="account-job-top"><span class="account-job-name">'+esc(prettyTarget(target))+'</span><span class="account-job-count">'+completed+' / '+assigned.length+'</span></div><div class="account-job-video">'+(active?esc(active.filename):'Все видео обработаны')+'</div><div class="account-job-status">'+esc(status)+'</div><div class="account-job-bar"><div class="'+(failed?'failed':finished?'finished':'')+'" style="width:'+percent+'%"></div></div></div>';
   }).join('')+'</div><div class="queue-footnote">Аккаунты и текущие ролики. Подробный список файлов скрыт для компактности.</div>';
 }
 async function cancelBatch(){
