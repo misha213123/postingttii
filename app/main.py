@@ -644,6 +644,18 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             return
         target = next(iter(item["targets"]))
         state = item["targets"][target]
+        # Do not keep submitting more clips to an account after TikTok has
+        # rejected a prior request as invalid. Other platforms keep running.
+        blocked = job.get("blocked_targets", {}).get(target)
+        if blocked:
+            message = (
+                "Не отправлялось: TikTok приостановлен после status_code=5. "
+                "Проверь предыдущий ролик и причину отказа."
+            )
+            state.update(status="error", message=message)
+            item.update(status="error", error=message, finished_at=int(time.time()))
+            _save_batch_job(job)
+            return
         try:
             folder_id = item.get("source_folder", "default")
             video = _safe_video(item["filename"], folder_id)
@@ -728,9 +740,16 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             state.update(status="cancelled", message="Очередь остановлена")
             item["status"] = "cancelled"
         except Exception as exc:
-            state.update(status="error", message=str(exc)[:450])
+            message = str(exc)
+            if (target.startswith("tiktok:") and
+                    "Invalid parameters" in message and "status_code=5" in message):
+                job.setdefault("blocked_targets", {})[target] = {
+                    "reason": "TikTok invalid parameters (status_code=5)",
+                    "at": int(time.time()),
+                }
+            state.update(status="error", message=message[:450])
             item["status"] = "error"
-            item["error"] = str(exc)[:450]
+            item["error"] = message[:450]
         finally:
             item["finished_at"] = int(time.time())
             _save_batch_job(job)
