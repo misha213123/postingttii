@@ -101,7 +101,7 @@ async def publish(slot: int, video_path: Path, caption: str) -> dict:
     # Do not retry automatically: some failures can occur after a post was
     # accepted, and a blind retry may create a duplicate.
     rejection = re.search(
-        r"Invalid parameters\s*\\(status_code=(\\d+)\\)",
+        r"Invalid parameters\s*\(status_code=(\d+)\)",
         output, re.IGNORECASE,
     )
     if rejection:
