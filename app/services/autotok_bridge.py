@@ -84,7 +84,7 @@ def _write_upload_diagnostic(
 ) -> None:
     """Local metadata only. Never record CLI output, captions or session secrets."""
     try:
-        status = re.search(r"status_code=(\\d+)", output)
+        status = re.search(r"status_code=(\d+)", output)
         published = bool(_PUBLISHED_RE.search(output)) and code == 0
         event = {
             "timestamp": int(time.time()),
