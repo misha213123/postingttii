@@ -27,7 +27,8 @@ from app.config import settings
 from app.video_folders import folder_path, account_folder, account_background
 from app.telegram_studio import (
     BACKGROUNDS, backgrounds, duration, is_image_background, RenderDesign,
-    current_banner, saved_design, banner_input_args, banner_overlay_filter,
+    current_banner, saved_design, choose_backgrounds, render as render_circle,
+    banner_input_args, banner_overlay_filter,
     validate_video_banner, quality_filter_segment, h264_quality_args,
 )
 from io import BytesIO
@@ -49,9 +50,13 @@ class Source(BaseModel):
     url: str
 
 class Run(BaseModel):
-    limit_per_account: int = 5
+    limit_per_account: int = Field(default=5, ge=1, le=100)
     output_folder: str = "default"
     target_slot: int = 0
+    # Existing normal-video importer remains the default.
+    render_mode: Literal["video", "circles"] = "video"
+    # "saved" respects the currently selected Telegram-circle editor design.
+    circle_template: Literal["saved", "classic", "orbit_dots"] = "saved"
 
 
 class InstagramLayout(BaseModel):
@@ -684,14 +689,24 @@ def cleanup_instagram_download(source: Path, output: Path) -> bool:
 async def process(limit, layout: InstagramLayout, *,
                   output_dir: Path | None = None, target_slot: int = 0,
                   banner: Path | None = None,
-                  banner_design: RenderDesign | None = None):
-    JOB.update(status="running", done=0, total=0, errors=[], cleanup_warnings=[])
+                  banner_design: RenderDesign | None = None,
+                  render_mode: Literal["video", "circles"] = "video",
+                  circle_design: RenderDesign | None = None,
+                  circle_banner: Path | None = None):
+    circle_mode = render_mode == "circles"
+    JOB.update(status="running", done=0, total=0, errors=[], cleanup_warnings=[],
+               render_mode=render_mode,
+               visual_template=(circle_design.visual_template if circle_mode and circle_design else ""))
     try:
         d = load()
         output_dir = output_dir or settings.upload_dir
-        render_scope = ((str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
-                        ("folder:" + str(output_dir.resolve())
-                         if output_dir.resolve() != settings.upload_dir.resolve() else ""))
+        # A Reel rendered as a circle must not be considered already processed
+        # just because the same original was previously rendered as a rectangle.
+        base_scope = ((str(target_slot) + "@" + str(output_dir.resolve())) if target_slot else
+                      ("folder:" + str(output_dir.resolve())
+                       if output_dir.resolve() != settings.upload_dir.resolve() else ""))
+        render_scope = ("instagram_circles:" + (base_scope or "default")
+                        if circle_mode else base_scope)
         if render_scope:
             known = set(d.setdefault("processed_by_target", {}).get(render_scope, []))
             hashes = set(d.setdefault("hashes_by_target", {}).get(render_scope, []))
@@ -700,18 +715,24 @@ async def process(limit, layout: InstagramLayout, *,
             hashes = set(d["hashes"])
         known_ids = {reel_id(link) for link in known}
         # One layout snapshot and one rotating background queue for this job.
-        pool = [BACKGROUNDS / bg["name"] for bg in backgrounds() if bg["enabled"]]
-        if layout.background_mode == "single":
-            choose_instagram_background(layout, pool)
-        if layout.background_mode == "shuffle" and not pool:
-            raise ValueError("Добавь хотя бы один активный фон или выбери размытие")
+        if circle_mode:
+            circle_design = circle_design or saved_design()
+            pool = choose_backgrounds(circle_design)
+            randomize_backgrounds = circle_design.background_mode == "shuffle"
+        else:
+            pool = [BACKGROUNDS / bg["name"] for bg in backgrounds() if bg["enabled"]]
+            if layout.background_mode == "single":
+                choose_instagram_background(layout, pool)
+            if layout.background_mode == "shuffle" and not pool:
+                raise ValueError("Добавь хотя бы один активный фон или выбери размытие")
+            randomize_backgrounds = layout.background_mode == "shuffle"
         background_queue: list[Path] = []
         previous_background: Path | None = None
 
         def next_background() -> Path | None:
             nonlocal previous_background
-            if layout.background_mode != "shuffle":
-                return choose_instagram_background(layout, pool)
+            if not randomize_backgrounds:
+                return pool[0] if circle_mode else choose_instagram_background(layout, pool)
             if not background_queue:
                 background_queue.extend(random.sample(pool, len(pool)))
                 if (previous_background is not None and len(background_queue) > 1
@@ -730,7 +751,10 @@ async def process(limit, layout: InstagramLayout, *,
                 elif SESSION_FILE.exists():
                     links = await asyncio.to_thread(discover_instaloader, account)
                 else:
-                    raise RuntimeError("Сначала открой Instagram через Chrome и войди в аккаунт. Файл Instaloader не нужен.")
+                    # Public profiles can be scanned without an Instagram
+                    # session when yt-dlp supports the current site markup.
+                    # No authentication restrictions are bypassed.
+                    links = await asyncio.to_thread(discover, account)
                 candidates.extend((account, link) for link in links
                                   if reel_id(link) not in known_ids)
             except Exception as exc:
@@ -763,7 +787,7 @@ async def process(limit, layout: InstagramLayout, *,
         for account, link in selected:
             stem = "ig_" + hashlib.sha256(link.encode()).hexdigest()[:18]
             source = ROOT / (stem + ".mp4")
-            output = output_dir / (stem + ".mp4")
+            output = output_dir / ((("igc_" + stem[3:]) if circle_mode else stem) + ".mp4")
             temp = ROOT / (stem + ".rendering.mp4")
             try:
                 if output.exists() and output.stat().st_size:
@@ -784,8 +808,17 @@ async def process(limit, layout: InstagramLayout, *,
                     cleanup_instagram_download(source, output)
                     continue
                 bg = next_background()
-                await asyncio.to_thread(render, source, temp, bg, layout,
-                                        banner=banner, banner_design=banner_design)
+                if circle_mode:
+                    # The original Reel is cropped to a circle inside the
+                    # existing 1080x1920 Telegram-circle FFmpeg template.
+                    await asyncio.to_thread(
+                        render_circle, source, bg, temp, circle_design, circle_banner,
+                    )
+                else:
+                    await asyncio.to_thread(
+                        render, source, temp, bg, layout,
+                        banner=banner, banner_design=banner_design,
+                    )
                 if duration(temp) <= 0:
                     raise ValueError("Рендер не прошёл проверку")
                 temp.replace(output)
@@ -796,10 +829,11 @@ async def process(limit, layout: InstagramLayout, *,
                 known.add(link)
                 known_ids.add(reel_id(link))
                 record_download(account, link, "downloaded", file=output.name, sha256=digest)
-                d["last_output"] = {
+                d["last_output_circles" if circle_mode else "last_output"] = {
                     "name": output.name, "path": str(output.resolve()),
                     "updated_at": int(time.time()),
-                    "banner_applied": bool(banner_design and banner_design.banner_enabled),
+                    "banner_applied": bool(circle_design.banner_enabled if circle_mode
+                                           else banner_design and banner_design.banner_enabled),
                 }
                 JOB["done"] += 1
             except Exception as exc:
@@ -828,48 +862,72 @@ async def process(limit, layout: InstagramLayout, *,
 @router.post("/run")
 async def run(body: Run):
     global TASK
-    if not 1 <= body.limit_per_account <= 100:
-        raise HTTPException(400, "Лимит 1–100")
     if LOCK.locked():
         raise HTTPException(409, "Загрузка Instagram уже запущена")
     if not load()["accounts"] and not load()["links"]:
         raise HTTPException(400, "Добавь Instagram-аккаунт или ссылку на публикацию")
     layout = current_layout()
+    circle_design = None
+    circle_banner = None
+    if body.render_mode == "circles":
+        # Use a snapshot of the already saved circle preset. An explicit
+        # classic/orbit choice overrides only the visual template for this job.
+        circle_design = saved_design()
+        if body.circle_template != "saved":
+            circle_design = circle_design.model_copy(
+                update={"visual_template": body.circle_template},
+            )
+        circle_banner = current_banner()
+        if circle_design.banner_enabled and circle_banner is None:
+            raise HTTPException(400, "Загрузи баннер во вкладке «Telegram · кружки»")
     try:
         if body.target_slot:
             selected_folder = (account_folder(body.target_slot) if body.output_folder == "linked"
                                else body.output_folder)
-            selected_bg = account_background(body.target_slot, "instagram")
+            selected_bg = account_background(body.target_slot,
+                                             "telegram" if body.render_mode == "circles" else "instagram")
             if selected_bg:
-                layout = layout.model_copy(update={
-                    "background_mode": "single", "background_name": selected_bg,
-                })
+                if body.render_mode == "circles":
+                    circle_design = circle_design.model_copy(update={
+                        "background_mode": "single", "background_name": selected_bg,
+                    })
+                else:
+                    layout = layout.model_copy(update={
+                        "background_mode": "single", "background_name": selected_bg,
+                    })
         else:
             if body.output_folder == "linked":
                 raise ValueError("Выбери Instagram-аккаунт для привязанной папки")
             selected_folder = body.output_folder
         output_dir = folder_path(selected_folder, writable=True)
+        if body.render_mode == "circles":
+            choose_backgrounds(circle_design)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if layout.background_mode in ("shuffle", "single"):
-        pool = [BACKGROUNDS / bg["name"] for bg in backgrounds() if bg["enabled"]]
-        if layout.background_mode == "single":
-            try:
-                choose_instagram_background(layout, pool)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
-        elif not pool:
-            # Remain backward compatible with importer runs before any MP4
-            # backgrounds have been uploaded: fall back to blurred source.
-            layout = layout.model_copy(update={"background_mode": "blur"})
-    banner_design = video_banner_design(layout)
-    banner = video_banner_file()
-    if banner_design.banner_enabled and banner is None:
-        raise HTTPException(400, "Включён рекламный баннер, но файл не загружен")
+    banner_design = None
+    banner = None
+    if body.render_mode == "video":
+        if layout.background_mode in ("shuffle", "single"):
+            pool = [BACKGROUNDS / bg["name"] for bg in backgrounds() if bg["enabled"]]
+            if layout.background_mode == "single":
+                try:
+                    choose_instagram_background(layout, pool)
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+            elif not pool:
+                # Maintain existing behavior for normal video.
+                layout = layout.model_copy(update={"background_mode": "blur"})
+        banner_design = video_banner_design(layout)
+        banner = video_banner_file()
+        if banner_design.banner_enabled and banner is None:
+            raise HTTPException(400, "Включён рекламный баннер, но файл не загружен")
     await LOCK.acquire()
     TASK = asyncio.create_task(process(
         body.limit_per_account, layout,
         output_dir=output_dir, target_slot=body.target_slot,
         banner=banner, banner_design=banner_design,
+        render_mode=body.render_mode,
+        circle_design=circle_design, circle_banner=circle_banner,
     ))
-    return {"started": True}
+    return {"started": True, "render_mode": body.render_mode,
+            "visual_template": circle_design.visual_template if circle_design else ""}
