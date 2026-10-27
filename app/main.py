@@ -24,7 +24,7 @@ from app.services.instagram_caption_templates import (
     instagram_caption_from_file,
     load_instagram_caption_templates,
 )
-from app.services.tiktok_text import generate_tiktok_caption
+from app.services.tiktok_text import generate_tiktok_caption, clean_tiktok_caption
 from app.services.youtube_text import generate_youtube_metadata
 from app.services import autotok_bridge
 from app.services.autotok_routes import router as autotok_router
@@ -465,6 +465,8 @@ async def _publish_single_target(
                         cover_url=cover_url,
                     )
         else:
+            # Sanitize even captions restored from older jobs or entered manually.
+            caption = clean_tiktok_caption(caption, video.name)
             account = store.get("tiktok", slot) or {}
             result = (
                 await autotok_bridge.publish(slot, video, caption)
@@ -691,10 +693,14 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 # One source of truth: the user's local TXT templates.
                 slot = int(target.split(":", 1)[1])
                 caption = instagram_caption_from_file(video.name, slot)
-            elif not caption:
-                item["status"] = "caption"
-                _save_batch_job(job)
-                caption = await asyncio.to_thread(generate_tiktok_caption, video.name, body.hint)
+            elif target.startswith("tiktok:"):
+                if not caption:
+                    item["status"] = "caption"
+                    _save_batch_job(job)
+                    caption = await asyncio.to_thread(
+                        generate_tiktok_caption, video.name, body.hint,
+                    )
+                caption = clean_tiktok_caption(caption, video.name)
             item["caption"] = caption
             cooldown = (
                 max(60, body.interval_seconds)
@@ -1094,10 +1100,11 @@ async def publish(body: PublishRequest):
                 )
             elif platform == "tiktok":
                 account = store.get("tiktok", slot) or {}
+                safe_caption = clean_tiktok_caption(body.caption, video.name)
                 if account.get("provider") == "autotok":
-                    result = await autotok_bridge.publish(slot, video, body.caption)
+                    result = await autotok_bridge.publish(slot, video, safe_caption)
                 elif settings.tiktok_enabled:
-                    result = await tiktok_upload(slot, video, body.caption)
+                    result = await tiktok_upload(slot, video, safe_caption)
                 else:
                     raise RuntimeError("TikTok API отключён. Подключи аккаунт через AutoTok")
             elif platform == "instagram":
