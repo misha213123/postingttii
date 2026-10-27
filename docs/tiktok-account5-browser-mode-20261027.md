@@ -63,3 +63,22 @@ this feature is not a guarantee of successful publication.
 
 Local records/cookies/videos remain in `data/`, `.autotok/`, and
 `videos/` as before. The patch does not touch them.
+
+## Caption cleanup
+
+The caption generator now explicitly avoids outputting filenames. All TikTok
+publish paths also strip the local video basename from saved captions, including
+labels stuck to the first word (for example `tg_ekmzk_65Тикток...`). Other
+platforms and video filenames on disk are unchanged.
+
+Test without posting:
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tiktok_caption_filename.py"
+```
+
+## TikTok Studio copyright review
+
+If TikTok Studio displays **"The copyright check is incomplete"**, the
+browser worker reports the pending review rather than clicking `Post now`
+automatically. This is not an upload confirmation. Check TikTok Studio > Posts
+before reattempting any video. Allow TikTok to complete the review.
