@@ -107,18 +107,26 @@ async def import_existing(body: AccountRequest, request: Request):
     return {"ok": True, "slot": body.slot, "name": name}
 
 
-async def _complete_login(slot: int, name: str, process) -> None:
+async def _complete_login(slot: int, name: str, process, *, reconnect: bool = False) -> None:
     try:
         output, _ = await asyncio.wait_for(process.communicate(), timeout=600)
         if process.returncode:
             raise RuntimeError(
-                "Вход не завершился: " + output.decode("utf-8", errors="replace")[-700:]
+                "Вход не завершился: AutoTok завершился с ошибкой. "
+                "Проверь открывшееся окно TikTok и выполни вход вручную."
             )
         await autotok_bridge.check_account(name)
-        # A slot may have been manually connected while the browser was open.
-        if store.get("tiktok", slot):
+        # Reconnect keeps the existing slot; new login fills an empty slot.
+        existing = store.get("tiktok", slot)
+        if reconnect:
+            if not existing or existing.get("provider") != "autotok" or (
+                existing.get("autotok_account") != name
+            ):
+                raise RuntimeError("Подключённый аккаунт был изменён во время входа")
+        elif existing:
             raise RuntimeError("Слот уже занят. Новый вход не импортирован.")
-        _save(slot, name)
+        else:
+            _save(slot, name)
         LOGINS[slot] = {"status": "done", "name": name}
     except asyncio.TimeoutError:
         process.kill()
@@ -153,6 +161,36 @@ async def start_login(body: AccountRequest, request: Request):
     LOGINS[body.slot] = {"status": "running", "name": name}
     asyncio.create_task(_complete_login(body.slot, name, proc))
     return {"ok": True, "status": "running", "name": name}
+
+
+@router.post("/relogin/{slot}")
+async def relogin_account(slot: int, request: Request):
+    """Manually re-authorize an existing AutoTok account in a visible browser."""
+    _local_only(request)
+    _slot(slot)
+    account = store.get("tiktok", slot)
+    if not account or account.get("provider") != "autotok":
+        raise HTTPException(404, "В этом слоте нет подключённого AutoTok-аккаунта")
+    alias = autotok_bridge.validate_name(str(account.get("autotok_account") or ""))
+    if LOGINS.get(slot, {}).get("status") == "running":
+        raise HTTPException(409, "Для этого слота уже открыт процесс входа")
+    binary = autotok_bridge.executable()
+    if not binary:
+        raise HTTPException(
+            503, "AutoTok не найден. Установи: uv tool install autotok; "
+                 "autotok install-browser",
+        )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            binary, "login", "-n", alias, "--force",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except OSError:
+        raise HTTPException(503, "Не удалось запустить браузерный вход AutoTok") from None
+    LOGINS[slot] = {"status": "running", "name": alias, "reconnect": True}
+    asyncio.create_task(_complete_login(slot, alias, proc, reconnect=True))
+    return {"ok": True, "slot": slot, "name": alias, "status": "running"}
 
 
 @router.get("/login/{slot}")
