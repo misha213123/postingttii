@@ -219,7 +219,12 @@ const pendingDisconnects=new Set();
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function connected(platform,slot){return (state.accounts[platform]||[]).find(a=>Number(a.slot)===slot);}
-function prettyTarget(target){const [p,n]=target.split(':');const a=connected(p,Number(n));return a?(a.label||a.id||p+' #'+n):p+' #'+n;}
+function prettyTarget(target){
+ const [p,n]=target.split(':');const a=connected(p,Number(n));
+ if(!a)return p+' #'+n;
+ if(p==='tiktok')return 'TikTok #'+n+(a.tiktok_username?' · @'+a.tiktok_username+' (ручная метка)':' · сессия '+(a.autotok_account||a.label||'без названия'));
+ return a.label||a.id||p+' #'+n;
+}
 function fmtTime(seconds){seconds=Math.max(0,Math.floor(Number(seconds)||0));const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;return h? h+'ч '+m+'м':m+':'+String(s).padStart(2,'0');}
 
 async function load(){
@@ -307,11 +312,37 @@ function renderPlatforms(){
     const a=connected('tiktok',slot);
     const section=document.createElement('div');section.className='account';
     const heading=document.createElement('b');
-    heading.textContent=a?(a.label||a.id||'TikTok #'+slot):'TikTok #'+slot+' · свободен';
+    heading.textContent='TikTok #'+slot+(a?' · подключён в приложении':' · свободен');
     section.append(heading);
+    if(a){
+      const profile=document.createElement('div');
+      profile.style.cssText='margin:8px 0 4px;font-size:13px';
+      if(a.tiktok_username){
+        const link=document.createElement('a');
+        link.href='https://www.tiktok.com/@'+encodeURIComponent(a.tiktok_username);
+        link.target='_blank';link.rel='noopener noreferrer';
+        link.textContent='@'+a.tiktok_username+' · открыть TikTok';
+        profile.append(link);
+        const manual=document.createElement('div');
+        manual.className='label muted';
+        manual.textContent='Профиль указан вручную, не подтверждён автоматически';
+        profile.append(manual);
+      }else{
+        profile.textContent=a.provider==='autotok'
+          ? 'Настоящий @username не указан'
+          : 'Имя TikTok: '+(a.label||'неизвестно')+' (OAuth)';
+      }
+      section.append(profile);
+      const technical=document.createElement('div');
+      technical.className='label muted';
+      technical.textContent=a.provider==='autotok'
+        ? 'Сессия AutoTok: '+(a.autotok_account||a.label||'неизвестно')
+        : 'Способ подключения: TikTok OAuth';
+      section.append(technical);
+    }
     const info=document.createElement('div');
     info.className='label muted';info.id='tiktokState'+slot;
-    info.textContent=a?'Добавлен · проверь сохранённую сессию':'Не подключён';
+    info.textContent=a?'Слот добавлен · вход ещё не проверен':'Не подключён';
     section.append(info);
     const actions=document.createElement('div');actions.style.cssText='display:flex;gap:6px;flex-wrap:wrap';
     function addButton(label,click,cls='secondary'){
@@ -320,6 +351,7 @@ function renderPlatforms(){
       btn.onclick=click;actions.append(btn);
     }
     if(a){
+      addButton(a.tiktok_username?'Изменить @username':'Указать @username',()=>editTikTokUsername(slot));
       if(a.provider==='autotok'){
         addButton('Проверить сессию',()=>verifyTikTok(slot));
         addButton('Переподключить',()=>reloginTikTok(slot));
@@ -493,6 +525,28 @@ async function connectTikTok(slot,mode){
     if(mode==='import'){await load();tikState(slot,'Сессия подтверждена');return;}
     watchTikTokLogin(slot);
   }catch(err){tikState(slot,'Ошибка: '+err.message,true);alert('TikTok: '+err.message);}
+}
+async function editTikTokUsername(slot){
+  const account=connected('tiktok',slot);
+  if(!account)return;
+  const current=account.tiktok_username?'@'+account.tiktok_username:'';
+  const value=prompt(
+    'Укажи настоящий @username TikTok для слота '+slot+'. Это ручная метка: AutoTok её не подтверждает. Оставь поле пустым, чтобы убрать.',
+    current,
+  );
+  if(value===null)return;
+  try{
+    const response=await fetch('/api/autotok/identity/'+slot,{
+      method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:value.trim()})
+    });
+    const result=await response.json();
+    if(!response.ok)throw Error(result.detail||'HTTP '+response.status);
+    await load();
+    tikState(slot,result.username?
+      'Отображаемое имя @'+result.username+' сохранено вручную. Проверь ссылку на профиль.':
+      'Ручная метка профиля удалена.');
+  }catch(err){tikState(slot,'Не удалось сохранить профиль: '+err.message,true);}
 }
 async function verifyTikTok(slot){
   tikState(slot,'Проверяю сохранённую сессию…');
