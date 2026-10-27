@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.store import store
@@ -14,6 +15,25 @@ LOGINS: dict[int, dict] = {}
 class AccountRequest(BaseModel):
     slot: int
     name: str
+
+class TikTokIdentityRequest(BaseModel):
+    username: str = ""
+
+
+def _normalize_tiktok_username(raw: str) -> str:
+    """User-reported handle, never presented as verified by TikTok."""
+    value = raw.strip()
+    if not value:
+        return ""
+    value = re.sub(r"^https?://(?:www\\.)?tiktok\\.com/@", "", value, flags=re.I)
+    value = value.split("?", 1)[0].rstrip("/")
+    value = value.lstrip("@")
+    if not re.fullmatch(r"[A-Za-z0-9._]{2,24}", value) or value.endswith("."):
+        raise HTTPException(
+            400, "Укажи @username TikTok или ссылку https://www.tiktok.com/@username",
+        )
+    return value
+
 
 
 def _local_only(request: Request) -> None:
@@ -48,6 +68,31 @@ def _save(slot: int, name: str) -> None:
         "label": name,
         "id": name,
     })
+
+
+@router.put("/identity/{slot}")
+async def set_tiktok_identity(slot: int, body: TikTokIdentityRequest, request: Request):
+    """Label the actual handle manually, without claiming identity verification."""
+    _local_only(request)
+    _slot(slot)
+    account = store.get("tiktok", slot)
+    if not account:
+        raise HTTPException(404, "TikTok-слот пока не подключён")
+    handle = _normalize_tiktok_username(body.username)
+    payload = {k: v for k, v in account.items() if k != "slot"}
+    if handle:
+        payload["tiktok_username"] = handle
+    else:
+        payload.pop("tiktok_username", None)
+    store.save("tiktok", slot, payload)
+    return {
+        "ok": True,
+        "slot": slot,
+        "username": handle,
+        "source": "manual" if handle else "",
+        "profile_url": f"https://www.tiktok.com/@{handle}" if handle else "",
+        "note": "Имя профиля указано вручную и не проверено автоматически",
+    }
 
 
 @router.get("/health")
@@ -87,7 +132,7 @@ async def verify_connected(slot: int, request: Request):
             409, "TikTok не подтверждает сохранённую сессию. "
                  "Нужен повторный вход вручную. " + str(exc),
         ) from None
-    return {"ok": True, "slot": slot, "name": alias, "ready": True}
+    return {"ok": True, "slot": slot, "name": alias, "ready": True, "identity_verified": False}
 
 
 @router.post("/import")
