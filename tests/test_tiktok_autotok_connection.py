@@ -99,6 +99,11 @@ class AutoTokSessionCheckTests(unittest.IsolatedAsyncioTestCase):
 
 
 class TikTokDiagnosticTests(unittest.TestCase):
+    def test_browser_session_rejects_invalid_alias_before_access(self):
+        from app.services.tiktok_browser_upload import _session
+        with self.assertRaises(RuntimeError):
+            _session("../account5")
+
     def test_diagnostic_contains_only_metadata_no_caption_or_cli_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             video = Path(tmp) / "clip.mp4"
