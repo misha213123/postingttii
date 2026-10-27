@@ -53,6 +53,17 @@ class TokenStore:
                     "id": a.get("id", ""),
                     "connected": True,
                     **(
+                        {
+                            "provider": a.get("provider", "oauth"),
+                            "autotok_account": a.get("autotok_account", "")
+                                if a.get("provider") == "autotok" else "",
+                            "tiktok_username": a.get("tiktok_username", ""),
+                            "tiktok_username_source": "manual"
+                                if a.get("tiktok_username") else "",
+                        }
+                        if platform == "tiktok" else {}
+                    ),
+                    **(
                         {"meta_app": a.get("meta_app", 1 if int(a.get("slot", 0)) <= 5 else 2)}
                         if platform == "instagram" else {}
                     ),
