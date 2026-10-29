@@ -24,7 +24,7 @@ from app.services.instagram_caption_templates import (
     instagram_caption_from_file,
     load_instagram_caption_templates,
 )
-from app.services.tiktok_text import generate_tiktok_caption
+from app.services.tiktok_text import generate_tiktok_caption, clean_tiktok_caption
 from app.services.youtube_text import generate_youtube_metadata
 from app.services import autotok_bridge
 from app.services.autotok_routes import router as autotok_router
@@ -465,6 +465,8 @@ async def _publish_single_target(
                         cover_url=cover_url,
                     )
         else:
+            # Sanitize even captions restored from older jobs or entered manually.
+            caption = clean_tiktok_caption(caption, video.name)
             account = store.get("tiktok", slot) or {}
             result = (
                 await autotok_bridge.publish(slot, video, caption)
@@ -644,6 +646,18 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             return
         target = next(iter(item["targets"]))
         state = item["targets"][target]
+        # Do not keep submitting more clips to an account after TikTok has
+        # rejected a prior request as invalid. Other platforms keep running.
+        blocked = job.get("blocked_targets", {}).get(target)
+        if blocked:
+            message = (
+                "Не отправлялось: TikTok приостановлен после status_code=5. "
+                "Проверь предыдущий ролик и причину отказа."
+            )
+            state.update(status="error", message=message)
+            item.update(status="error", error=message, finished_at=int(time.time()))
+            _save_batch_job(job)
+            return
         try:
             folder_id = item.get("source_folder", "default")
             video = _safe_video(item["filename"], folder_id)
@@ -679,10 +693,14 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
                 # One source of truth: the user's local TXT templates.
                 slot = int(target.split(":", 1)[1])
                 caption = instagram_caption_from_file(video.name, slot)
-            elif not caption:
-                item["status"] = "caption"
-                _save_batch_job(job)
-                caption = await asyncio.to_thread(generate_tiktok_caption, video.name, body.hint)
+            elif target.startswith("tiktok:"):
+                if not caption:
+                    item["status"] = "caption"
+                    _save_batch_job(job)
+                    caption = await asyncio.to_thread(
+                        generate_tiktok_caption, video.name, body.hint,
+                    )
+                caption = clean_tiktok_caption(caption, video.name)
             item["caption"] = caption
             cooldown = (
                 max(60, body.interval_seconds)
@@ -728,9 +746,16 @@ async def _run_batch_job(job_id: str, body: BatchPublishRequest) -> None:
             state.update(status="cancelled", message="Очередь остановлена")
             item["status"] = "cancelled"
         except Exception as exc:
-            state.update(status="error", message=str(exc)[:450])
+            message = str(exc)
+            if (target.startswith("tiktok:") and
+                    "Invalid parameters" in message and "status_code=5" in message):
+                job.setdefault("blocked_targets", {})[target] = {
+                    "reason": "TikTok invalid parameters (status_code=5)",
+                    "at": int(time.time()),
+                }
+            state.update(status="error", message=message[:450])
             item["status"] = "error"
-            item["error"] = str(exc)[:450]
+            item["error"] = message[:450]
         finally:
             item["finished_at"] = int(time.time())
             _save_batch_job(job)
@@ -1075,10 +1100,11 @@ async def publish(body: PublishRequest):
                 )
             elif platform == "tiktok":
                 account = store.get("tiktok", slot) or {}
+                safe_caption = clean_tiktok_caption(body.caption, video.name)
                 if account.get("provider") == "autotok":
-                    result = await autotok_bridge.publish(slot, video, body.caption)
+                    result = await autotok_bridge.publish(slot, video, safe_caption)
                 elif settings.tiktok_enabled:
-                    result = await tiktok_upload(slot, video, body.caption)
+                    result = await tiktok_upload(slot, video, safe_caption)
                 else:
                     raise RuntimeError("TikTok API отключён. Подключи аккаунт через AutoTok")
             elif platform == "instagram":

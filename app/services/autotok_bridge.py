@@ -6,11 +6,16 @@ store the CLI alias in PostingTTII, never a copy of TikTok cookies or tokens.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import re
 import shutil
+import time
+from uuid import uuid4
 from pathlib import Path
 
+from app.config import settings
 from app.store import store
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -74,6 +79,39 @@ async def check_account(name: str) -> None:
         )
 
 
+def _write_upload_diagnostic(
+    slot: int, alias: str, video_path: Path, caption: str, code: int, output: str,
+) -> None:
+    """Local metadata only. Never record CLI output, captions or session secrets."""
+    try:
+        status = re.search(r"status_code=(\d+)", output)
+        published = bool(_PUBLISHED_RE.search(output)) and code == 0
+        event = {
+            "timestamp": int(time.time()),
+            "slot": slot,
+            "autotok_account": alias,
+            "filename": video_path.name,
+            "video_size_bytes": video_path.stat().st_size,
+            "caption_chars": len(caption),
+            "caption_hash": hashlib.sha256(caption.encode("utf-8")).hexdigest()[:16],
+            "visibility": "public",
+            "exit_code": code,
+            "result": "published" if published else (
+                "rejected" if status else "unconfirmed"
+            ),
+            "status_code": int(status.group(1)) if status else None,
+        }
+        directory = settings.data_dir / "tiktok_autotok_diagnostics"
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / f"{int(time.time() * 1000)}-{uuid4().hex[:8]}.json"
+        destination.write_text(
+            json.dumps(event, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+    except (OSError, ValueError):
+        # Diagnostics must never make an otherwise successful upload fail.
+        pass
+
+
 async def publish(slot: int, video_path: Path, caption: str) -> dict:
     account = store.get("tiktok", slot)
     if not account or account.get("provider") != "autotok":
@@ -82,11 +120,11 @@ async def publish(slot: int, video_path: Path, caption: str) -> dict:
     if not video_path.is_file():
         raise RuntimeError("Видео не найдено: " + str(video_path))
 
-    # Only the second account takes the separate UI path, with the existing
-    # AutoTok session. Never try both uploaders for the same video: a failed
-    # publication acknowledgment must not trigger a duplicate post.
+    # The optional browser route belongs to TikTok slot 2, regardless of
+    # AutoTok alias (for example account2 or account5). Never fall back from
+    # an API rejection automatically: it could create a duplicate post.
     browser_mode = os.getenv("TIKTOK_ACCOUNT2_BROWSER", "0").strip().lower()
-    if slot == 2 and alias == "account2" and browser_mode in {"1", "true", "yes", "on"}:
+    if slot == 2 and browser_mode in {"1", "true", "yes", "on"}:
         from app.services.tiktok_browser_upload import publish_browser_account2
         return await asyncio.to_thread(publish_browser_account2, video_path, caption, alias)
 
@@ -97,6 +135,7 @@ async def publish(slot: int, video_path: Path, caption: str) -> dict:
         "-t", caption[:2200], "-vi", "0",
         timeout=1800,
     )
+    _write_upload_diagnostic(slot, alias, video_path, caption[:2200], code, output)
     # An explicit rejection from TikTok is not a successful publish.
     # Do not retry automatically: some failures can occur after a post was
     # accepted, and a blind retry may create a duplicate.

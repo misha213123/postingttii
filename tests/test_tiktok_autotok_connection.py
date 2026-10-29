@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -62,6 +65,64 @@ class AutoTokSessionCheckTests(unittest.IsolatedAsyncioTestCase):
         args = cli.await_args.args
         self.assertEqual(args[:2], ("upload", "-u"))
         self.assertEqual(args[2], "account2")
+
+    async def test_account5_in_slot2_uses_browser_only_when_enabled(self):
+        account = {"provider": "autotok", "autotok_account": "account5"}
+        clip = Path("new_clip.mp4")
+        with (
+            patch.dict(os.environ, {"TIKTOK_ACCOUNT2_BROWSER": "1"}),
+            patch.object(autotok_bridge.store, "get", return_value=account),
+            patch("pathlib.Path.is_file", return_value=True),
+            patch("app.services.tiktok_browser_upload.publish_browser_account2",
+                  return_value={"provider": "browser", "slot": 2}) as browser,
+            patch.object(autotok_bridge, "run_cli", new=AsyncMock()) as cli,
+        ):
+            result = await autotok_bridge.publish(2, clip, "description")
+        self.assertEqual(result["provider"], "browser")
+        browser.assert_called_once_with(clip, "description", "account5")
+        cli.assert_not_awaited()
+
+    async def test_browser_mode_is_disabled_by_default_for_account5(self):
+        account = {"provider": "autotok", "autotok_account": "account5"}
+        with (
+            patch.dict(os.environ, {"TIKTOK_ACCOUNT2_BROWSER": "0"}),
+            patch.object(autotok_bridge.store, "get", return_value=account),
+            patch.object(autotok_bridge, "run_cli", new=AsyncMock(
+                return_value=(0, "Published. Video id: tiktok_post_456")
+            )) as cli,
+            patch.object(autotok_bridge, "_write_upload_diagnostic"),
+            patch("pathlib.Path.is_file", return_value=True),
+        ):
+            result = await autotok_bridge.publish(2, Path("clip.mp4"), "test")
+        self.assertEqual(result["provider"], "autotok")
+        cli.assert_awaited_once()
+
+
+class TikTokDiagnosticTests(unittest.TestCase):
+    def test_browser_session_rejects_invalid_alias_before_access(self):
+        from app.services.tiktok_browser_upload import _session
+        with self.assertRaises(RuntimeError):
+            _session("../account5")
+
+    def test_diagnostic_contains_only_metadata_no_caption_or_cli_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "clip.mp4"
+            video.write_bytes(b"test video data")
+            local_settings = SimpleNamespace(data_dir=Path(tmp))
+            with patch.object(autotok_bridge, "settings", local_settings):
+                autotok_bridge._write_upload_diagnostic(
+                    2, "account5", video, "PRIVATE CAPTION TEXT", 1,
+                    "TikTok rejected the post: Invalid parameters (status_code=5) SECRET_CLI",
+                )
+            paths = list((Path(tmp) / "tiktok_autotok_diagnostics").glob("*.json"))
+            self.assertEqual(len(paths), 1)
+            raw = paths[0].read_text(encoding="utf-8")
+            metadata = json.loads(raw)
+            self.assertEqual(metadata["status_code"], 5)
+            self.assertEqual(metadata["filename"], "clip.mp4")
+            self.assertEqual(metadata["result"], "rejected")
+            self.assertNotIn("PRIVATE CAPTION TEXT", raw)
+            self.assertNotIn("SECRET_CLI", raw)
 
 
 class TikTokInvalidParametersTests(unittest.IsolatedAsyncioTestCase):
