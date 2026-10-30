@@ -132,6 +132,68 @@ class CaptionTests(unittest.TestCase):
         self.assertEqual(pro._ass_timestamp(1.25), "0:00:01.25")
 
 
+class RenderProgressTests(unittest.TestCase):
+    def test_media_time_progress_is_not_wall_clock(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "progress.txt"
+            self.assertIsNone(pro._read_ffmpeg_seconds(path))
+            path.write_text("frame=60\nout_time=00:00:02.500000\nprogress=continue\n")
+            self.assertEqual(pro._read_ffmpeg_seconds(path), 2.5)
+            path.write_text("out_time=00:00:01.000000\nout_time=00:00:03.250000\n")
+            self.assertEqual(pro._read_ffmpeg_seconds(path), 3.25)
+            path.write_text("out_time=N/A\n")
+            self.assertIsNone(pro._read_ffmpeg_seconds(path))
+
+
+class ShortPreviewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_preview_is_isolated_from_original_exports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name in ("media", "backgrounds", "exports", "tmp", "projects", "previews"):
+                (root / name).mkdir()
+            mid, pid = "a" * 32, "b" * 32
+            (root / "media" / (mid + ".mp4")).write_bytes(b"source-unmodified")
+            (root / "backgrounds" / "bg.png").write_bytes(b"background")
+            config = pro.Config(
+                clips=[pro.Clip(media_id=mid, start=2, end=9)],
+                background_source="local", background_name="bg.png",
+            )
+            project = {"id": pid, "config": config.model_dump(),
+                       "exports": [{"id": "old-export"}], "analysis": {}}
+            (root / "projects" / (pid + ".json")).write_text(json.dumps(project))
+            async def fake_render(p, variant, job, work, position):
+                self.assertEqual(variant, "A")
+                self.assertEqual(len(p["config"]["clips"]), 1)
+                self.assertEqual(p["config"]["clips"][0]["start"], 2)
+                self.assertEqual(p["config"]["clips"][0]["end"], 5.0)
+                outdir = root / "exports" / p["id"]
+                outdir.mkdir()
+                (outdir / "sample.mp4").write_bytes(b"preview-rendered")
+                return {"file": "sample.mp4", "duration": 3.0}
+            with (
+                patch.object(pro, "MEDIA", root / "media"),
+                patch.object(pro, "OWN_BACKGROUNDS", root / "backgrounds"),
+                patch.object(pro, "PROJECTS", root / "projects"),
+                patch.object(pro, "EXPORTS", root / "exports"),
+                patch.object(pro, "PREVIEWS", root / "previews"),
+                patch.object(pro, "TMP", root / "tmp"),
+                patch.object(pro, "RENDER_LOCK", asyncio.Lock()),
+                patch.object(pro, "JOBS", {}),
+                patch.object(pro, "_probe", return_value={"duration": 12.0}),
+                patch.object(pro, "_render_variant", side_effect=fake_render),
+                patch.object(pro.shutil, "which", return_value="ffmpeg"),
+            ):
+                result = await pro.render_preview(pid, local("POST"))
+                self.assertTrue(result["ok"])
+                self.assertEqual((root / "previews" / (pid + ".mp4")).read_bytes(),
+                                 b"preview-rendered")
+                self.assertEqual((root / "media" / (mid + ".mp4")).read_bytes(),
+                                 b"source-unmodified")
+                self.assertEqual(json.loads((root / "projects" / (pid + ".json")).read_text()),
+                                 project)
+                self.assertEqual(list((root / "exports").iterdir()), [])
+
+
 class UploadAssetTests(unittest.IsolatedAsyncioTestCase):
     async def test_image_upload_is_private_and_checked(self):
         with tempfile.TemporaryDirectory() as folder:
