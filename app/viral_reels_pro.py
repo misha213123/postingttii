@@ -533,7 +533,7 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
     banner = current_banner() if config.banner_enabled else None
     if config.banner_enabled and not banner:
         raise ValueError("Рекламный баннер не найден")
-    if config.smooth == "pro" and not "minterpolate" in _available_filters():
+    if config.smooth == "pro" and "minterpolate" not in _available_filters():
         raise ValueError("Optical Flow minterpolate недоступен в FFmpeg")
     clips = []
     offset = 0.0
@@ -599,6 +599,10 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
             )
             prev = "withad"
         graph += f"[{prev}]format=yuv420p[v]"
+        # All inputs must appear before mapping output streams in FFmpeg.
+        if not info["audio"]:
+            silent_index = 3 if banner else 2
+            cmd += ["-f", "lavfi", "-t", str(length), "-i", "anullsrc=r=48000:cl=stereo"]
         # Subtitles are applied as a separate filter after composition,
         # mapping the same per-project word timeline to the current clip.
         words = [w for w in config.captions
@@ -617,9 +621,8 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
                             "loudnorm=I=-16:TP=-1.5:LRA=11,alimiter=limit=0.95"
                             if config.loudness else "anull")]
         else:
-            # Provide consistent audio for concat demuxer.
-            cmd += ["-f", "lavfi", "-t", str(length), "-i", "anullsrc=r=48000:cl=stereo",
-                    "-map", "3:a" if banner else "2:a"]
+            # All segments must have audio for concat (even silent clips).
+            cmd += ["-map", f"{silent_index}:a"]
         cmd += [
             "-t", str(length), "-r", str(fps), "-c:v", "libx264",
             "-preset", "medium", "-b:v", f"{config.bitrate_mbps}M",
