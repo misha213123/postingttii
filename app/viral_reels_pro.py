@@ -624,7 +624,8 @@ def _segment_bounds(clip: Clip, info: dict, variant: str, silence: list[dict]) -
     if variant in ("B", "C"):
         # Conservative trims; never remove middle words automatically.
         for pause in silence:
-            if pause["start"] <= start + .08 and pause["end"] <= start + 3:
+            if (pause["start"] <= start + .08 and pause["end"] > start + .05
+                    and pause["end"] <= start + 3):
                 start = min(end - .35, max(start, pause["end"] - (.05 if variant == "C" else .18)))
                 break
         for pause in reversed(silence):
