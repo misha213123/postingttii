@@ -567,6 +567,7 @@ def _ffmpeg_path(path: Path) -> str:
 
 async def _ffmpeg(job: dict, cmd: list[str], output: Path, estimated: float, index: int, total: int):
     logfile = TMP / (job["id"] + "_ffmpeg.log")
+    process = None
     try:
         with logfile.open("wb") as logs:
             process = subprocess.Popen(cmd, stderr=logs, stdout=subprocess.DEVNULL)
@@ -589,6 +590,16 @@ async def _ffmpeg(job: dict, cmd: list[str], output: Path, estimated: float, ind
             error = logfile.read_text(encoding="utf-8", errors="replace")[-1800:]
             output.unlink(missing_ok=True)
             raise RuntimeError(f"FFmpeg вернул {process.returncode}: {error}")
+    except asyncio.CancelledError:
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                await asyncio.to_thread(process.wait, timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                await asyncio.to_thread(process.wait)
+        output.unlink(missing_ok=True)
+        raise
     finally:
         logfile.unlink(missing_ok=True)
 
@@ -616,7 +627,8 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
         if length < .25:
             raise ValueError("Слишком короткий фрагмент для рендера")
         clips.append((src, info, start, length))
-    total_steps = len(clips) * 3
+    steps_per_variant = len(clips) + 1
+    steps_total = 3 * steps_per_variant
     segs = []
     for index, (src, info, start, length) in enumerate(clips):
         if job.get("cancel"):
@@ -638,12 +650,21 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
             f"a='if(lte((X-{cx})*(X-{cx})+(Y-{cx})*(Y-{cx}),{cx*cx}),255,0)'"
             "[circle];"
         )
-        bgfilter = (
-            f"[1:v]scale=1080:1920:force_original_aspect_ratio=increase:"
-            f"flags=lanczos,crop=1080:1920,setsar=1,"
-            f"eq=contrast={config.contrast}:saturation={config.saturation},"
-            f"fps={fps}[bg];"
-        )
+        if background.suffix.lower() in IMAGE_EXT:
+            bgfilter = (
+                "[1:v]scale=1200:2134:flags=lanczos,"
+                f"zoompan=z='min(zoom+0.00012,1.08)':"
+                "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                f"d=1:s=1080x1920:fps={fps},setsar=1,"
+                f"eq=contrast={config.contrast}:saturation={config.saturation}[bg];"
+            )
+        else:
+            bgfilter = (
+                "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:"
+                "flags=lanczos,crop=1080:1920,setsar=1,"
+                f"eq=contrast={config.contrast}:saturation={config.saturation},"
+                f"fps={fps}[bg];"
+            )
         graph = crop + bgfilter + (
             f"[bg][circle]overlay={config.circle_x}:{config.circle_y}:"
             "shortest=1[comp];"
@@ -687,9 +708,14 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
         cmd += ["-filter_complex", graph, "-map", videomap]
         if info["audio"]:
             cmd += ["-map", "0:a:0",
-                    "-af", ("highpass=f=70,lowpass=f=12500,afftdn=nf=-25,"
-                            "loudnorm=I=-16:TP=-1.5:LRA=11,alimiter=limit=0.95"
-                            if config.loudness else "anull")]
+                    "-af", (
+                        ",".join(
+                            (["highpass=f=70", "lowpass=f=12500", "afftdn=nf=-25"]
+                             if config.denoise else [])
+                            + (["loudnorm=I=-16:TP=-1.5:LRA=11",
+                                "alimiter=limit=0.95"] if config.loudness else [])
+                        ) or "anull"
+                    )]
         else:
             # All segments must have audio for concat (even silent clips).
             cmd += ["-map", f"{silent_index}:a"]
@@ -703,8 +729,8 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
             "-movflags", "+faststart", str(output)]
         job["stage"] = f"{variant}: кружок {index + 1}/{len(clips)}"
-        await _ffmpeg(job, cmd, output, length * 2, position * total_steps + index,
-                      3 * total_steps + 3)
+        await _ffmpeg(job, cmd, output, length * 2,
+                      position * steps_per_variant + index, steps_total)
         segs.append(output)
         offset += length
     if job.get("cancel"):
@@ -720,7 +746,8 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
     await _ffmpeg(job, ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                         "-f", "concat", "-safe", "0", "-i", str(concat),
                         "-c", "copy", "-movflags", "+faststart", str(final)],
-                  final, sum(x[3] for x in clips), 3 * total_steps - 3 + "ABC".index(variant), 3 * total_steps + 3)
+                  final, sum(x[3] for x in clips),
+                  position * steps_per_variant + len(clips), steps_total)
     info = _probe(final)
     if info["width"] != 1080 or info["height"] != 1920:
         final.unlink(missing_ok=True)
