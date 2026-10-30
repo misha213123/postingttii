@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Viral Reels Pro №3 — PostingTTII</title>
+<style>
+:root{font-family:Inter,Segoe UI,Arial,sans-serif;background:#07101d;color:#e7effc;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(140deg,#07101d,#0d2035)}
+main{max-width:1430px;margin:auto;padding:22px 22px 70px}a{color:#8ac3ff}
+h1{font-size:29px;letter-spacing:-.035em;margin:8px 0}h2{font-size:18px;margin:0 0 12px}
+p{line-height:1.55}.hint,.secondary{font-size:12px;color:#a1b6d1}
+header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+header .tag{font-size:11px;color:#b5daff;background:#1a3553;border:1px solid #42658e;padding:7px 10px;border-radius:30px}
+nav{display:flex;gap:6px;flex-wrap:wrap;margin:20px 0;padding:7px;border:1px solid #334865;background:#0b1729;border-radius:15px}
+button,select,input,textarea{font:inherit}
+button{border:1px solid #415c7f;background:#1a304e;color:#e7f1ff;padding:10px 13px;border-radius:9px;cursor:pointer}
+button:hover{background:#244366}button:disabled{opacity:.55;cursor:not-allowed}
+button.primary{background:linear-gradient(125deg,#4b64f7,#267cc2);border-color:#6c88ff;font-weight:700}
+button.critical{background:#813140;border-color:#be5b65}
+nav button{flex:1 1 115px;min-width:100px;text-align:center}
+nav button.active{background:#4668e6;color:white}
+section{display:none}section.active{display:block}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}
+.card{padding:20px;background:#101f33;border:1px solid #304a6b;border-radius:16px;margin-bottom:14px}
+.card.dim{background:#0b1b2b}
+label{display:grid;gap:7px;font-size:12px;color:#b6d2ef;margin:10px 0}
+input,select,textarea{width:100%;color:#eff5ff;background:#0a172a;border:1px solid #3b567b;border-radius:9px;padding:10px 12px;outline-color:#6b87ff}
+input[type=checkbox]{width:auto;margin-right:7px;vertical-align:middle}
+textarea{min-height:116px;resize:vertical;line-height:1.55}
+.row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.row>*{flex-shrink:0}
+.row .grow{flex:1}
+output{color:#a9eec9;white-space:pre-line}
+.bad{color:#ffb3ae}.good{color:#96e3bb}
+.media-item{border-bottom:1px solid #263c58;padding:12px 0}.media-item:last-child{border-bottom:0}
+.media-item video{max-width:120px;max-height:155px;border-radius:8px}
+.media-info{flex:1;min-width:200px}
+.media-item input{max-width:95px;padding:7px}
+.columns3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.previewvideo{width:100%;aspect-ratio:9/16;max-height:520px;background:#050a12;border:1px solid #304663;border-radius:12px;object-fit:contain}
+.card h3{margin:6px 0 11px;font-size:15px}
+.export-card{min-width:0}
+.export-card p{font-size:12px;color:#a6bcd3}
+.narrow{max-width:690px}
+.stage{position:relative;margin:0 auto;width:250px;height:445px;background:#091322;overflow:hidden;border:2px solid #425c87;border-radius:12px}
+.stage>div{position:absolute;pointer-events:none}
+.stage .sky{inset:0;background:linear-gradient(140deg,#295476,#16253c 45%,#4c5575)}
+.stage .circle{left:8%;top:12%;width:84%;aspect-ratio:1;border-radius:100%;background:radial-gradient(circle,#6f93aa,#1e405d 65%,#e9f5ff 67%,#284965 69%);border:2px solid white}
+.stage .titles{left:10%;top:44%;width:80%;text-align:center;font-size:13px;font-weight:900;text-shadow:0 2px 3px #000}
+.stage .ad{left:23%;top:76%;width:54%;height:9%;border:2px dashed #f6c879;background:#edb9533d;text-align:center;font-size:10px;padding:5px}
+.split{display:grid;grid-template-columns:260px minmax(0,1fr);gap:15px}
+#status{margin:12px 0;min-height:18px}
+small{font-size:11px;color:#a1b8d5}
+.mutedline{background:#132f42;border-left:3px solid #7ab3e3;padding:10px 12px;font-size:12px}
+pre{overflow-wrap:anywhere;white-space:pre-wrap;word-break:break-word;background:#081628;border:1px solid #26435e;padding:12px;border-radius:10px;max-height:290px;overflow:auto}
+progress{width:100%;height:15px;accent-color:#6d8dff}
+#exportsGrid a{font-size:12px}
+@media(max-width:900px){.grid,.columns3,.split{grid-template-columns:1fr}main{padding:14px}.stage{margin:auto}}
+</style></head><body><main>
+<header>
+<div><a href="/telegram-studio">← Telegram Studio</a> <span class="secondary">·</span> <a href="/">PostingTTII</a>
+<h1>Viral Reels Pro <span class="tag">ШАБЛОН №3 · НЕЗАВИСИМЫЙ</span></h1>
+<p class="secondary">Реальный рендер FFmpeg · три варианта монтажа · архив исходников и отпечатков</p></div>
+<div class="row"><select id="projects" aria-label="Выбор проекта" style="max-width:270px"></select><button onclick="createProject()">+ Новый проект</button></div>
+</header>
+<nav id="tabs" role="tablist">
+<button class="active" data-tab="media">1 · Медиа</button><button data-tab="edit">2 · Монтаж</button>
+<button data-tab="motion">3 · Плавность</button><button data-tab="captions">4 · Субтитры</button>
+<button data-tab="audio">5 · Звук</button><button data-tab="fingerprints">6 · Отпечаток</button>
+<button data-tab="optimizer">7 · Viral Optimizer</button><button data-tab="export">8 · Экспорт</button>
+</nav>
+<p id="status" class="secondary" aria-live="polite">Загрузка...</p>
+<div class="row" style="margin:8px 0 20px">
+<button onclick="saveProject()">Сохранить изменения</button>
+<button class="primary" onclick="oneClick()">★ Создать Viral Reel</button>
+<button class="critical" id="cancelBtn" onclick="cancelJob()" disabled>Отменить рендер</button>
+</div>
+<section class="active" id="pane-media">
+<div class="grid">
+<div class="card"><h2>Кружки Telegram</h2><p class="hint">Загрузи собственные или разрешённые к использованию MP4/MOV/WebM. Можно объединить до 20 фрагментов.</p>
+<label>Выбрать исходные кружки<input type="file" id="circleFiles" multiple accept="video/mp4,video/webm,video/quicktime,.mov,.m4v"></label>
+<button onclick="uploadCircles()">+ Добавить кружки в проект</button><div id="mediaItems"></div></div>
+<div class="card"><h2>Фон и рекламный баннер</h2>
+<label>Фоновое видео или изображение<input type="file" id="backgroundFile" accept="video/mp4,video/webm,image/png,image/jpeg,image/webp"></label>
+<button onclick="uploadAsset('background')">Загрузить свой фон</button>
+<label>Выбрать фон<select id="backgroundName"></select></label>
+<p class="hint">Можно использовать сохранённые фоны Telegram Studio. Ваши новые файлы хранятся только в Viral Pro.</p>
+<hr style="border-color:#2a4161">
+<label>Рекламный баннер PNG/WebP/MP4/WebM<input type="file" id="bannerFile" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></label>
+<button onclick="uploadAsset('banner')">Загрузить баннер Viral Pro</button>
+<label><span><input type="checkbox" id="bannerEnabled"> Включить рекламный баннер</span></label>
+<label>Ширина баннера (пиксели)<input type="number" id="bannerWidth" min="80" max="1080"></label>
+<div class="grid"><label>X<input type="number" id="bannerX"></label><label>Y<input type="number" id="bannerY"></label></div>
+<div class="grid"><label>Начало (сек)<input type="number" id="bannerStart" min="0" step=".1"></label>
+<label>Конец (сек)<input type="number" id="bannerEnd" min=".1" step=".1"></label></div>
+<p class="hint" id="bannerNotice">При отсутствии собственного баннера можно использовать уже загруженный в Telegram Studio — без изменений оригинала.</p>
+</div></div></section>
+<section id="pane-edit">
+<div class="split">
+<div class="card"><h2>Схема 9:16</h2><div class="stage"><div class="sky"></div><div class="circle" id="circleGuide"></div><div class="titles" id="titleGuide">СУБТИТРЫ</div><div class="ad" id="adGuide">БАННЕР</div></div>
+<p class="hint">Схема показывает расположение слоёв. Кнопка ниже создаёт настоящий MP4 первых 3 секунд первой сцены с сохранённым фоном, баннером и субтитрами.</p>
+<button type="button" onclick="previewFirstScene()">▶ Создать точный предпросмотр (3 сек)</button>
+<p class="hint" id="previewStatus">Предпросмотр ещё не создан.</p>
+<video id="previewVideo" controls playsinline preload="none" hidden style="width:100%;max-width:270px;max-height:480px;border-radius:14px"></video></div>
+<div class="card"><h2>Монтаж и порядок сцен</h2>
+<p class="hint">Начало и конец каждой сцены изменяются без удаления исходного файла. Кнопка автомонтажа создаёт только предложения.</p>
+<div id="timeline"></div>
+<div class="grid"><label>Положение кружка X<input type="number" id="circleX" min="0"></label>
+<label>Положение кружка Y<input type="number" id="circleY" min="0"></label></div>
+<label>Диаметр кружка (px)<input type="number" id="circleSize" min="240" max="1080"></label>
+<button onclick="autoEdit()">Автомонтаж PRO — предложить сокращения</button>
+<div id="autoEditBox" style="margin-top:15px"></div></div></div></section>
+<section id="pane-motion"><div class="grid"><div class="card"><h2>AI Smooth Motion Engine</h2>
+<label>Режим<select id="smooth"><option value="off">OFF — исходные кадры</option>
+<option value="standard">STANDARD — нормализация FPS</option><option value="pro">PRO — Optical Flow minterpolate</option>
+<option value="auto">AUTO — выбор по FPS исходника</option></select></label>
+<label>FPS экспорта<select id="fps"><option value="30">30 FPS</option><option value="60">60 FPS</option></select></label>
+<div id="smoothStatus" class="mutedline"></div></div>
+<div class="card"><h2>Цвет и фон</h2>
+<label>Контраст<input type="range" id="contrast" min=".5" max="1.5" step=".01"></label>
+<label>Насыщенность<input type="range" id="saturation" min="0" max="2" step=".01"></label>
+<p class="hint">PRO использует Optical Flow FFmpeg. RIFE без отдельной установки GPU-движка недоступен, система не имитирует его работу. В AUTO низкий FPS может получить интерполяцию.</p></div></div></section>
+<section id="pane-captions"><div class="grid"><div class="card"><h2>VIRAL CAPTIONS</h2>
+<p class="hint">AI-распознавание с временными метками слов — опциональный faster-whisper. Текст можно исправить вручную и сохранить в проекте.</p>
+<button onclick="transcribe()">Распознать речь (AI)</button>
+<label>Слова — одна строка на слово: начало | конец | текст
+<textarea id="captionWords" rows="11" placeholder="0.20 | 0.53 | Привет&#10;0.55 | 0.93 | всем"></textarea></label>
+<div class="grid"><label>Размер шрифта<input id="captionSize" type="number" min="20" max="90"></label>
+<label>Центр по высоте Y<input id="captionY" type="number" min="100" max="1800"></label></div>
+<label>Цвет текста<input type="color" id="captionColor"></label>
+<p class="hint">Белый жирный текст с чёрной обводкой; каждое слово появляется по таймкоду. Отредактированные слова записываются в JSON проекта.</p></div>
+<div class="card"><h2>Синхронизация</h2><p class="hint">Текст синхронизируется по меткам источников. При изменении порядка или границ сцен проверь таймкоды ещё раз. Транскрипция не создаётся автоматически, если faster-whisper не установлен.</p>
+<pre id="captionHelp">Пока нет субтитров.</pre></div></div></section>
+<section id="pane-audio"><div class="card narrow"><h2>Professional Audio Engine</h2>
+<label><span><input type="checkbox" id="loudness"> Автоматически нормализовать громкость речи до -16 LUFS</span></label>
+<label><span><input type="checkbox" id="denoise"> Подавлять фоновые шумы (FFmpeg afftdn)</span></label>
+<p class="mutedline">Реально применяются highpass/lowpass, loudnorm, ограничение пиков и AAC 128 кбит/с, когда включена обработка. Базовый звук остаётся синхронным. Музыкальный многодорожечный микшер пока не реализован — никаких фиктивных ползунков.</p></div></section>
+<section id="pane-fingerprints"><div class="grid">
+<div class="card"><h2>Отпечаток и оригинальность</h2>
+<p class="hint">SHA-256 — точные дубликаты; dHash трёх кадров — приблизительное сходство; hash PCM — только совпадение нормализованных аудиофрагментов.</p>
+<div class="row"><button onclick="analyze()">Анализировать исходники</button><button onclick="duplicates()">Найти совпадения экспортов</button></div>
+<pre id="analysisJson">Анализ ещё не выполнялся.</pre></div>
+<div class="card"><h2>Повторы</h2><pre id="duplicatesJson">История сравнений появится после анализа.</pre>
+<p class="hint">Изменение хеша не означает содержательной оригинальности. Для новых самостоятельных версий используйте другой монтаж, собственную речь, пояснения и новые сцены с соответствующими правами.</p></div></div></section>
+<section id="pane-optimizer"><div class="grid">
+<div class="card"><h2>Viral Optimizer</h2>
+<p>Три варианта монтажных решений:</p>
+<p><b>A Smooth</b> — без сокращения крайних пауз.</p><p><b>B Dynamic</b> — с осторожным сокращением тишины в начале и конце клипов.</p>
+<p><b>C Retention</b> — более плотные крайние обрезки (без удаления реплик внутри).</p>
+<button onclick="autoEdit()">Предложения автомонтажа PRO</button><pre id="optimizerAdvice">Анализ первых секунд доступен после загрузки исходников.</pre>
+<p class="hint">Если исходники не содержат крайних пауз, визуально варианты могут совпадать. Алгоритм не обещает удержание или просмотры.</p></div>
+<div class="card"><h2>Аналитика опубликованного Reel</h2>
+<label>Для варианта<select id="statVariant"><option>A</option><option>B</option><option>C</option></select></label>
+<div class="grid"><label>Просмотры<input id="views" type="number" min="0"></label>
+<label>Лайки<input id="likes" type="number" min="0"></label><label>Сохранения<input id="saves" type="number" min="0"></label>
+<label>Отправки<input id="sends" type="number" min="0"></label><label>Охват подписчиков<input id="follower_reach" type="number" min="0"></label>
+<label>Охват неподписчиков<input id="nonfollower_reach" type="number" min="0"></label>
+<label>Среднее время просмотра, сек<input id="average_watch_seconds" type="number" min="0" step=".1"></label>
+<label>Досмотры, %<input id="completion_rate" type="number" min="0" max="100" step=".1"></label></div>
+<button onclick="saveStats()">Сохранить реальные метрики</button><p class="hint">Незаполненные поля остаются пустыми: приложение не выдумывает результаты.</p></div></div></section>
+<section id="pane-export"><div class="card"><h2>INSTAGRAM REELS — HIGH QUALITY</h2>
+<div class="grid"><label>Битрейт H.264 (Мбит/с)<input id="bitrate" type="number" min="4" max="16"></label>
+<label>Разрешение<input value="1080 × 1920 (9:16)" disabled></label></div>
+<p class="hint">H.264 · MP4 · AAC · BT.709 · 30 FPS по умолчанию (60 FPS на вкладке «Плавность»). Отмена сохраняет оригиналы и уже готовые экспорты.</p>
+<div class="row"><button class="primary" onclick="oneClick()">★ Создать Viral Reel — A / B / C</button>
+<button class="critical" onclick="cancelJob()">Остановить</button></div>
+<p id="jobStage" class="secondary">Рендер ещё не запускался.</p>
+<progress id="jobProgress" max="100" value="0"></progress>
+<div id="exportsGrid" class="columns3" style="margin-top:18px"></div>
+</div></section>
+</main>
+<script>
+const API='/api/viral-pro';
+const $=id=>document.getElementById(id);
+let project=null,cap=null,uploads=[],pollHandle=null,proposal=null;
+function alertStatus(msg,bad=false){$('status').textContent=msg;$('status').className=bad?'bad':'good'}
+function safe(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function request(endpoint='',options={}){
+ const r=await fetch(API+endpoint,options);
+ let data;
+ try{data=await r.json()}catch{throw Error('HTTP '+r.status)}
+ if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));
+ return data;
+}
+const fields={
+ banner_enabled:['bannerEnabled','checked'],banner_x:['bannerX','number'],
+ banner_y:['bannerY','number'],banner_width:['bannerWidth','number'],
+ banner_start:['bannerStart','number'],banner_end:['bannerEnd','number'],
+ circle_x:['circleX','number'],circle_y:['circleY','number'],circle_size:['circleSize','number'],
+ smooth:['smooth','string'],fps:['fps','number'],bitrate_mbps:['bitrate','number'],
+ contrast:['contrast','number'],saturation:['saturation','number'],
+ denoise:['denoise','checked'],loudness:['loudness','checked'],
+ caption_font_size:['captionSize','number'],caption_y:['captionY','number'],
+ caption_color:['captionColor','string']
+};
+function readFields(){
+ const cfg=structuredClone(project.config);
+ for(const [key,[id,type]] of Object.entries(fields)){
+  cfg[key]=type==='checked'?$(id).checked:type==='number'?Number($(id).value):$(id).value;
+ }
+ const bg=$('backgroundName').value;
+ if(bg){const [source,...parts]=bg.split(':');cfg.background_source=source;cfg.background_name=parts.join(':');}
+ const entries=$('captionWords').value.split('\n').filter(x=>x.trim());
+ cfg.captions=entries.map((line,i)=>{
+  const parts=line.split('|');
+  if(parts.length<3)throw Error('Субтитры: строка '+(i+1)+' должна иметь формат начало | конец | слово');
+  const start=Number(parts[0]),end=Number(parts[1]),text=parts.slice(2).join('|').trim();
+  if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||!text)throw Error('Неверные таймкоды субтитра '+(i+1));
+  return {start,end,text};
+ });
+ for(const row of document.querySelectorAll('[data-clip]')){
+  const i=Number(row.dataset.clip),s=Number(row.querySelector('[data-start]').value);
+  const eRaw=row.querySelector('[data-end]').value;
+  const e=eRaw===''?null:Number(eRaw);
+  if(!Number.isFinite(s)||s<0||e!==null&&(!Number.isFinite(e)||e<=s))throw Error('Проверь границы сцены '+(i+1));
+  cfg.clips[i].start=s;cfg.clips[i].end=e;
+ }
+ return cfg;
+}
+function writeFields(){
+ if(!project)return;
+ const cfg=project.config;
+ for(const [key,[id,type]] of Object.entries(fields)){
+  if(type==='checked')$(id).checked=!!cfg[key];
+  else $(id).value=cfg[key]??'';
+ }
+ $('captionWords').value=(cfg.captions||[]).map(w=>w.start+' | '+w.end+' | '+w.text).join('\n');
+ $('captionHelp').textContent=cfg.captions?.length?
+  cfg.captions.length+' слов с ручными или AI-таймкодами.':'Субтитров ещё нет — можно распознать речь или ввести слова вручную.';
+ renderMedia();renderTimeline();drawGuides();renderExports();renderData();
+}
+async function previewFirstScene(){
+ if(!project)return;
+ const btn=document.querySelector('button[onclick="previewFirstScene()"]');
+ if(btn?.disabled)return;
+ if(btn)btn.disabled=true;
+ try{
+  await saveProject();
+  $('previewStatus').textContent='Создаю настоящий MP4 первых секунд первой сцены…';
+  const result=await request('/projects/'+project.id+'/preview',{method:'POST'});
+  $('previewVideo').src=result.url+'?v='+Date.now();
+  $('previewVideo').hidden=false;
+  $('previewStatus').textContent='Готово: '+Number(result.duration).toFixed(2)+' сек · первый фрагмент (FFmpeg-композит)';
+  alertStatus('Предпросмотр готов. Проверь звук, текст, положение круга и баннера.');
+ }catch(err){
+  $('previewStatus').textContent='Ошибка предпросмотра: '+err.message;
+  alertStatus('Предпросмотр: '+err.message,true);
+ }finally{if(btn)btn.disabled=false}
+}
+async function saveProject(){
+ if(!project)throw Error('Нет проекта');
+ const cfg=readFields();
+ const result=await request('/projects/'+project.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+ project=result;alertStatus('Проект сохранён: '+project.id.slice(0,8));drawGuides();
+ $('previewVideo').hidden=true;$('previewStatus').textContent='После изменений обнови предпросмотр.';
+ return result;
+}
+function renderMedia(){
+ $('mediaItems').innerHTML=project.config.clips.length?project.config.clips.map((c,i)=>
+  '<div class="media-item row"><video controls preload="metadata" src="'+API+'/media/'+safe(c.media_id)+'"></video>'+
+  '<div class="media-info"><b>Кружок '+(i+1)+'</b><br><small>ID: '+safe(c.media_id.slice(0,12))+'</small></div>'+
+  '<button onclick="moveClip('+i+',-1)">↑</button><button onclick="moveClip('+i+',1)">↓</button>'+
+  '<button onclick="removeClip('+i+')">Удалить из проекта</button></div>'
+ ).join(''):'<p class="secondary">Пока нет добавленных кружков.</p>';
+}
+function renderTimeline(){
+ $('timeline').innerHTML=project.config.clips.length?project.config.clips.map((c,i)=>
+  '<div class="media-item" data-clip="'+i+'"><b>Сцена '+(i+1)+'</b> · <small>'+safe(c.media_id.slice(0,10))+'</small>'+
+  '<div class="grid"><label>Начало (сек)<input data-start type="number" step=".01" min="0" value="'+c.start+'"></label>'+
+  '<label>Конец (сек, пусто = весь файл)<input data-end type="number" step=".01" min="0" value="'+(c.end??'')+'"></label></div></div>'
+ ).join(''):'<p class="secondary">Сначала загрузи кружки.</p>';
+}
+function drawGuides(){
+ if(!project)return;
+ const c=project.config;
+ const circle=$('circleGuide');
+ circle.style.left=(c.circle_x/1080*100)+'%';circle.style.top=(c.circle_y/1920*100)+'%';
+ circle.style.width=(c.circle_size/1080*100)+'%';
+ $('titleGuide').style.top=(c.caption_y/1920*100)+'%';
+ $('adGuide').style.left=(c.banner_x/1080*100)+'%';
+ $('adGuide').style.top=(c.banner_y/1920*100)+'%';
+ $('adGuide').style.width=(c.banner_width/1080*100)+'%';
+ $('adGuide').hidden=!c.banner_enabled;
+}
+function renderData(){
+ $('analysisJson').textContent=project.analysis&&Object.keys(project.analysis).length?
+ JSON.stringify(project.analysis,null,2):'Анализ ещё не выполнялся.';
+ $('optimizerAdvice').textContent=(project.recommendations||[]).join('\n')||'Анализ первых секунд доступен после загрузки исходников.';
+}
+function moveClip(i,d){
+ const j=i+d;if(j<0||j>=project.config.clips.length)return;
+ try{project.config=readFields()}catch(err){alertStatus(err.message,true);return;}
+ const clips=project.config.clips;[clips[i],clips[j]]=[clips[j],clips[i]];
+ renderMedia();renderTimeline();alertStatus('Порядок изменён. Сохрани проект перед экспортом.');
+}
+function removeClip(i){project.config.clips.splice(i,1);renderMedia();renderTimeline();}
+async function uploadCircles(){
+ if(!project)return;
+ const files=[...$('circleFiles').files];
+ if(!files.length)return alertStatus('Выбери видеофайлы',true);
+ try{
+  for(const file of files){
+   alertStatus('Загружаю '+file.name+'…');
+   const form=new FormData();form.append('file',file);
+   const m=await request('/media',{method:'POST',body:form});
+   project.config.clips.push({media_id:m.id,start:0,end:null});
+  }
+  await saveProject();$('circleFiles').value='';writeFields();
+ }catch(err){alertStatus('Импорт: '+err.message,true);}
+}
+async function uploadAsset(kind){
+ const file=$(kind==='banner'?'bannerFile':'backgroundFile').files[0];
+ if(!file)return alertStatus('Выбери файл '+kind,true);
+ try{
+  const data=new FormData();data.append('file',file);
+  const r=await request('/'+kind,{method:'POST',body:data});
+  if(kind==='banner'){
+   project.config.banner_file=r.name;project.config.banner_enabled=true;
+   $('bannerEnabled').checked=true;
+   alertStatus('Локальный баннер загружен: '+r.name);
+  }else{
+   project.config.background_source='local';project.config.background_name=r.name;
+   await refreshCapabilities();
+   alertStatus('Новый фон готов: '+r.name);
+  }
+  await saveProject();writeFields();
+ }catch(err){alertStatus('Загрузка: '+err.message,true);}
+}
+async function refreshCapabilities(){
+ cap=await request('/capabilities');
+ const list=[];
+ for(const bg of cap.backgrounds)list.push({value:'studio:'+bg.name,label:'Telegram Studio / '+bg.name});
+ for(const bg of cap.local_backgrounds)list.push({value:'local:'+bg.name,label:'Viral Pro / '+bg.name});
+ $('backgroundName').innerHTML='<option value="">Выберите фон...</option>'+list.map(bg=>
+  '<option value="'+safe(bg.value)+'">'+safe(bg.label)+'</option>').join('');
+ if(project){
+  $('backgroundName').value=project.config.background_name?
+   project.config.background_source+':'+project.config.background_name:'';
+ }
+ $('smoothStatus').textContent=
+  'FFmpeg: '+(cap.ffmpeg?'доступен':'НЕТ')+' · Optical Flow: '+(cap.optical_flow?'доступен':'НЕТ')+
+  ' · Whisper: '+(cap.whisper?'установлен':'не установлен')+' · RIFE: не установлен.';
+ $('bannerNotice').textContent=cap.banner_available?
+  'Доступен баннер Telegram Studio: если свой не выбран, используем сохранённый там.':
+  'Общий баннер Telegram Studio не загружен. Можно загрузить собственный баннер Viral Pro.';
+}
+function renderExports(){
+ $('exportsGrid').innerHTML='';
+ for(const variant of ['A','B','C']){
+  const v=(project.exports||[]).filter(x=>x.variant===variant).at(-1);
+  const div=document.createElement('div');div.className='card export-card dim';
+  const title=document.createElement('h3');title.textContent='Вариант '+variant;div.append(title);
+  if(v){
+   const video=document.createElement('video');video.className='previewvideo';
+   video.controls=true;video.preload='metadata';
+   video.src=API+'/projects/'+project.id+'/export/'+v.id;div.append(video);
+   const note=document.createElement('p');note.textContent=v.changes+' · '+v.duration.toFixed(1)+' сек';div.append(note);
+   const link=document.createElement('a');link.href=video.src+'?download=true';
+   link.textContent='Скачать MP4';div.append(link);
+   const queueBtn=document.createElement('button');
+   queueBtn.textContent='В папку PostingTTII';
+   queueBtn.style.cssText='display:block;margin-top:10px';
+   queueBtn.onclick=()=>copyToInbox(v.id,variant);
+   div.append(queueBtn);
+   const id=document.createElement('p');id.textContent='Export ID: '+v.id.slice(0,12)+' · SHA-256: '+v.sha256.slice(0,16)+'…';div.append(id);
+  }else{
+   const note=document.createElement('p');note.textContent='Нет готового MP4';div.append(note);
+  }
+  $('exportsGrid').append(div);
+ }
+}
+async function refreshProjects(selectId){
+ const list=await request('/projects');
+ $('projects').innerHTML=list.map(p=>'<option value="'+p.id+'">'+p.id.slice(0,10)+' · '+p.exports+' экспортов</option>').join('');
+ if(selectId)$('projects').value=selectId;
+}
+async function selectProject(id){
+ project=await request('/projects/'+id);
+ $('previewVideo').removeAttribute('src');$('previewVideo').load();
+ $('previewVideo').hidden=true;$('previewStatus').textContent='Предпросмотр ещё не создан.';
+ localStorage.setItem('viral_pro_last_project',id);
+ await refreshCapabilities();writeFields();
+ alertStatus('Проект '+id.slice(0,8)+' открыт');
+ await pollJob();
+}
+async function createProject(){
+ try{project=await request('/projects',{method:'POST'});await refreshProjects(project.id);await selectProject(project.id);}
+ catch(err){alertStatus(err.message,true);}
+}
+async function analyze(){
+ try{
+  await saveProject();alertStatus('Анализирую реальное видео (кадры, звук, паузы)…');
+  const result=await request('/projects/'+project.id+'/analyze',{method:'POST'});
+  project.analysis=result.analysis;project.recommendations=result.recommendations;
+  renderData();alertStatus('Анализ сохранён');
+ }catch(err){alertStatus('Анализ: '+err.message,true);}
+}
+async function duplicates(){
+ try{
+  await saveProject();const r=await request('/projects/'+project.id+'/duplicates');
+  $('duplicatesJson').textContent=JSON.stringify(r,null,2);
+  alertStatus('Проверка экспортов завершена');
+ }catch(err){alertStatus('Отпечатки: '+err.message,true);}
+}
+async function transcribe(){
+ try{
+  await saveProject();alertStatus('Распознаю речь по слову… Это может занять время на CPU');
+  const r=await request('/projects/'+project.id+'/transcribe',{method:'POST'});
+  project.config.captions=r.words;writeFields();
+  alertStatus('AI-черновик субтитров готов. Проверь каждое слово.');
+ }catch(err){alertStatus('AI Captions: '+err.message,true);}
+}
+async function autoEdit(){
+ try{
+  await saveProject();alertStatus('Ищу паузы на границах клипов…');
+  const r=await request('/projects/'+project.id+'/auto-edit',{method:'POST'});
+  proposal=r.proposals;
+  $('autoEditBox').textContent='';
+  if(!proposal.length){$('autoEditBox').textContent='Длинных крайних пауз не найдено. Сохраняем исходный смысл.';alertStatus('Нет предложенных сокращений');return}
+  const text=document.createElement('pre');text.textContent=JSON.stringify(proposal,null,2);
+  $('autoEditBox').append(text);
+  const apply=document.createElement('button');apply.textContent='Применить предложения к таймлайну';
+  apply.onclick=applyProposal;$('autoEditBox').append(apply);
+  alertStatus('Есть '+proposal.length+' предложений. Они не применены без подтверждения.');
+ }catch(err){alertStatus('Автомонтаж: '+err.message,true);}
+}
+async function applyProposal(){
+ if(!proposal||!confirm('Применить сокращение крайних пауз? Исходники сохраняются; границы можно вернуть вручную.'))return;
+ for(const p of proposal){
+  const i=project.config.clips.findIndex(x=>x.media_id===p.media_id);
+  if(i>=0)project.config.clips[i]=p.suggested;
+ }
+ // Re-render the timeline first: saveProject reads inputs on screen.
+ renderTimeline();
+ try{await saveProject();writeFields();alertStatus('Предложения применены, исходные файлы сохранены');}
+ catch(err){alertStatus('Автомонтаж: '+err.message,true);}
+}
+async function copyToInbox(exportId,variant){
+ if(!project)return;
+ if(!confirm('Скопировать вариант '+variant+' в videos/inbox для дальнейшей публикации?'))return;
+ try{
+  const result=await request('/projects/'+project.id+'/export/'+exportId+'/inbox',{method:'POST'});
+  alertStatus('Готово: '+result.filename+' в основной папке PostingTTII');
+ }catch(err){alertStatus('Копирование: '+err.message,true);}
+}
+async function saveStats(){
+ if(!project)return;
+ const obj={variant:$('statVariant').value};
+ for(const key of ['views','follower_reach','nonfollower_reach','average_watch_seconds','completion_rate','likes','sends','saves']){
+  obj[key]=$(key).value===''?null:Number($(key).value);
+ }
+ try{const r=await request('/projects/'+project.id+'/metrics',{
+  method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)});
+  project.metrics=r.metrics;alertStatus('Метрики сохранены для варианта '+obj.variant);
+ }catch(err){alertStatus('Метрики: '+err.message,true);}
+}
+async function oneClick(){
+ try{
+  await saveProject();
+  if(cap?.whisper&&!project.config.captions.length){
+   alertStatus('Генерирую AI-субтитры. Перед итоговым экспортом проверь распознанный текст.');
+   try{const tr=await request('/projects/'+project.id+'/transcribe',{method:'POST'});
+     project.config.captions=tr.words;writeFields();
+   }catch(e){alertStatus('AI-субтитры не созданы: '+e.message+'; рендер без них',true);}
+  }
+  if(!project.analysis?.sources?.length){
+   try{const an=await request('/projects/'+project.id+'/analyze',{method:'POST'});
+     project.analysis=an.analysis;project.recommendations=an.recommendations;
+   }catch(e){alertStatus('Анализ недоступен: '+e.message,true);}
+  }
+  const r=await request('/projects/'+project.id+'/render',{method:'POST'});
+  $('jobStage').textContent='Рендер поставлен в очередь…';
+  $('cancelBtn').disabled=false;switchTab('export');
+  alertStatus('Рендер A/B/C запущен: '+r.id.slice(0,8));
+  if(!pollHandle)pollHandle=setInterval(pollJob,1700);
+ }catch(err){alertStatus('Экспорт: '+err.message,true);}
+}
+async function pollJob(){
+ if(!project)return;
+ try{
+  const j=await request('/projects/'+project.id+'/job');
+  $('jobStage').textContent=(j.stage||j.status)+(j.error?' · '+j.error:'')+
+    (j.notes?.length?' · '+j.notes.join('; '):'');
+  $('jobProgress').value=j.progress||0;
+  $('cancelBtn').disabled=!['running','queued'].includes(j.status);
+  if(['completed','cancelled','error'].includes(j.status)){
+   if(pollHandle){clearInterval(pollHandle);pollHandle=null}
+   project=await request('/projects/'+project.id);renderExports();
+   if(j.status==='error')alertStatus('Ошибка FFmpeg: '+j.error,true);
+   else alertStatus('Экспорт: '+j.status+'. Уже готовые файлы сохранены.');
+  }
+ }catch(err){alertStatus('Очередь: '+err.message,true);}
+}
+async function cancelJob(){
+ if(!project)return;
+ try{await request('/projects/'+project.id+'/cancel',{method:'POST'});alertStatus('Отмена запрошена. Ожидаем остановки FFmpeg.')}
+ catch(err){alertStatus(err.message,true)}
+}
+function switchTab(name){
+ for(const button of document.querySelectorAll('[data-tab]')){
+  button.classList.toggle('active',button.dataset.tab===name);
+ }
+ for(const section of document.querySelectorAll('section[id^="pane-"]')){
+  section.classList.toggle('active',section.id==='pane-'+name);
+ }
+}
+for(const btn of document.querySelectorAll('[data-tab]'))btn.onclick=()=>switchTab(btn.dataset.tab);
+$('projects').onchange=e=>selectProject(e.target.value);
+for(const id of ['circleX','circleY','circleSize','captionY','bannerX','bannerY','bannerWidth','bannerEnabled']){
+ $(id).addEventListener('input',()=>{if(project){try{project.config=readFields();drawGuides()}catch{}}});
+}
+(async()=>{
+ try{
+  const list=await request('/projects');
+  if(!list.length){await createProject();return}
+  const last=localStorage.getItem('viral_pro_last_project');
+  await refreshProjects(last&&list.some(p=>p.id===last)?last:list[0].id);
+  await selectProject($('projects').value);
+ }catch(err){alertStatus('Не удалось загрузить Viral Pro: '+err.message,true)}
+})();
+</script></body></html>
