@@ -38,6 +38,12 @@ jobs:
       - name: Run unit tests
         shell: pwsh
         run: python -m unittest discover -s tests -p "test_viral_reels_pro.py" -v
+      - name: Check existing Telegram circle templates
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_circle*.py" -v
+      - name: Check MP4 metadata export regression
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_render_clean_mp4_metadata.py" -v
       - name: Run real FFmpeg render integration test
         shell: pwsh
         run: |
