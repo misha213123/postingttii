@@ -413,6 +413,46 @@ def update_project(project_id: str, body: Config, request: Request):
     return p
 
 
+def _black_frames(path: Path) -> list[dict]:
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-v", "info", "-t", "3", "-i", str(path),
+             "-vf", "blackdetect=d=0.2:pix_th=0.08", "-an",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=40,
+        )
+        return [
+            {"start": float(start), "end": float(end)}
+            for start, end in re.findall(
+                r"black_start:([\d.]+)\s+black_end:([\d.]+)", result.stderr
+            )
+        ][:15]
+    except Exception:
+        return []
+
+
+def _first_three_seconds(path: Path, pauses: list[dict], info: dict) -> dict:
+    length = min(3.0, info["duration"])
+    stamps = [0.15, min(.85, max(.1, length - .1)),
+              min(2.2, max(.1, length - .1))]
+    hashes = [_frame_hash(path, t) for t in stamps]
+    movement = [
+        (int(a, 16) ^ int(b, 16)).bit_count()
+        for a, b in zip(hashes, hashes[1:]) if a and b
+    ]
+    start_silence = any(
+        s["start"] <= .15 and s["end"] >= .5 for s in pauses
+    )
+    return {
+        "duration_analyzed": length,
+        "possible_static_start": bool(movement and max(movement) <= 3),
+        "starting_silence": start_silence,
+        "black_intervals": _black_frames(path),
+        "frame_change_scores": movement,
+        "note": "Оценка первых секунд по кадрам и звуку; не распознаёт лица или смысл",
+    }
+
+
 def _silences(path: Path, *, threshold: str = "-34dB") -> list[dict]:
     try:
         result = subprocess.run(
@@ -444,6 +484,20 @@ async def analyze(project_id: str, request: Request):
             asyncio.to_thread(_silences, path),
         )
         fingerprints.append({"media_id": clip.media_id, **fp})
+        intro = await asyncio.to_thread(
+            _first_three_seconds, path, silences, _probe(path),
+        )
+        if intro["starting_silence"]:
+            findings.append({"clip": i, "kind": "intro_silence",
+                             "message": "В начале кружка есть заметная тишина."})
+        if intro["black_intervals"]:
+            findings.append({"clip": i, "kind": "black_frame",
+                             "message": "В первые 3 секунды есть тёмные кадры.",
+                             "intervals": intro["black_intervals"]})
+        if intro["possible_static_start"]:
+            findings.append({"clip": i, "kind": "static_intro",
+                             "message": "Первые кадры мало меняются: проверь динамику начала."})
+        fingerprints[-1]["intro_quality"] = intro
         if silences:
             findings.append({"clip": i, "kind": "silence",
                              "message": f"Найдено {len(silences)} пауз речи.",
@@ -451,6 +505,16 @@ async def analyze(project_id: str, request: Request):
         if fp["fps"] < 24:
             findings.append({"clip": i, "kind": "motion",
                              "message": "Низкий FPS: AUTO рассмотрит интерполяцию."})
+    if config.banner_enabled and (
+        config.banner_x < config.circle_x + config.circle_size and
+        config.banner_x + config.banner_width > config.circle_x and
+        config.banner_y < config.circle_y + config.circle_size and
+        config.banner_y + 200 > config.circle_y
+    ):
+        findings.append({
+            "kind": "possible_banner_overlap",
+            "message": "Баннер потенциально перекрывает кружок: проверь в готовом MP4."
+        })
     p["analysis"] = {"sources": fingerprints,
                      "findings": findings,
                      "created_at": datetime.now(timezone.utc).isoformat()}
