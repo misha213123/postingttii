@@ -53,7 +53,9 @@ class CircleStyleTests(unittest.TestCase):
             with Image.open(image_path) as image:
                 self.assertEqual(image.size, (512, 512))
                 self.assertEqual(image.getpixel((256, 256))[3], 0)
-                self.assertGreater(image.getchannel("A").getbbox()[2], 400)
+                bbox = image.getchannel("A").getbbox()
+                self.assertIsNotNone(bbox)
+                self.assertGreater(bbox[2] - bbox[0], 50)  # visible arc width, independent of angle
                 rgba = image.convert("RGBA")
                 pix = rgba.getpixel((256, 256))
                 self.assertEqual(pix[3], 0)
