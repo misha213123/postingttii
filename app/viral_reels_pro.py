@@ -802,24 +802,70 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
         offset += length
     if job.get("cancel"):
         raise asyncio.CancelledError()
-    concat = work / f"{variant}_list.txt"
-    concat.write_text("".join(f"file '{str(s).replace(chr(92), '/')}'\n" for s in segs),
-                      encoding="utf-8")
     outdir = EXPORTS / project["id"]
     outdir.mkdir(exist_ok=True)
     export_id = uuid.uuid4().hex
     final = outdir / f"{export_id}_{variant}.mp4"
-    job["stage"] = f"{variant}: склеиваю сцены и проверяю экспорт"
-    await _ffmpeg(job, ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                        "-f", "concat", "-safe", "0", "-i", str(concat),
-                        "-c", "copy", "-movflags", "+faststart", str(final)],
-                  final, sum(x[3] for x in clips),
+    job["stage"] = f"{variant}: переходы между сценами и итоговый MP4"
+    lengths = [_probe(seg)["duration"] for seg in segs]
+    transition = (min({"A": .28, "B": .13, "C": .08}[variant],
+                      min(lengths) * .25)
+                  if len(segs) > 1 and "xfade" in _available_filters() else 0)
+    if transition and len(segs) > 1:
+        cmd = ["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-y"]
+        for seg in segs:
+            cmd += ["-i", str(seg)]
+        graph = []
+        for i in range(len(segs)):
+            graph += [f"[{i}:v]settb=AVTB,setpts=PTS-STARTPTS[v{i}]",
+                      f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]"]
+        video, audio = "v0", "a0"
+        total_time = lengths[0]
+        for i in range(1, len(segs)):
+            output_v, output_a = f"vx{i}", f"ax{i}"
+            graph.append(
+                f"[{video}][v{i}]xfade=transition=fade:"
+                f"duration={transition:.3f}:offset={total_time-transition:.3f}"
+                f"[{output_v}]"
+            )
+            graph.append(
+                f"[{audio}][a{i}]acrossfade=d={transition:.3f}:c1=tri:c2=tri"
+                f"[{output_a}]"
+            )
+            video, audio = output_v, output_a
+            total_time += lengths[i] - transition
+        graph += [f"[{video}]format=yuv420p[v]", f"[{audio}]anull[a]"]
+        cmd += [
+            "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
+            "-c:v", "libx264", "-preset", "medium",
+            "-b:v", f"{config.bitrate_mbps}M",
+            "-maxrate", f"{config.bitrate_mbps + 2}M",
+            "-bufsize", f"{(config.bitrate_mbps + 2)*2}M",
+            "-pix_fmt", "yuv420p", "-r", str(config.fps),
+            "-colorspace", "bt709", "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
+            "-movflags", "+faststart", str(final),
+        ]
+    else:
+        if len(segs) > 1:
+            job["notes"].append("FFmpeg без xfade: соединяю сцены без плавного перехода.")
+        concat = work / f"{variant}_list.txt"
+        concat.write_text(
+            "".join(f"file '{str(s).replace(chr(92), '/')}'\n" for s in segs),
+            encoding="utf-8",
+        )
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-f", "concat", "-safe", "0", "-i", str(concat),
+               "-c", "copy", "-movflags", "+faststart", str(final)]
+    await _ffmpeg(job, cmd, final, sum(lengths),
                   position * steps_per_variant + len(clips), steps_total, cwd=work)
+    expected_duration = sum(lengths) - transition * (len(segs) - 1)
     info = _probe(final)
     if info["width"] != 1080 or info["height"] != 1920:
         final.unlink(missing_ok=True)
         raise RuntimeError("Контроль 9:16: экспорт имеет неверные размеры")
-    if abs(info["duration"] - sum(x[3] for x in clips)) > 1.1:
+    if abs(info["duration"] - expected_duration) > 1.1:
         final.unlink(missing_ok=True)
         raise RuntimeError("Контроль экспорта: рассинхронизация общей длительности")
     fp = fingerprint(final)
@@ -833,7 +879,8 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
             if x.get("media_id") in {c.media_id for c in config.clips}
         ],
         "file": final.name, "settings": config.model_dump(),
-        "duration": info["duration"], "width": info["width"],
+        "duration": info["duration"], "transition_seconds": round(transition, 3),
+        "width": info["width"],
         "height": info["height"], "fps": info["fps"],
         "changes": (
             "A: оригинальный порядок, плавная обработка" if variant == "A" else
