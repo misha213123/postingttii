@@ -1,0 +1,55 @@
+name: Viral Pro Mobile Cloud - Docker render smoke
+
+on:
+  push:
+    branches:
+      - feature/viral-pro-mobile-cloud-20261030
+  workflow_dispatch:
+
+jobs:
+  render-mobile-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build mobile cloud image
+        run: docker build -f cloud_render/Dockerfile -t viral-pro-mobile .
+      - name: Start private render service
+        run: |
+          docker run -d --name viral-pro-mobile -p 10000:10000 -e CLOUD_RENDER_PASSCODE=test-only-cloud-passcode viral-pro-mobile
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:10000/healthz; then exit 0; fi
+            sleep 2
+          done
+          docker logs viral-pro-mobile
+          exit 1
+      - name: Render an example MP4 using mobile upload
+        run: |
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=240x240:rate=24:duration=1.3 -c:v libx264 -preset ultrafast -pix_fmt yuv420p sample.mp4
+          curl -fsS -c cookies.txt -d "passcode=test-only-cloud-passcode" -X POST http://127.0.0.1:10000/login -o /dev/null
+          curl -fsS -b cookies.txt -F "video=@sample.mp4" -F "seconds=6" http://127.0.0.1:10000/api/render > job.json
+          cat job.json
+          done_ok=no
+          for i in $(seq 1 180); do
+            curl -fsS -b cookies.txt http://127.0.0.1:10000/api/status > status.json
+            state=$(python -c 'import json;print(json.load(open("status.json"))["status"])')
+            if [ "$state" = "completed" ]; then done_ok=yes; break; fi
+            if [ "$state" = "error" ]; then cat status.json; docker logs --tail 80 viral-pro-mobile; exit 1; fi
+            sleep 2
+          done
+          test "$done_ok" = "yes" || { cat status.json; docker logs --tail 80 viral-pro-mobile; exit 1; }
+          job_id=$(python -c 'import json;print(json.load(open("job.json"))["id"])')
+          mkdir -p demo-output
+          curl -fsS -b cookies.txt "http://127.0.0.1:10000/download?id=$job_id" -o demo-output/viral-reel-cloud-demo.mp4
+          ffprobe -v error -show_entries stream=width,height,codec_name -show_entries format=duration -of json demo-output/viral-reel-cloud-demo.mp4
+          test $(stat -c%s demo-output/viral-reel-cloud-demo.mp4) -gt 1000
+      - name: Collect service logs on failure
+        if: failure()
+        run: docker logs --tail 180 viral-pro-mobile || true
+      - name: Store phone-downloadable example
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viral-reel-cloud-demo
+          path: demo-output/viral-reel-cloud-demo.mp4
+          retention-days: 7
