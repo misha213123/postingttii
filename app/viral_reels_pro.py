@@ -914,9 +914,16 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
     if info["width"] != 1080 or info["height"] != 1920:
         final.unlink(missing_ok=True)
         raise RuntimeError("Контроль 9:16: экспорт имеет неверные размеры")
-    if abs(info["duration"] - expected_duration) > 1.1:
+    duration_tolerance = min(.75, max(.18, expected_duration * .03))
+    if abs(info["duration"] - expected_duration) > duration_tolerance:
         final.unlink(missing_ok=True)
         raise RuntimeError("Контроль экспорта: рассинхронизация общей длительности")
+    if not info["audio"]:
+        final.unlink(missing_ok=True)
+        raise RuntimeError("Контроль экспорта: отсутствует звуковая дорожка")
+    if abs(info["fps"] - config.fps) > 1:
+        final.unlink(missing_ok=True)
+        raise RuntimeError("Контроль экспорта: неверная частота кадров")
     fp = fingerprint(final)
     return {
         "id": export_id, "variant": variant, "template": "viral_reels_pro_v3",
