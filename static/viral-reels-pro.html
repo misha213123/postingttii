@@ -424,8 +424,8 @@ async function autoEdit(){
 async function applyProposal(){
  if(!proposal||!confirm('Применить сокращение крайних пауз? Исходники сохраняются; границы можно вернуть вручную.'))return;
  for(const p of proposal){
-  const i=project.config.clips.findIndex(x=>x.media_id===p.media_id);
-  if(i>=0)project.config.clips[i]=p.suggested;
+  const i=Number.isInteger(p.clip_index)?p.clip_index:project.config.clips.findIndex(x=>x.media_id===p.media_id);
+  if(i>=0&&i<project.config.clips.length&&project.config.clips[i].media_id===p.media_id)project.config.clips[i]=p.suggested;
  }
  // Re-render the timeline first: saveProject reads inputs on screen.
  renderTimeline();
