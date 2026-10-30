@@ -1200,14 +1200,14 @@ async def auto_edit(project_id: str, request: Request):
     p = _project(project_id)
     config = Config.model_validate(p["config"])
     suggestions = []
-    for clip in config.clips:
+    for clip_index, clip in enumerate(config.clips):
         path = _source(clip.media_id)
         pauses = await asyncio.to_thread(_silences, path)
         info = _probe(path)
         beginning, ending = _segment_bounds(clip, info, "B", pauses)
         if beginning > clip.start + .05 or ending < (clip.end or info["duration"]) - .05:
             suggestions.append({
-                "media_id": clip.media_id,
+                "media_id": clip.media_id, "clip_index": clip_index,
                 "original": clip.model_dump(),
                 "suggested": {"media_id": clip.media_id, "start": beginning, "end": ending},
                 "reason": "Паузы в начале/конце, можно сократить после проверки смысла",
