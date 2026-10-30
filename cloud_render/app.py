@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from PIL import Image
+from PIL import Image, ImageDraw
 from app import viral_reels_pro as pro
 
 
@@ -119,7 +119,7 @@ video{width:100%;max-height:450px;background:#000;border-radius:12px}
 <select name="seconds"><option value="6">Первые 6 секунд — быстрый тест</option>
 <option value="15" selected>Первые 15 секунд</option><option value="30">Первые 30 секунд</option></select>
 <button id="submit">▶ Запустить рендер</button></form>
-<small>Если видео короче выбранной длительности, обработается целиком. Фон по умолчанию — тёмный градиент. Используется круглая маска, 1080×1920, 30 FPS, AAC.</small>
+<small>Если видео короче выбранной длительности, обработается целиком. Фон по умолчанию — тёмный градиент. Используется круглая маска, 540×960, 24 FPS, AAC (экономный режим).</small>
 </div>
 <div class="card"><h2>2. Результат</h2>
 <p id="status">Проверка статуса...</p>
@@ -146,7 +146,7 @@ async function refresh(){
    document.getElementById('player').src='/download?view=1&id='+encodeURIComponent(data.id);
    document.getElementById('download').href='/download?id='+encodeURIComponent(data.id);
   }
- }catch(err){statusLine.textContent='Статус: '+err.message}
+ }catch(err){statusLine.textContent='Связь с Render прервана. Обнови страницу; если задание исчезло, запусти короткий 6-секундный рендер.'}
 }
 form.addEventListener('submit',async ev=>{
  ev.preventDefault();button.disabled=true;statusLine.textContent='Отправляю видео с телефона...';
@@ -210,28 +210,89 @@ async def _read_upload(upload: UploadFile, dest: Path, max_bytes: int):
         await upload.close()
 
 
+async def _render_mobile(job: dict, source: Path, background: Path, seconds: float) -> Path:
+    """Lightweight circle and background compositor for Render free (512 MB).
+
+    Avoid geq on full-HD frames, zoompan and multiple FFmpeg filter threads.
+    A small static alpha mask is reused, and the original audio is kept.
+    """
+    width, height, size, fps = 540, 960, 340, 24
+    work = pro.TMP / job["id"]
+    work.mkdir(parents=True, exist_ok=True)
+    mask_path = work / "round-mask.png"
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((1, 1, size - 2, size - 2), fill=255)
+    mask.save(mask_path)
+    output_dir = pro.EXPORTS / "mobile"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output = output_dir / (job["id"] + ".mp4")
+    info = await asyncio.to_thread(pro._probe, source)
+    filters = (
+        f"[0:v]fps={fps},scale={size}:{size}:"
+        "force_original_aspect_ratio=increase:flags=fast_bilinear,"
+        f"crop={size}:{size},setsar=1,format=yuv420p[face];"
+        "[2:v]format=gray[mask];"
+        "[face][mask]alphamerge[round];"
+        f"[1:v]scale={width}:{height}:"
+        "force_original_aspect_ratio=increase:flags=fast_bilinear,"
+        f"crop={width}:{height},setsar=1,format=yuv420p[back];"
+        "[back][round]overlay=100:152:shortest=1:format=auto,"
+        "format=yuv420p[v]"
+    )
+    cmd = [
+        "ffmpeg", "-hide_banner", "-nostats", "-loglevel", "error", "-y",
+        "-filter_threads", "1", "-filter_complex_threads", "1",
+        "-threads", "1", "-i", str(source),
+        "-loop", "1", "-framerate", str(fps), "-i", str(background),
+        "-loop", "1", "-framerate", str(fps), "-i", str(mask_path),
+    ]
+    if not info["audio"]:
+        cmd += ["-f", "lavfi", "-t", str(seconds),
+                "-i", "anullsrc=r=44100:cl=stereo"]
+    cmd += [
+        "-filter_complex", filters, "-map", "[v]",
+        "-map", "0:a:0" if info["audio"] else "3:a:0",
+        "-t", str(seconds), "-r", str(fps),
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
+        "-threads", "1", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "96k", "-ar", "44100",
+        "-movflags", "+faststart", str(output),
+    ]
+    job["stage"] = "Экономный рендер: 540×960, круг и звук"
+    try:
+        await pro._ffmpeg(job, cmd, output, seconds, 0, 1, cwd=work)
+        result = await asyncio.to_thread(pro._probe, output)
+        if (result["width"], result["height"]) != (width, height):
+            raise RuntimeError("Проверка MP4: неверное разрешение")
+        if not result["audio"] or output.stat().st_size < 1024:
+            raise RuntimeError("Проверка MP4: отсутствует звук или файл повреждён")
+        if abs(result["duration"] - seconds) > 1.0:
+            raise RuntimeError("Проверка MP4: неверная длительность")
+        return output
+    except BaseException:
+        output.unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 async def _process(job: dict, project: dict, media: Path, background: Path | None):
     try:
         async with LOCK:
             job["status"] = "running"
-            job["stage"] = "Создаю настоящий MP4 (FFmpeg)"
-            work = pro.TMP / job["id"]
-            work.mkdir(parents=True, exist_ok=True)
-            try:
-                result = await pro._render_variant(project, "A", job, work, 0)
-                output = pro.EXPORTS / project["id"] / result["file"]
-                if not output.is_file() or output.stat().st_size < 1024:
-                    raise RuntimeError("FFmpeg не создал итоговый MP4")
-                job["output"] = str(output)
-                job["status"] = "completed"
-                job["stage"] = "Готово: MP4 можно скачать на телефон"
-                job["progress"] = 100
-            finally:
-                shutil.rmtree(work, ignore_errors=True)
+            cfg = pro.Config.model_validate(project["config"])
+            seconds = cfg.clips[0].end or 6.0
+            selected_bg = pro.OWN_BACKGROUNDS / cfg.background_name
+            job["stage"] = "Готовлю экономный MP4 (меньше расход памяти)"
+            output = await _render_mobile(job, media, selected_bg, seconds)
+            job["output"] = str(output)
+            job["status"] = "completed"
+            job["stage"] = "Готово: MP4 можно скачать на телефон"
+            job["progress"] = 100
     except Exception as exc:
         job["status"] = "error"
         job["error"] = str(exc)[-700:]
-        job["stage"] = "Ошибка обработки"
+        job["stage"] = "Ошибка обработки — можно попробовать 6 секунд"
     finally:
         media.unlink(missing_ok=True)
         if background:
