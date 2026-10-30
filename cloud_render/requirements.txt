@@ -1,0 +1,7 @@
+fastapi>=0.116,<1
+uvicorn>=0.35,<1
+python-dotenv>=1.1,<2
+python-multipart>=0.0.20,<1
+pydantic>=2,<3
+Pillow>=11,<13
+cryptography>=45,<46
