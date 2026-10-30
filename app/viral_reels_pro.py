@@ -46,6 +46,13 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp"}
 def _local(request: Request):
     if not request.client or request.client.host not in ("127.0.0.1", "::1"):
         raise HTTPException(403, "Viral Pro доступен только с локального компьютера")
+    # Prevent unrelated web pages from invoking local POST/PUT endpoints.
+    origin = request.headers.get("origin")
+    if origin and origin not in (
+        "http://127.0.0.1:8765", "http://localhost:8765",
+        f"http://127.0.0.1:{settings.port}", f"http://localhost:{settings.port}",
+    ):
+        raise HTTPException(403, "Чужой сайт не может изменить проект Viral Pro")
 
 
 def _id(value: str) -> str:
@@ -406,6 +413,8 @@ def update_project(project_id: str, body: Config, request: Request):
         raise HTTPException(400, "Выбранный фон отсутствует")
     if body.banner_enabled and not _banner(body):
         raise HTTPException(400, "Выбранный рекламный баннер отсутствует")
+    if body.banner_enabled and body.banner_start >= body.banner_end:
+        raise HTTPException(400, "Укажи конец показа баннера позже начала")
     if body.circle_x + body.circle_size > 1080 or body.circle_y + body.circle_size > 1920:
         raise HTTPException(400, "Кружок выходит за пределы кадра 1080×1920")
     p["config"] = body.model_dump()
@@ -976,7 +985,8 @@ def cancel_render(project_id: str, request: Request):
 
 
 @router.get("/projects/{project_id}/export/{export_id}")
-def download_export(project_id: str, export_id: str, request: Request):
+def download_export(project_id: str, export_id: str, request: Request,
+                    download: bool = False):
     _local(request)
     p = _project(project_id)
     entry = next((x for x in p["exports"] if x["id"] == _id(export_id)), None)
@@ -985,7 +995,36 @@ def download_export(project_id: str, export_id: str, request: Request):
     path = EXPORTS / project_id / entry["file"]
     if not path.is_file():
         raise HTTPException(404, "Файл экспорта отсутствует")
-    return FileResponse(path, media_type="video/mp4", filename=path.name)
+    return FileResponse(
+        path, media_type="video/mp4", filename=path.name,
+        content_disposition_type="attachment" if download else "inline",
+    )
+
+
+@router.post("/projects/{project_id}/export/{export_id}/inbox")
+def copy_export_to_inbox(project_id: str, export_id: str, request: Request):
+    """Explicit user action: copy an already rendered variant to main queue."""
+    _local(request)
+    project = _project(project_id)
+    entry = next(
+        (e for e in project.get("exports", []) if e["id"] == _id(export_id)),
+        None,
+    )
+    if not entry:
+        raise HTTPException(404, "Экспорт не найден")
+    source = EXPORTS / project_id / entry["file"]
+    if not source.is_file():
+        raise HTTPException(404, "Исходный MP4 экспорта отсутствует")
+    dest = settings.upload_dir / f"viral_pro_{entry['variant']}_{export_id[:12]}.mp4"
+    if not dest.exists():
+        temporary = dest.with_suffix(".copying")
+        try:
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, dest)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return {"ok": True, "filename": dest.name,
+            "message": "Готовый MP4 доступен в основной папке videos/inbox"}
 
 
 def _source_reuse(project: dict) -> list[dict]:
