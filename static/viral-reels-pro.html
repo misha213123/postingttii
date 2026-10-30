@@ -290,6 +290,7 @@ async function uploadAsset(kind){
   const r=await request('/'+kind,{method:'POST',body:data});
   if(kind==='banner'){
    project.config.banner_file=r.name;project.config.banner_enabled=true;
+   $('bannerEnabled').checked=true;
    alertStatus('Локальный баннер загружен: '+r.name);
   }else{
    project.config.background_source='local';project.config.background_name=r.name;
@@ -328,8 +329,13 @@ function renderExports(){
    video.controls=true;video.preload='metadata';
    video.src=API+'/projects/'+project.id+'/export/'+v.id;div.append(video);
    const note=document.createElement('p');note.textContent=v.changes+' · '+v.duration.toFixed(1)+' сек';div.append(note);
-   const link=document.createElement('a');link.href=video.src;
-   link.textContent='Открыть / сохранить MP4';div.append(link);
+   const link=document.createElement('a');link.href=video.src+'?download=true';
+   link.textContent='Скачать MP4';div.append(link);
+   const queueBtn=document.createElement('button');
+   queueBtn.textContent='В папку PostingTTII';
+   queueBtn.style.cssText='display:block;margin-top:10px';
+   queueBtn.onclick=()=>copyToInbox(v.id,variant);
+   div.append(queueBtn);
    const id=document.createElement('p');id.textContent='Export ID: '+v.id.slice(0,12)+' · SHA-256: '+v.sha256.slice(0,16)+'…';div.append(id);
   }else{
    const note=document.createElement('p');note.textContent='Нет готового MP4';div.append(note);
@@ -397,6 +403,14 @@ async function applyProposal(){
   if(i>=0)project.config.clips[i]=p.suggested;
  }
  await saveProject();writeFields();alertStatus('Предложения применены, исходные файлы сохранены');
+}
+async function copyToInbox(exportId,variant){
+ if(!project)return;
+ if(!confirm('Скопировать вариант '+variant+' в videos/inbox для дальнейшей публикации?'))return;
+ try{
+  const result=await request('/projects/'+project.id+'/export/'+exportId+'/inbox',{method:'POST'});
+  alertStatus('Готово: '+result.filename+' в основной папке PostingTTII');
+ }catch(err){alertStatus('Копирование: '+err.message,true);}
 }
 async function saveStats(){
  if(!project)return;
