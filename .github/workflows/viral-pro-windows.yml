@@ -1,0 +1,45 @@
+name: Viral Reels Pro - Windows render tests
+
+on:
+  push:
+    branches:
+      - "feature/viral-pro-integrated-mp4-*"
+  pull_request:
+    paths:
+      - "app/viral_reels_pro.py"
+      - "static/viral-reels-pro.html"
+      - "tests/test_viral_reels_pro.py"
+      - ".github/workflows/viral-pro-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  viral-pro-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install FFmpeg
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y --no-progress
+          ffmpeg -version
+          ffprobe -version
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Check Python syntax
+        shell: pwsh
+        run: python -m compileall -q app
+      - name: Run unit tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_viral_reels_pro.py" -v
+      - name: Run real FFmpeg render integration test
+        shell: pwsh
+        run: |
+          $env:VIRAL_PRO_TEST_RENDER = "1"
+          python -m unittest discover -s tests -p "test_viral_reels_pro.py" -v
