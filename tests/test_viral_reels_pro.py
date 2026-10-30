@@ -259,7 +259,7 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
             source = media / (mid + ".mp4")
             subprocess.run([
                 "ffmpeg", "-v", "error", "-y", "-f", "lavfi",
-                "-i", "testsrc2=s=240x240:r=24:d=.8", "-c:v", "libx264",
+                "-i", "testsrc2=s=240x240:r=24:d=0.8", "-c:v", "libx264",
                 "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(source),
             ], check=True, timeout=40)
             bg = bgs / "bg.png"
