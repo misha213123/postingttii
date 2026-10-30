@@ -705,6 +705,7 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
     steps_per_variant = len(clips) + 1
     steps_total = 3 * steps_per_variant
     segs = []
+    original_offset = 0.0
     for index, (src, info, start, length) in enumerate(clips):
         if job.get("cancel"):
             raise asyncio.CancelledError()
@@ -771,11 +772,21 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
             cmd += ["-f", "lavfi", "-t", str(length), "-i", "anullsrc=r=48000:cl=stereo"]
         # Subtitles are applied as a separate filter after composition,
         # mapping the same per-project word timeline to the current clip.
-        words = [w for w in config.captions
-                 if (offset <= w.start < offset + length)]
+        selected_clip = config.clips[index]
+        original_length = (
+            (selected_clip.end or info["duration"]) - selected_clip.start
+        )
+        # Manual/AI word timestamps belong to the ORIGINAL clip sequence.
+        # When B/C remove silence, shift words by the actual trim, so captions
+        # remain aligned with the surviving audio rather than drifting.
+        caption_origin = original_offset + (start - selected_clip.start)
+        words = [
+            w for w in config.captions
+            if caption_origin <= w.start < caption_origin + length
+        ]
         if words:
             ass = work / f"sub_{variant}_{index}.ass"
-            _make_ass(words, ass, config, offset)
+            _make_ass(words, ass, config, caption_origin)
             # Relative ASS path + cwd avoids Windows drive-letter escaping.
             graph += f";[v]ass=filename={ass.name}[captioned]"
             videomap = "[captioned]"
@@ -809,6 +820,7 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
                       position * steps_per_variant + index, steps_total, cwd=work)
         segs.append(output)
         offset += length
+        original_offset += original_length
     if job.get("cancel"):
         raise asyncio.CancelledError()
     outdir = EXPORTS / project["id"]
