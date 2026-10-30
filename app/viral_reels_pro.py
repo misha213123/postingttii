@@ -764,6 +764,10 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
         "created_at": datetime.now(timezone.utc).isoformat(),
         "sha256": fp["sha256"], "fingerprint": fp,
         "sources": [x.media_id for x in config.clips],
+        "source_fingerprints": [
+            x for x in project.get("analysis", {}).get("sources", [])
+            if x.get("media_id") in {c.media_id for c in config.clips}
+        ],
         "file": final.name, "settings": config.model_dump(),
         "duration": info["duration"], "width": info["width"],
         "height": info["height"], "fps": info["fps"],
@@ -830,9 +834,13 @@ async def start_render(project_id: str, request: Request):
     if any(j["status"] in ("running", "queued") for j in JOBS.values()):
         raise HTTPException(409, "Уже идёт рендер Viral Reels Pro")
     ident = uuid.uuid4().hex
+    repeated = _source_reuse(p)
     job = {"id": ident, "project_id": project_id, "status": "queued",
            "progress": 0, "stage": "Ожидание рендера",
-           "cancel": False, "done": [], "notes": [], "error": None}
+           "cancel": False, "done": [],
+           "notes": ([f"Внимание: похожие исходники встречались в {len(repeated)} других проектах"]
+                     if repeated else []),
+           "source_matches": repeated, "error": None}
     JOBS[project_id] = job
     task = asyncio.create_task(_job_runner(project_id, job))
     JOB_TASKS[project_id] = task
@@ -869,6 +877,32 @@ def download_export(project_id: str, export_id: str, request: Request):
     return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
+def _source_reuse(project: dict) -> list[dict]:
+    """Compare imported source fingerprints against other saved projects."""
+    own_sources = project.get("analysis", {}).get("sources", [])
+    if not own_sources:
+        return []
+    found = []
+    for path in PROJECTS.glob("*.json"):
+        if path.stem == project["id"]:
+            continue
+        try:
+            other = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for source in other.get("analysis", {}).get("sources", []):
+            for ours in own_sources:
+                similarity = _similarity(ours, source)
+                if similarity["exact"] or (similarity["visual"] or 0) >= .85:
+                    found.append({
+                        "other_project": other["id"],
+                        "source_id": ours.get("media_id"),
+                        "other_source_id": source.get("media_id"),
+                        **similarity,
+                    })
+    return found[:100]
+
+
 @router.get("/projects/{project_id}/duplicates")
 def duplicates(project_id: str, request: Request):
     _local(request)
@@ -895,8 +929,14 @@ def duplicates(project_id: str, request: Request):
                                 "export_id": entry["id"], **sim,
                                 "shared_sources": bool(set(entry.get("sources", [])) &
                                        set(x.media_id for x in Config.model_validate(p["config"]).clips))})
-    return {"matches": matches[:100], "note":
-            "dHash — эвристика визуального сходства; аудио SHA — точное совпадение PCM, не смысловая идентичность"}
+    return {
+        "matches": matches[:100],
+        "source_matches": _source_reuse(p),
+        "note": (
+            "dHash — эвристика визуального сходства; аудио SHA — точное "
+            "совпадение PCM, не смысловая идентичность"
+        ),
+    }
 
 
 @router.put("/projects/{project_id}/metrics")
