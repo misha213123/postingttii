@@ -826,7 +826,7 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
             cmd += ["-i", str(seg)]
         graph = []
         for i in range(len(segs)):
-            graph += [f"[{i}:v]settb=AVTB,setpts=PTS-STARTPTS[v{i}]",
+            graph += [f"[{i}:v]fps={config.fps},settb=AVTB[v{i}]",
                       f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]"]
         video, audio = "v0", "a0"
         total_time = lengths[0]
