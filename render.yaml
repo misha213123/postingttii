@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: viral-reels-pro-mobile
+    runtime: docker
+    region: frankfurt
+    plan: free
+    branch: feature/viral-pro-mobile-cloud-20261030
+    dockerfilePath: ./cloud_render/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    envVars:
+      - key: CLOUD_RENDER_PASSCODE
+        sync: false
+      - key: DATA_DIR
+        value: /srv/data
