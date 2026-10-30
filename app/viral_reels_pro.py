@@ -33,7 +33,8 @@ OWN_BACKGROUNDS = ROOT / "backgrounds"
 OWN_BANNERS = ROOT / "banners"
 EXPORTS = ROOT / "exports"
 TMP = ROOT / "temporary"
-for d in (ROOT, PROJECTS, MEDIA, OWN_BACKGROUNDS, OWN_BANNERS, EXPORTS, TMP):
+PREVIEWS = ROOT / "previews"
+for d in (ROOT, PROJECTS, MEDIA, OWN_BACKGROUNDS, OWN_BANNERS, EXPORTS, TMP, PREVIEWS):
     d.mkdir(parents=True, exist_ok=True)
 JOBS: dict[str, dict] = {}
 JOB_TASKS: dict[str, asyncio.Task] = {}
@@ -638,15 +639,34 @@ def _ffmpeg_path(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/").replace(":", "\\\\:").replace("'", "\\'")
 
 
+def _read_ffmpeg_seconds(path: Path) -> float | None:
+    """Read actual media time from FFmpeg -progress, not elapsed wall time."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in reversed(lines):
+            if line.startswith("out_time="):
+                hh, mm, ss = line.partition("=")[2].strip().split(":")
+                value = int(hh) * 3600 + int(mm) * 60 + float(ss)
+                return value if math.isfinite(value) and value >= 0 else None
+    except (OSError, ValueError, TypeError):
+        pass
+    return None
+
+
 async def _ffmpeg(job: dict, cmd: list[str], output: Path, estimated: float,
                   index: int, total: int, cwd: Path | None = None):
+    """Render with real output-time progress; preserve FFmpeg errors for debugging."""
+    if not cmd or cmd[0] != "ffmpeg":
+        raise ValueError("Expected FFmpeg executable")
     logfile = TMP / (job["id"] + "_ffmpeg.log")
+    progress_file = TMP / (job["id"] + f"_{index:02d}_progress.txt")
+    command = [cmd[0], "-progress", str(progress_file), "-stats_period", "0.5", *cmd[1:]]
     process = None
+    succeeded = False
     try:
         with logfile.open("wb") as logs:
-            process = subprocess.Popen(cmd, stderr=logs, stdout=subprocess.DEVNULL,
+            process = subprocess.Popen(command, stderr=logs, stdout=subprocess.DEVNULL,
                                        cwd=str(cwd) if cwd else None)
-            begun = time.monotonic()
             while process.poll() is None:
                 if job.get("cancel"):
                     process.terminate()
@@ -657,14 +677,21 @@ async def _ffmpeg(job: dict, cmd: list[str], output: Path, estimated: float,
                         await asyncio.to_thread(process.wait)
                     output.unlink(missing_ok=True)
                     raise asyncio.CancelledError()
-                # Estimate only; never claim this is precise FFmpeg progress.
-                approximate = min(.95, (time.monotonic() - begun) / max(1, estimated))
-                job["progress"] = round((index + approximate) / total * 100, 1)
+                media_seconds = _read_ffmpeg_seconds(progress_file)
+                if media_seconds is not None:
+                    fraction = min(.99, media_seconds / max(.1, estimated))
+                    job["progress"] = round((index + fraction) / total * 100, 1)
                 await asyncio.sleep(.5)
+        if job.get("cancel"):
+            output.unlink(missing_ok=True)
+            raise asyncio.CancelledError()
         if process.returncode:
             error = logfile.read_text(encoding="utf-8", errors="replace")[-1800:]
             output.unlink(missing_ok=True)
+            job["error_log"] = logfile.name
             raise RuntimeError(f"FFmpeg вернул {process.returncode}: {error}")
+        succeeded = True
+        job["progress"] = round((index + 1) / total * 100, 1)
     except asyncio.CancelledError:
         if process and process.poll() is None:
             process.terminate()
@@ -676,8 +703,9 @@ async def _ffmpeg(job: dict, cmd: list[str], output: Path, estimated: float,
         output.unlink(missing_ok=True)
         raise
     finally:
-        logfile.unlink(missing_ok=True)
-
+        progress_file.unlink(missing_ok=True)
+        if succeeded:
+            logfile.unlink(missing_ok=True)
 
 async def _render_variant(project: dict, variant: str, job: dict, work: Path, position: int):
     config = Config.model_validate(project["config"])
@@ -816,7 +844,7 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
             "-movflags", "+faststart", str(output)]
         job["stage"] = f"{variant}: кружок {index + 1}/{len(clips)}"
-        await _ffmpeg(job, cmd, output, length * 2,
+        await _ffmpeg(job, cmd, output, length,
                       position * steps_per_variant + index, steps_total, cwd=work)
         segs.append(output)
         offset += length
@@ -977,6 +1005,61 @@ async def start_render(project_id: str, request: Request):
     task = asyncio.create_task(_job_runner(project_id, job))
     JOB_TASKS[project_id] = task
     return job
+
+
+@router.post("/projects/{project_id}/preview")
+async def render_preview(project_id: str, request: Request):
+    """Render an actual short sample using the exact export compositor.
+
+    The preview only includes the first selected scene. Originals and exported
+    A/B/C files stay unchanged; the sample is not listed as a published export.
+    """
+    _local(request)
+    project = _project(project_id)
+    cfg = Config.model_validate(project["config"])
+    if not cfg.clips or not _background(cfg):
+        raise HTTPException(400, "Сначала выбери исходный кружок и фон")
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        raise HTTPException(503, "Нужны FFmpeg и FFprobe")
+    if RENDER_LOCK.locked() or any(
+        j["status"] in ("running", "queued") for j in JOBS.values()
+    ):
+        raise HTTPException(409, "Сначала дождись окончания текущего рендера")
+    first = cfg.clips[0]
+    info = await asyncio.to_thread(_probe, _source(first.media_id))
+    end = min(info["duration"], first.end if first.end is not None else info["duration"],
+              first.start + 3.0)
+    if end - first.start < .25:
+        raise HTTPException(400, "Первый фрагмент слишком короткий для предпросмотра")
+    sample = cfg.model_copy(deep=True)
+    sample.clips = [Clip(media_id=first.media_id, start=first.start, end=end)]
+    scratch_id = uuid.uuid4().hex
+    scratch = {**project, "id": scratch_id, "config": sample.model_dump()}
+    work = TMP / ("preview_" + scratch_id)
+    job = {"id": scratch_id, "stage": "", "notes": [], "cancel": False, "progress": 0}
+    async with RENDER_LOCK:
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            rendered = await _render_variant(scratch, "A", job, work, 0)
+            source = EXPORTS / scratch_id / rendered["file"]
+            target = PREVIEWS / (project_id + ".mp4")
+            os.replace(source, target)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+            shutil.rmtree(EXPORTS / scratch_id, ignore_errors=True)
+    return {"ok": True, "duration": rendered["duration"],
+            "message": "Реальный предпросмотр первых трёх секунд первой сцены",
+            "url": f"/api/viral-pro/projects/{project_id}/preview"}
+
+
+@router.get("/projects/{project_id}/preview")
+def preview_video(project_id: str, request: Request):
+    _local(request)
+    _project(project_id)
+    path = PREVIEWS / (_id(project_id) + ".mp4")
+    if not path.is_file():
+        raise HTTPException(404, "Сначала создай предпросмотр")
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/projects/{project_id}/job")
