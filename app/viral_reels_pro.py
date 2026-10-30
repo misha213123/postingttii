@@ -29,9 +29,11 @@ router = APIRouter(prefix="/api/viral-pro", tags=["viral-reels-pro"])
 ROOT = settings.data_dir / "viral_reels_pro"
 PROJECTS = ROOT / "projects"
 MEDIA = ROOT / "media"
+OWN_BACKGROUNDS = ROOT / "backgrounds"
+OWN_BANNERS = ROOT / "banners"
 EXPORTS = ROOT / "exports"
 TMP = ROOT / "temporary"
-for d in (ROOT, PROJECTS, MEDIA, EXPORTS, TMP):
+for d in (ROOT, PROJECTS, MEDIA, OWN_BACKGROUNDS, OWN_BANNERS, EXPORTS, TMP):
     d.mkdir(parents=True, exist_ok=True)
 JOBS: dict[str, dict] = {}
 JOB_TASKS: dict[str, asyncio.Task] = {}
@@ -181,7 +183,9 @@ class Word(BaseModel):
 class Config(BaseModel):
     clips: list[Clip] = Field(default_factory=list, max_length=20)
     background_name: str = ""
+    background_source: Literal["studio", "local"] = "studio"
     banner_enabled: bool = False
+    banner_file: str = ""
     banner_x: int = Field(default=220, ge=-1080, le=1080)
     banner_y: int = Field(default=1500, ge=-1920, le=1920)
     banner_width: int = Field(default=600, ge=80, le=1080)
@@ -216,6 +220,69 @@ class Stats(BaseModel):
     saves: int | None = Field(default=None, ge=0)
 
 
+def _background(cfg: Config) -> Path | None:
+    if not cfg.background_name:
+        return None
+    if Path(cfg.background_name).name != cfg.background_name:
+        raise ValueError("Некорректный файл фона")
+    root = OWN_BACKGROUNDS if cfg.background_source == "local" else BACKGROUNDS
+    path = root / cfg.background_name
+    return path if path.is_file() else None
+
+
+def _banner(cfg: Config) -> Path | None:
+    if not cfg.banner_enabled:
+        return None
+    if cfg.banner_file:
+        if Path(cfg.banner_file).name != cfg.banner_file:
+            raise ValueError("Некорректный файл баннера")
+        path = OWN_BANNERS / cfg.banner_file
+        return path if path.is_file() else None
+    return current_banner()
+
+
+async def _upload_asset(file: UploadFile, directory: Path, max_bytes: int) -> dict:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in MEDIA_EXT | IMAGE_EXT:
+        raise HTTPException(400, "Файл должен быть MP4, WebM, PNG, JPG или WebP")
+    name = uuid.uuid4().hex + suffix
+    dst = directory / name
+    total = 0
+    try:
+        with dst.open("wb") as stream:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(413, "Файл слишком большой")
+                stream.write(chunk)
+        if suffix in IMAGE_EXT:
+            with Image.open(dst) as im:
+                im.verify()
+            with Image.open(dst) as im:
+                if im.width < 32 or im.height < 32 or im.width > 8192 or im.height > 8192:
+                    raise HTTPException(400, "Неверные размеры изображения")
+        else:
+            await asyncio.to_thread(_probe, dst)
+        return {"name": name, "bytes": total}
+    except Exception:
+        dst.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+
+@router.post("/background")
+async def upload_background(request: Request, file: UploadFile = File(...)):
+    _local(request)
+    return await _upload_asset(file, OWN_BACKGROUNDS, 300 * 1024 * 1024)
+
+
+@router.post("/banner")
+async def upload_banner(request: Request, file: UploadFile = File(...)):
+    _local(request)
+    return await _upload_asset(file, OWN_BANNERS, 100 * 1024 * 1024)
+
+
 @router.get("/capabilities")
 def capabilities(request: Request):
     _local(request)
@@ -242,6 +309,11 @@ def capabilities(request: Request):
             if f.is_file() and f.suffix.lower() in MEDIA_EXT | IMAGE_EXT
         ],
         "banner_available": bool(current_banner()),
+        "local_backgrounds": [
+            {"name": f.name, "image": f.suffix.lower() in IMAGE_EXT}
+            for f in sorted(OWN_BACKGROUNDS.iterdir())
+            if f.is_file() and f.suffix.lower() in MEDIA_EXT | IMAGE_EXT
+        ],
         "notes": ["RIFE и GPU-интерполяция не включены: PRO использует FFmpeg minterpolate.",
                   "AI-транскрипция требует дополнительно установленного faster-whisper."]
     }
@@ -330,12 +402,10 @@ def update_project(project_id: str, body: Config, request: Request):
         d = _probe(video)["duration"]
         if clip.start >= d or (clip.end is not None and (clip.end > d + .02 or clip.end <= clip.start)):
             raise HTTPException(400, "Границы фрагмента вне длительности файла")
-    if body.background_name:
-        bg = BACKGROUNDS / Path(body.background_name).name
-        if bg.name != body.background_name or not bg.is_file():
-            raise HTTPException(400, "Выбранный фон отсутствует")
-    if body.banner_enabled and not current_banner():
-        raise HTTPException(400, "Сначала добавь баннер в Telegram Studio")
+    if body.background_name and not _background(body):
+        raise HTTPException(400, "Выбранный фон отсутствует")
+    if body.banner_enabled and not _banner(body):
+        raise HTTPException(400, "Выбранный рекламный баннер отсутствует")
     if body.circle_x + body.circle_size > 1080 or body.circle_y + body.circle_size > 1920:
         raise HTTPException(400, "Кружок выходит за пределы кадра 1080×1920")
     p["config"] = body.model_dump()
@@ -527,10 +597,10 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
     config = Config.model_validate(project["config"])
     if not config.clips:
         raise ValueError("Нет исходных кружков")
-    background = BACKGROUNDS / config.background_name if config.background_name else None
+    background = _background(config)
     if not background or not background.is_file():
         raise ValueError("Для Viral Reels Pro выбери фон из Telegram Studio")
-    banner = current_banner() if config.banner_enabled else None
+    banner = _banner(config)
     if config.banner_enabled and not banner:
         raise ValueError("Рекламный баннер не найден")
     if config.smooth == "pro" and "minterpolate" not in _available_filters():
