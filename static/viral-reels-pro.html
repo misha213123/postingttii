@@ -95,7 +95,10 @@ progress{width:100%;height:15px;accent-color:#6d8dff}
 <section id="pane-edit">
 <div class="split">
 <div class="card"><h2>Схема 9:16</h2><div class="stage"><div class="sky"></div><div class="circle" id="circleGuide"></div><div class="titles" id="titleGuide">СУБТИТРЫ</div><div class="ad" id="adGuide">БАННЕР</div></div>
-<p class="hint">Схема показывает расположение слоёв. Точный предпросмотр — после FFmpeg-рендера на вкладке «Экспорт».</p></div>
+<p class="hint">Схема показывает расположение слоёв. Кнопка ниже создаёт настоящий MP4 первых 3 секунд первой сцены с сохранённым фоном, баннером и субтитрами.</p>
+<button type="button" onclick="previewFirstScene()">▶ Создать точный предпросмотр (3 сек)</button>
+<p class="hint" id="previewStatus">Предпросмотр ещё не создан.</p>
+<video id="previewVideo" controls playsinline preload="none" hidden style="width:100%;max-width:270px;max-height:480px;border-radius:14px"></video></div>
 <div class="card"><h2>Монтаж и порядок сцен</h2>
 <p class="hint">Начало и конец каждой сцены изменяются без удаления исходного файла. Кнопка автомонтажа создаёт только предложения.</p>
 <div id="timeline"></div>
@@ -223,11 +226,30 @@ function writeFields(){
   cfg.captions.length+' слов с ручными или AI-таймкодами.':'Субтитров ещё нет — можно распознать речь или ввести слова вручную.';
  renderMedia();renderTimeline();drawGuides();renderExports();renderData();
 }
+async function previewFirstScene(){
+ if(!project)return;
+ const btn=document.querySelector('button[onclick="previewFirstScene()"]');
+ if(btn?.disabled)return;
+ if(btn)btn.disabled=true;
+ try{
+  await saveProject();
+  $('previewStatus').textContent='Создаю настоящий MP4 первых секунд первой сцены…';
+  const result=await request('/projects/'+project.id+'/preview',{method:'POST'});
+  $('previewVideo').src=result.url+'?v='+Date.now();
+  $('previewVideo').hidden=false;
+  $('previewStatus').textContent='Готово: '+Number(result.duration).toFixed(2)+' сек · первый фрагмент (FFmpeg-композит)';
+  alertStatus('Предпросмотр готов. Проверь звук, текст, положение круга и баннера.');
+ }catch(err){
+  $('previewStatus').textContent='Ошибка предпросмотра: '+err.message;
+  alertStatus('Предпросмотр: '+err.message,true);
+ }finally{if(btn)btn.disabled=false}
+}
 async function saveProject(){
  if(!project)throw Error('Нет проекта');
  const cfg=readFields();
  const result=await request('/projects/'+project.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
  project=result;alertStatus('Проект сохранён: '+project.id.slice(0,8));drawGuides();
+ $('previewVideo').hidden=true;$('previewStatus').textContent='После изменений обнови предпросмотр.';
  return result;
 }
 function renderMedia(){
@@ -351,6 +373,8 @@ async function refreshProjects(selectId){
 }
 async function selectProject(id){
  project=await request('/projects/'+id);
+ $('previewVideo').removeAttribute('src');$('previewVideo').load();
+ $('previewVideo').hidden=true;$('previewStatus').textContent='Предпросмотр ещё не создан.';
  localStorage.setItem('viral_pro_last_project',id);
  await refreshCapabilities();writeFields();
  alertStatus('Проект '+id.slice(0,8)+' открыт');
