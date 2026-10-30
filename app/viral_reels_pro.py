@@ -565,12 +565,14 @@ def _ffmpeg_path(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/").replace(":", "\\\\:").replace("'", "\\'")
 
 
-async def _ffmpeg(job: dict, cmd: list[str], output: Path, estimated: float, index: int, total: int):
+async def _ffmpeg(job: dict, cmd: list[str], output: Path, estimated: float,
+                  index: int, total: int, cwd: Path | None = None):
     logfile = TMP / (job["id"] + "_ffmpeg.log")
     process = None
     try:
         with logfile.open("wb") as logs:
-            process = subprocess.Popen(cmd, stderr=logs, stdout=subprocess.DEVNULL)
+            process = subprocess.Popen(cmd, stderr=logs, stdout=subprocess.DEVNULL,
+                                       cwd=str(cwd) if cwd else None)
             begun = time.monotonic()
             while process.poll() is None:
                 if job.get("cancel"):
@@ -701,7 +703,8 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
         if words:
             ass = work / f"sub_{variant}_{index}.ass"
             _make_ass(words, ass, config, offset)
-            graph += f";[v]ass='{_ffmpeg_path(ass)}'[captioned]"
+            # Relative ASS path + cwd avoids Windows drive-letter escaping.
+            graph += f";[v]ass=filename={ass.name}[captioned]"
             videomap = "[captioned]"
         else:
             videomap = "[v]"
@@ -730,7 +733,7 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
             "-movflags", "+faststart", str(output)]
         job["stage"] = f"{variant}: кружок {index + 1}/{len(clips)}"
         await _ffmpeg(job, cmd, output, length * 2,
-                      position * steps_per_variant + index, steps_total)
+                      position * steps_per_variant + index, steps_total, cwd=work)
         segs.append(output)
         offset += length
     if job.get("cancel"):
@@ -747,7 +750,7 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
                         "-f", "concat", "-safe", "0", "-i", str(concat),
                         "-c", "copy", "-movflags", "+faststart", str(final)],
                   final, sum(x[3] for x in clips),
-                  position * steps_per_variant + len(clips), steps_total)
+                  position * steps_per_variant + len(clips), steps_total, cwd=work)
     info = _probe(final)
     if info["width"] != 1080 or info["height"] != 1920:
         final.unlink(missing_ok=True)
