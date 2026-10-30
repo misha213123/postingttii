@@ -132,6 +132,28 @@ class CaptionTests(unittest.TestCase):
         self.assertEqual(pro._ass_timestamp(1.25), "0:00:01.25")
 
 
+class AutoEditRepeatedMediaTests(unittest.IsolatedAsyncioTestCase):
+    async def test_repeated_source_gets_distinct_scene_indices(self):
+        mid = "d" * 32
+        cfg = pro.Config(clips=[
+            pro.Clip(media_id=mid, start=0, end=3),
+            pro.Clip(media_id=mid, start=4, end=8),
+        ])
+        project = {"id": "e" * 32, "config": cfg.model_dump()}
+        pauses = [{"start": 0, "end": .9}, {"start": 4, "end": 4.9}]
+        with (
+            patch.object(pro, "_project", return_value=project),
+            patch.object(pro, "_source", return_value=Path("same.mp4")),
+            patch.object(pro, "_probe", return_value={"duration": 9}),
+            patch.object(pro, "_silences", return_value=pauses),
+        ):
+            result = await pro.auto_edit(project["id"], local("POST"))
+        self.assertFalse(result["applied"])
+        self.assertEqual([p["clip_index"] for p in result["proposals"]], [0, 1])
+        self.assertEqual([p["suggested"]["media_id"] for p in result["proposals"]],
+                         [mid, mid])
+
+
 class RenderProgressTests(unittest.TestCase):
     def test_media_time_progress_is_not_wall_clock(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -260,13 +282,16 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(pro, "TMP", temp),
                 patch.object(pro, "PROJECTS", projects),
             ):
-                variant = await pro._render_variant(p, "A", job, temp, 0)
-                output = exports / p["id"] / variant["file"]
-                self.assertTrue(output.is_file())
-                self.assertEqual(variant["width"], 1080)
-                self.assertEqual(variant["height"], 1920)
-                self.assertTrue(variant["sha256"])
-                self.assertGreater(output.stat().st_size, 1000)
+                for position, choice in enumerate("ABC"):
+                    variant = await pro._render_variant(p, choice, job, temp, position)
+                    output = exports / p["id"] / variant["file"]
+                    self.assertTrue(output.is_file())
+                    self.assertEqual(variant["variant"], choice)
+                    self.assertEqual(variant["width"], 1080)
+                    self.assertEqual(variant["height"], 1920)
+                    self.assertTrue(variant["sha256"])
+                    self.assertGreater(output.stat().st_size, 1000)
+                self.assertGreater(job["progress"], 0)
 
 
 if __name__ == "__main__":
