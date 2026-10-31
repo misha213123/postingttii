@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "feature/viral-pro-integrated-mp4-*"
+      - "feature/viral-pro-v3-*"
   pull_request:
     paths:
       - "app/viral_reels_pro.py"
@@ -35,6 +36,12 @@ jobs:
       - name: Check Python syntax
         shell: pwsh
         run: python -m compileall -q app
+      - name: Check interactive preview JavaScript syntax
+        shell: pwsh
+        run: |
+          node --check static/viral-pro-live.js
+          python -c "from pathlib import Path; import re; source=Path('static/viral-reels-pro.html').read_text(encoding='utf-8'); Path('_viral_inline.js').write_text(re.search(r'<script>(.*?)</script>',source,re.S).group(1),encoding='utf-8')"
+          node --check _viral_inline.js
       - name: Run unit tests
         shell: pwsh
         run: python -m unittest discover -s tests -p "test_viral_reels_pro.py" -v
