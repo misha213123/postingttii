@@ -238,7 +238,7 @@
       }
     }else if(drag.kind==='caption'){
       if(drag.mode==='resize'){
-        cfg.caption_font_size=Math.round(clamp(drag.size+deltaX*.45+deltaY*.4,20,90));
+        cfg.caption_font_size=Math.round(clamp(drag.size+deltaX*.45+deltaY*.4,20,160));
         updateNumber('captionSize',cfg.caption_font_size);
       }else{
         cfg.caption_x=Math.round(clamp(drag.x+deltaX,0,1080));
