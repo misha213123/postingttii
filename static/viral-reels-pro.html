@@ -58,7 +58,7 @@ progress{width:100%;height:15px;accent-color:#6d8dff}
 #liveDock .dock-title{padding-left:30px}
 #liveCanvas{user-select:none}
 #liveDock button{white-space:normal}
-#liveDock.expanded .live-body{max-width:500px;margin:auto}
+#liveDock.expanded .live-body{max-width:none;margin:auto}
 #liveCanvas{width:100%;aspect-ratio:9/16;border-radius:9px;touch-action:none;background:#14263d;display:block;border:1px solid #56769e}
 #liveDock h3{margin:2px 0 8px;font-size:13px}
 #liveDock button,#liveDock select{font-size:11px;padding:6px;margin:3px 0}
@@ -92,7 +92,7 @@ progress{width:100%;height:15px;accent-color:#6d8dff}
   <canvas id="liveCanvas" width="540" height="960" aria-label="Перетаскивай элементы и потяни за синий квадратик, чтобы изменить их размер"></canvas>
   <select id="liveScene" aria-label="Сцена для предпросмотра"></select>
   <button id="livePause" type="button">⏸ Пауза</button>
-  <p class="hint">Тяни объект — перемещение; тяни синий квадратик — изменение размера. Кружок, баннер, субтитры и фон редактируются мышью. За ↖ сверху можно растянуть само окно.</p>
+  <p class="hint">Тяни объект — перемещение; тяни синий квадратик — изменение размера. Кружок, баннер, субтитры и фон редактируются мышью. За ↖ сверху можно растянуть само окно. Надпись «СУБТИТРЫ» без распознанной речи — только подсказка для размещения, не итоговый текст.</p>
  </div>
 </aside>
 <div class="row" style="margin:8px 0 20px">
@@ -166,7 +166,7 @@ progress{width:100%;height:15px;accent-color:#6d8dff}
 <button onclick="transcribe()">Распознать речь (AI)</button>
 <label>Слова — одна строка на слово: начало | конец | текст
 <textarea id="captionWords" rows="11" placeholder="0.20 | 0.53 | Привет&#10;0.55 | 0.93 | всем"></textarea></label>
-<div class="grid"><label>Размер шрифта<input id="captionSize" type="number" min="20" max="90"></label>
+<div class="grid"><label>Размер шрифта<input id="captionSize" type="number" min="20" max="160"></label>
 <label>Центр по высоте Y<input id="captionY" type="number" min="100" max="1800"></label></div>
 <label>Положение субтитров X<input id="captionX" type="number" min="0" max="1080"></label>
 <div class="grid"><label>Шрифт
