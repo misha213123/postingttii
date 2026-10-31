@@ -208,6 +208,7 @@ class Config(BaseModel):
     circle_x: int = Field(default=90, ge=0, le=900)
     circle_y: int = Field(default=220, ge=0, le=1700)
     circle_size: int = Field(default=900, ge=240, le=1080)
+    background_zoom: float = Field(default=1.0, ge=1.0, le=2.0)
     smooth: Literal["off", "standard", "pro", "auto"] = "auto"
     fps: Literal[30, 60] = 30
     bitrate_mbps: int = Field(default=9, ge=4, le=16)
@@ -220,6 +221,7 @@ class Config(BaseModel):
     caption_template: Literal["classic", "bold", "highlight", "minimal", "box"] = "classic"
     caption_font_size: int = Field(default=48, ge=20, le=90)
     caption_y: int = Field(default=820, ge=100, le=1800)
+    caption_x: int = Field(default=540, ge=0, le=1080)
     caption_color: str = "#FFFFFF"
     mute_background: bool = True
 
@@ -620,7 +622,7 @@ def _make_ass(words: list[Word], temp: Path, config: Config, offset: float = 0):
         lines.append(
             f"Dialogue: 0,{_ass_timestamp(max(0,start))},"
             f"{_ass_timestamp(max(start + .05,end))},Viral,,0,0,0,,"
-            f"{{\\an5\\pos(540,{config.caption_y})}}{safe}\n"
+            f"{{\\an5\\pos({config.caption_x},{config.caption_y})}}{safe}\n"
         )
     temp.write_text(head + "".join(lines), encoding="utf-8-sig")
 
@@ -643,29 +645,71 @@ async def transcribe(project_id: str, request: Request):
     return {"words": result, "note": "AI-черновик: проверь текст и таймкоды вручную"}
 
 
+def _decode_clip_audio(path: Path, start: float, seconds: float):
+    """Return mono 16 kHz float32 samples without using PyAV's av.open().
+
+    Some PyAV versions reject metadata_errors when faster-whisper passes a path.
+    Whisper also accepts a NumPy waveform directly; FFmpeg normalises MOV/MP4
+    audio and trims the *selected* scene so word offsets stay meaningful.
+    """
+    import numpy as np
+    if seconds <= .01:
+        return np.empty(0, dtype=np.float32)
+    command = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
+               "-ss", str(start), "-i", str(path), "-t", str(seconds),
+               "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
+               "-c:a", "pcm_f32le", "-f", "f32le", "pipe:1"]
+    try:
+        result = subprocess.run(command, capture_output=True, check=True,
+                                timeout=max(120, int(seconds * 3)))
+    except FileNotFoundError as exc:
+        raise RuntimeError("FFmpeg не установлен — распознавание речи недоступно") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("FFmpeg слишком долго извлекал аудио") from exc
+    except subprocess.CalledProcessError as exc:
+        details = exc.stderr.decode("utf-8", errors="replace")[-450:]
+        raise RuntimeError("FFmpeg не смог прочитать звуковую дорожку: " + details) from exc
+    return np.frombuffer(result.stdout, dtype="<f4").copy()
+
+
 async def _transcribe_words(config: Config) -> list[dict]:
     from faster_whisper import WhisperModel
+
     def recognize():
         model = WhisperModel("base", device="cpu", compute_type="int8")
         words = []
         offset = 0.0
         for clip in config.clips:
             path = _source(clip.media_id)
-            segments, _ = model.transcribe(str(path), word_timestamps=True, vad_filter=True)
-            length = (clip.end if clip.end is not None else _probe(path)["duration"]) - clip.start
+            info = _probe(path)
+            length = max(0.0, min(clip.end if clip.end is not None else info["duration"],
+                                   info["duration"]) - clip.start)
+            if length <= .01:
+                continue
+            if not info["audio"]:
+                offset += length
+                continue
+            samples = _decode_clip_audio(path, clip.start, length)
+            if len(samples) < 1600:
+                offset += length
+                continue
+            # Passing a NumPy array skips faster-whisper's PyAV decode_audio()
+            # and its version-sensitive av.open(metadata_errors=...) argument.
+            segments, _ = model.transcribe(samples, word_timestamps=True, vad_filter=True)
             for segment in segments:
                 for word in segment.words or []:
-                    if word.end <= clip.start or word.start >= clip.start + length:
+                    start = max(0.0, float(word.start))
+                    end = min(length, float(word.end))
+                    if end <= start or start >= length:
                         continue
-                    words.append(Word(
-                        start=offset + max(0, word.start - clip.start),
-                        end=offset + min(length, word.end - clip.start),
-                        text=word.word.strip()))
+                    text = str(word.word).strip()
+                    if text:
+                        words.append(Word(start=offset + start,
+                                          end=offset + end, text=text))
             offset += length
         return [w.model_dump() for w in words]
-    result = await asyncio.to_thread(recognize)
-    return result
 
+    return await asyncio.to_thread(recognize)
 
 def _effective_motion(config: Config, info: dict) -> str:
     if config.smooth == "off":
@@ -817,14 +861,16 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
         if background.suffix.lower() in IMAGE_EXT:
             bgfilter = (
                 "[1:v]scale=1200:2134:flags=lanczos,"
-                f"zoompan=z='min(zoom+0.00012,1.08)':"
+                f"zoompan=z='{config.background_zoom:.3f}+min(on*0.00012,0.08)':"
                 "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                 f"d=1:s=1080x1920:fps={fps},setsar=1,"
                 f"eq=contrast={config.contrast}:saturation={config.saturation}[bg];"
             )
         else:
+            bg_width = max(1080, round(1080 * config.background_zoom / 2) * 2)
+            bg_height = max(1920, round(1920 * config.background_zoom / 2) * 2)
             bgfilter = (
-                "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:"
+                f"[1:v]scale={bg_width}:{bg_height}:force_original_aspect_ratio=increase:"
                 "flags=lanczos,crop=1080:1920,setsar=1,"
                 f"eq=contrast={config.contrast}:saturation={config.saturation},"
                 f"fps={fps}[bg];"
