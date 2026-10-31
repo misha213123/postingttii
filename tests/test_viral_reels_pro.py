@@ -411,6 +411,9 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
                 banner_chroma_similarity=.22,banner_chroma_blend=.07,
                 background_name="bg.png", background_source="local",
                 circle_size=330, circle_x=120, circle_y=300,
+                background_zoom=1.22,
+                caption_x=350, caption_y=740, caption_font_size=66,
+                captions=[pro.Word(start=.15, end=.44, text="Привет!")],
                 smooth="off", loudness=False, denoise=False,
                 bitrate_mbps=4,
             )
@@ -437,6 +440,8 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(variant["source_sha256"][0]["sha256"],
                                      pro._sha(source))
                     self.assertEqual(variant["settings"]["banner_chroma_enabled"],True)
+                    self.assertEqual(variant["settings"]["background_zoom"],1.22)
+                    self.assertEqual(variant["settings"]["caption_x"],350)
                     self.assertGreater(output.stat().st_size, 1000)
                 self.assertGreater(job["progress"], 0)
 
