@@ -12,6 +12,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,6 +21,7 @@ from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 from starlette.requests import Request
 from PIL import Image, ImageDraw
+import numpy as np
 from app import viral_reels_pro as pro
 from app import telegram_studio as old
 
@@ -142,8 +145,77 @@ class CaptionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 pro.Config(banner_chroma_color="wrong")
 
+    def test_dragged_subtitle_coordinates_are_exported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = pro.Config(caption_x=375, caption_y=660, caption_font_size=88)
+            target = Path(directory) / "dragged.ass"
+            pro._make_ass([pro.Word(start=0.2, end=0.7, text="Мой ролик")],
+                          target, config)
+            data = target.read_text(encoding="utf-8-sig")
+            self.assertIn("pos(375,660)", data)
+            self.assertIn("Arial,88", data)
+
+    def test_zoom_values_are_bounded(self):
+        self.assertEqual(pro.Config(background_zoom=1.5).background_zoom, 1.5)
+        with self.assertRaises(ValueError):
+            pro.Config(background_zoom=.5)
+        with self.assertRaises(ValueError):
+            pro.Config(background_zoom=2.1)
+
     def test_word_timestamp_conversion(self):
         self.assertEqual(pro._ass_timestamp(1.25), "0:00:01.25")
+
+
+class AudioDecodeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_transcriber_passes_numpy_to_faster_whisper_not_a_video_path(self):
+        """Regression: av.open(path, metadata_errors=...) fails on some PyAV versions."""
+        seen = []
+        class SampleWord:
+            start = .2
+            end = .5
+            word = " Привет "
+        class SampleSegment:
+            words = [SampleWord()]
+        class WhisperStub:
+            def __init__(self, *args, **kwargs):
+                pass
+            def transcribe(self, waveform, **kwargs):
+                self_type = type(waveform)
+                seen.append((self_type, kwargs.get("word_timestamps")))
+                if not isinstance(waveform, np.ndarray):
+                    raise AssertionError("Must not pass a path to PyAV")
+                return iter([SampleSegment()]), {}
+        cfg = pro.Config(clips=[
+            pro.Clip(media_id="a"*32, start=3, end=5),
+            pro.Clip(media_id="b"*32, start=1, end=3),
+        ])
+        with (
+            patch.dict(sys.modules, {"faster_whisper": types.SimpleNamespace(WhisperModel=WhisperStub)}),
+            patch.object(pro, "_source", return_value=Path("source.mp4")),
+            patch.object(pro, "_probe", return_value={"duration": 12, "audio": True}),
+            patch.object(pro, "_decode_clip_audio",
+                         return_value=np.ones(32000, dtype=np.float32)) as decode,
+        ):
+            words = await pro._transcribe_words(cfg)
+        self.assertEqual([w["text"] for w in words], ["Привет", "Привет"])
+        self.assertAlmostEqual(words[0]["start"], .2)
+        self.assertAlmostEqual(words[1]["start"], 2.2)
+        self.assertEqual([call.args[1:] for call in decode.call_args_list],
+                         [(3, 2), (1, 2)])
+        self.assertEqual(seen, [(np.ndarray, True), (np.ndarray, True)])
+
+    async def test_pcm_ffmpeg_decoder_outputs_float32(self):
+        samples = np.array([.2, -.3, 0, .8], dtype=np.float32)
+        completed = subprocess.CompletedProcess([], 0, samples.tobytes(), b"")
+        with patch.object(pro.subprocess, "run", return_value=completed) as runner:
+            result = pro._decode_clip_audio(Path("clip.mp4"), 2.0, 3.0)
+        self.assertEqual(result.dtype, np.float32)
+        np.testing.assert_array_almost_equal(result, samples)
+        command = runner.call_args.args[0]
+        self.assertIn("ffmpeg", command)
+        self.assertEqual(command[command.index("-ss") + 1], "2.0")
+        self.assertEqual(command[command.index("-t") + 1], "3.0")
+        self.assertEqual(command[command.index("-f") + 1], "f32le")
 
 
 class AutoEditRepeatedMediaTests(unittest.IsolatedAsyncioTestCase):
