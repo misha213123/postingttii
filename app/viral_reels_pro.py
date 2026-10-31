@@ -190,6 +190,8 @@ class Word(BaseModel):
 
 class Config(BaseModel):
     clips: list[Clip] = Field(default_factory=list, max_length=20)
+    auto_trim_silences: bool = True
+    auto_captions: bool = True
     background_name: str = ""
     background_source: Literal["studio", "local"] = "studio"
     banner_enabled: bool = False
@@ -520,6 +522,11 @@ async def analyze(project_id: str, request: Request):
     config = Config.model_validate(p["config"])
     if not config.clips:
         raise HTTPException(400, "Сначала загрузи кружок")
+    return await _analyze_project(p)
+
+
+async def _analyze_project(p: dict):
+    config = Config.model_validate(p["config"])
     findings = []
     fingerprints = []
     for i, clip in enumerate(config.clips):
@@ -630,6 +637,13 @@ async def transcribe(project_id: str, request: Request):
         raise HTTPException(503,
             "Установи faster-whisper для реальной транскрипции: "
             r".\.venv\Scripts\python.exe -m pip install faster-whisper") from None
+    result = await _transcribe_words(config)
+    p["config"]["captions"] = result
+    _save(p)
+    return {"words": result, "note": "AI-черновик: проверь текст и таймкоды вручную"}
+
+
+async def _transcribe_words(config: Config) -> list[dict]:
     def recognize():
         model = WhisperModel("base", device="cpu", compute_type="int8")
         words = []
@@ -649,9 +663,7 @@ async def transcribe(project_id: str, request: Request):
             offset += length
         return [w.model_dump() for w in words]
     result = await asyncio.to_thread(recognize)
-    p["config"]["captions"] = result
-    _save(p)
-    return {"words": result, "note": "AI-черновик: проверь текст и таймкоды вручную"}
+    return result
 
 
 def _effective_motion(config: Config, info: dict) -> str:
@@ -1022,7 +1034,43 @@ async def _job_runner(project_id: str, job: dict):
         try:
             p = _project(project_id)
             job["status"] = "running"
-            job["stage"] = "Начинаю подготовку реальных MP4"
+            cfg = Config.model_validate(p["config"])
+            job["stage"] = "1/4 · Безопасный автомонтаж крайних пауз"
+            if cfg.auto_trim_silences:
+                adjusted = 0
+                for index, clip in enumerate(cfg.clips):
+                    src = _source(clip.media_id)
+                    pauses = await asyncio.to_thread(_silences, src)
+                    info = await asyncio.to_thread(_probe, src)
+                    start, end = _segment_bounds(clip, info, "B", pauses)
+                    if start > clip.start + .05 or end < (clip.end or info["duration"]) - .05:
+                        cfg.clips[index] = Clip(media_id=clip.media_id, start=start, end=end)
+                        adjusted += 1
+                if adjusted:
+                    p["config"] = cfg.model_dump()
+                    _save(p)
+                    job["notes"].append(f"Автомонтаж: скорректировано сцен: {adjusted}")
+            if job.get("cancel"):
+                raise asyncio.CancelledError()
+            job["stage"] = "2/4 · AI-субтитры (только если отсутствуют)"
+            if cfg.auto_captions and not cfg.captions:
+                try:
+                    cfg.captions = [Word.model_validate(word) for word in await _transcribe_words(cfg)]
+                    p["config"] = cfg.model_dump()
+                    _save(p)
+                    job["notes"].append(f"Автоматически распознано слов: {len(cfg.captions)}")
+                except (RuntimeError, ImportError, OSError) as exc:
+                    job["notes"].append("AI-субтитры недоступны: " + str(exc)[:180])
+            if job.get("cancel"):
+                raise asyncio.CancelledError()
+            job["stage"] = "3/4 · Архив исходников и проверяемые отпечатки"
+            try:
+                await _analyze_project(p)
+            except Exception as exc:
+                job["notes"].append("Дополнительный анализ: " + str(exc)[:180])
+            if job.get("cancel"):
+                raise asyncio.CancelledError()
+            job["stage"] = "4/4 · Начинаю создание MP4 A/B/C"
             for variant in ("A", "B", "C"):
                 if job.get("cancel"):
                     raise asyncio.CancelledError()
