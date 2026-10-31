@@ -85,14 +85,14 @@ progress{width:100%;height:15px;accent-color:#6d8dff}
 <p id="status" class="secondary" aria-live="polite">Загрузка...</p>
 <aside id="liveDock" aria-label="Постоянный предпросмотр видеоролика">
  <button id="liveResizeGrip" type="button" title="Потяни влево и вверх, чтобы увеличить миниатюру" aria-label="Изменить размер окна предпросмотра">↖</button>
- <div class="row dock-title" style="justify-content:space-between"><h3>● Живой предпросмотр</h3>
+ <div class="row dock-title" id="liveDockDrag" title="Потяни заголовок, чтобы переместить миниатюру" style="justify-content:space-between;cursor:move;touch-action:none"><h3>● Живой предпросмотр</h3>
  <button id="liveExpand" type="button" title="Развернуть миниатюру">⤢</button>
  <button type="button" onclick="$('liveDock').classList.toggle('minimized')">▁ / ▢</button></div>
  <div class="live-body">
   <canvas id="liveCanvas" width="540" height="960" aria-label="Перетаскивай элементы и потяни за синий квадратик, чтобы изменить их размер"></canvas>
   <select id="liveScene" aria-label="Сцена для предпросмотра"></select>
   <button id="livePause" type="button">⏸ Пауза</button>
-  <p class="hint">Тяни объект — перемещение; тяни синий квадратик — изменение размера. Кружок, баннер, субтитры и фон редактируются мышью. За ↖ сверху можно растянуть само окно. Надпись «СУБТИТРЫ» без распознанной речи — только подсказка для размещения, не итоговый текст.</p>
+  <p class="hint">Тяни объект — перемещение; тяни синий квадратик — изменение размера. Кружок, баннер, субтитры и фон редактируются мышью. За ↖ сверху можно растянуть само окно, а за заголовок — переместить его. Надпись «СУБТИТРЫ» без распознанной речи — только подсказка для размещения, не итоговый текст.</p>
  </div>
 </aside>
 <div class="row" style="margin:8px 0 20px">
