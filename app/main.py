@@ -49,6 +49,7 @@ from app.account_creator.api.tiktok import router as account_tiktok_router
 from app.account_creator.api.instagram import router as account_instagram_router
 
 from app.telegram_studio import router as telegram_studio_router, shutdown_telegram_studio
+from app.viral_reels_pro import router as viral_pro_router, shutdown_viral_pro
 from app.instagram_studio import router as instagram_reels_router
 from app.instagram_stats import router as instagram_stats_router, periodic_refresh
 from app.video_folders import router as video_folders_router, folder_path, list_videos, video_path, account_folder
@@ -66,6 +67,7 @@ app.include_router(account_tiktok_router)
 app.include_router(account_instagram_router)
 app.include_router(autotok_router)
 app.include_router(telegram_studio_router)
+app.include_router(viral_pro_router)
 app.include_router(instagram_reels_router)
 app.include_router(instagram_stats_router)
 app.include_router(video_folders_router)
@@ -94,12 +96,22 @@ async def stop_browser_instagram():
 
 
 @app.on_event("shutdown")
+async def stop_viral_reels_pro():
+    await shutdown_viral_pro()
+
+
+@app.on_event("shutdown")
 async def stop_telegram_studio():
     await shutdown_telegram_studio()
 
 @app.get("/telegram-studio", response_class=HTMLResponse)
 async def telegram_studio_page():
     return HTMLResponse((STATIC_DIR / "telegram-studio.html").read_text(encoding="utf-8"))
+
+@app.get("/viral-reels-pro", response_class=HTMLResponse)
+async def viral_reels_pro_page():
+    return HTMLResponse((STATIC_DIR / "viral-reels-pro.html").read_text(encoding="utf-8"))
+
 
 @app.get("/instagram-browser", response_class=HTMLResponse)
 async def instagram_browser_page():

@@ -1071,6 +1071,10 @@ def render(
     cmd += [
         "-filter_complex", filter_chain,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
+        # Privacy-minded export: don't carry optional input metadata or
+        # chapters into the new MP4. This does not change content ownership.
+        "-map_metadata", "-1", "-map_metadata:s", "-1",
+        "-map_chapters", "-1",
         "-c:v", "libx264", *performance["encoder"],
         *(["-threads", str(performance["video_threads"])]
           if performance["video_threads"] is not None else []),
