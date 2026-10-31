@@ -5,6 +5,7 @@ on:
     branches:
       - "feature/viral-pro-integrated-mp4-*"
       - "feature/viral-pro-v3-*"
+      - "fix/viral-pro-whisper-canvas-*"
   pull_request:
     paths:
       - "app/viral_reels_pro.py"
