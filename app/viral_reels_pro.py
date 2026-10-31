@@ -1037,7 +1037,9 @@ async def _job_runner(project_id: str, job: dict):
             job["status"] = "running"
             cfg = Config.model_validate(p["config"])
             job["stage"] = "1/4 · Безопасный автомонтаж крайних пауз"
-            if cfg.auto_trim_silences:
+            if cfg.auto_trim_silences and cfg.captions:
+                job["notes"].append("Ручные субтитры уже размечены: обрезка не меняется, чтобы не сбить таймкоды")
+            if cfg.auto_trim_silences and not cfg.captions:
                 adjusted = 0
                 for index, clip in enumerate(cfg.clips):
                     src = _source(clip.media_id)
@@ -1060,7 +1062,7 @@ async def _job_runner(project_id: str, job: dict):
                     p["config"] = cfg.model_dump()
                     _save(p)
                     job["notes"].append(f"Автоматически распознано слов: {len(cfg.captions)}")
-                except (RuntimeError, ImportError, OSError) as exc:
+                except Exception as exc:
                     job["notes"].append("AI-субтитры недоступны: " + str(exc)[:180])
             if job.get("cancel"):
                 raise asyncio.CancelledError()
