@@ -639,7 +639,12 @@ async def transcribe(project_id: str, request: Request):
         raise HTTPException(503,
             "Установи faster-whisper для реальной транскрипции: "
             r".\.venv\Scripts\python.exe -m pip install faster-whisper") from None
-    result = await _transcribe_words(config)
+    try:
+        result = await _transcribe_words(config)
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(503, "Распознавание речи недоступно: " + str(exc)[:250]) from exc
     p["config"]["captions"] = result
     _save(p)
     return {"words": result, "note": "AI-черновик: проверь текст и таймкоды вручную"}
