@@ -18,7 +18,7 @@ from unittest.mock import patch
 from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 from starlette.requests import Request
-from PIL import Image
+from PIL import Image, ImageDraw
 from app import viral_reels_pro as pro
 from app import telegram_studio as old
 
@@ -128,6 +128,20 @@ class CaptionTests(unittest.TestCase):
             self.assertIn("pos(540,770)", content)
             self.assertIn("&H00000000", content)
 
+    def test_caption_fonts_and_presets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = pro.Config(caption_font="Impact", caption_template="highlight")
+            target = Path(folder) / "caption.ass"
+            pro._make_ass([pro.Word(start=.1,end=.3,text="Привет")], target, cfg)
+            text = target.read_text(encoding="utf-8-sig")
+            self.assertIn("Style: Viral,Impact,", text)
+            self.assertIn("37E2FF", text)
+            self.assertIn("Привет", text)
+            with self.assertRaises(ValueError):
+                pro.Config(caption_template="unknown")
+            with self.assertRaises(ValueError):
+                pro.Config(banner_chroma_color="wrong")
+
     def test_word_timestamp_conversion(self):
         self.assertEqual(pro._ass_timestamp(1.25), "0:00:01.25")
 
@@ -152,6 +166,55 @@ class AutoEditRepeatedMediaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p["clip_index"] for p in result["proposals"]], [0, 1])
         self.assertEqual([p["suggested"]["media_id"] for p in result["proposals"]],
                          [mid, mid])
+
+
+class AutomaticPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_one_click_runs_safe_steps_in_order_and_records_manifest(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            temp, exports = base / "tmp", base / "exports"
+            temp.mkdir()
+            exports.mkdir()
+            mid, pid, job_id = "a" * 32, "b" * 32, "c" * 32
+            cfg = pro.Config(clips=[pro.Clip(media_id=mid, start=0, end=2)],
+                             background_name="bg.png", background_source="local")
+            project = {"id": pid, "template": "viral_reels_pro_v3",
+                       "config": cfg.model_dump(), "exports": [], "analysis": {}}
+            job = {"id": job_id, "status": "queued", "notes": [],
+                   "cancel": False, "done": [], "progress": 0, "stage": ""}
+            events = []
+            async def mock_transcribe(config):
+                events.append("caption")
+                return [pro.Word(start=.1, end=.3, text="Привет").model_dump()]
+            async def mock_analysis(project):
+                events.append("analyze")
+            async def mock_render(project, variant, job, work, index):
+                events.append("render_" + variant)
+                (exports / pid).mkdir(exist_ok=True)
+                return {"id": ("d" if variant == "A" else
+                               "e" if variant == "B" else "f") * 32,
+                        "file": "sample.mp4", "variant": variant}
+            with (
+                patch.object(pro, "TMP", temp),
+                patch.object(pro, "EXPORTS", exports),
+                patch.object(pro, "RENDER_LOCK", asyncio.Lock()),
+                patch.object(pro, "_project", return_value=project),
+                patch.object(pro, "_source", return_value=Path("source.mp4")),
+                patch.object(pro, "_probe", return_value={"duration": 2.0}),
+                patch.object(pro, "_silences", return_value=[]),
+                patch.object(pro, "_save"),
+                patch.object(pro, "_transcribe_words", side_effect=mock_transcribe),
+                patch.object(pro, "_analyze_project", side_effect=mock_analysis),
+                patch.object(pro, "_render_variant", side_effect=mock_render),
+            ):
+                await pro._job_runner(pid, job)
+                self.assertEqual(job["status"], "completed")
+                self.assertEqual(events, ["caption", "analyze", "render_A",
+                                          "render_B", "render_C"])
+                self.assertEqual(len(project["exports"]), 3)
+                self.assertEqual(len(project["config"]["captions"]), 1)
+                for item in project["exports"]:
+                    self.assertTrue((exports / pid / (item["id"] + "_manifest.json")).is_file())
 
 
 class RenderProgressTests(unittest.TestCase):
@@ -264,8 +327,16 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
             ], check=True, timeout=40)
             bg = bgs / "bg.png"
             Image.new("RGB", (640, 1000), "#123458").save(bg)
+            banners = base / "banners"
+            banners.mkdir()
+            artwork=Image.new("RGB",(240,90),"#00FF00")
+            ImageDraw.Draw(artwork).rectangle((50,16,190,75),fill="#e22228")
+            artwork.save(banners / "ad.png")
             cfg = pro.Config(
                 clips=[pro.Clip(media_id=mid, start=0, end=.7)],
+                banner_enabled=True,banner_file="ad.png",
+                banner_chroma_enabled=True,banner_chroma_color="#00FF00",
+                banner_chroma_similarity=.22,banner_chroma_blend=.07,
                 background_name="bg.png", background_source="local",
                 circle_size=330, circle_x=120, circle_y=300,
                 smooth="off", loudness=False, denoise=False,
@@ -278,6 +349,7 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.object(pro, "MEDIA", media),
                 patch.object(pro, "OWN_BACKGROUNDS", bgs),
+                patch.object(pro, "OWN_BANNERS", banners),
                 patch.object(pro, "EXPORTS", exports),
                 patch.object(pro, "TMP", temp),
                 patch.object(pro, "PROJECTS", projects),
@@ -290,6 +362,9 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(variant["width"], 1080)
                     self.assertEqual(variant["height"], 1920)
                     self.assertTrue(variant["sha256"])
+                    self.assertEqual(variant["source_sha256"][0]["sha256"],
+                                     pro._sha(source))
+                    self.assertEqual(variant["settings"]["banner_chroma_enabled"],True)
                     self.assertGreater(output.stat().st_size, 1000)
                 self.assertGreater(job["progress"], 0)
 

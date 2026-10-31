@@ -190,6 +190,8 @@ class Word(BaseModel):
 
 class Config(BaseModel):
     clips: list[Clip] = Field(default_factory=list, max_length=20)
+    auto_trim_silences: bool = True
+    auto_captions: bool = True
     background_name: str = ""
     background_source: Literal["studio", "local"] = "studio"
     banner_enabled: bool = False
@@ -197,6 +199,10 @@ class Config(BaseModel):
     banner_x: int = Field(default=220, ge=-1080, le=1080)
     banner_y: int = Field(default=1500, ge=-1920, le=1920)
     banner_width: int = Field(default=600, ge=80, le=1080)
+    banner_chroma_enabled: bool = False
+    banner_chroma_color: str = Field(default="#00FF00", pattern=r"^#[0-9a-fA-F]{6}$")
+    banner_chroma_similarity: float = Field(default=0.22, ge=0.01, le=0.6)
+    banner_chroma_blend: float = Field(default=0.07, ge=0, le=0.35)
     banner_start: float = Field(default=0, ge=0)
     banner_end: float = Field(default=3600, gt=0)
     circle_x: int = Field(default=90, ge=0, le=900)
@@ -210,6 +216,8 @@ class Config(BaseModel):
     denoise: bool = True
     loudness: bool = True
     captions: list[Word] = Field(default_factory=list, max_length=2000)
+    caption_font: Literal["Arial", "Impact", "Verdana", "Georgia", "Trebuchet MS", "DejaVu Sans"] = "Arial"
+    caption_template: Literal["classic", "bold", "highlight", "minimal", "box"] = "classic"
     caption_font_size: int = Field(default=48, ge=20, le=90)
     caption_y: int = Field(default=820, ge=100, le=1800)
     caption_color: str = "#FFFFFF"
@@ -289,6 +297,35 @@ async def upload_background(request: Request, file: UploadFile = File(...)):
 async def upload_banner(request: Request, file: UploadFile = File(...)):
     _local(request)
     return await _upload_asset(file, OWN_BANNERS, 100 * 1024 * 1024)
+
+
+@router.get("/preview-asset/{kind}/{name}")
+def preview_asset(kind: Literal["background", "studio-background", "banner"], name: str,
+                  request: Request):
+    """Read-only approved media preview; never expose an arbitrary local file."""
+    _local(request)
+    if not name or Path(name).name != name or "/" in name or "\\" in name:
+        raise HTTPException(400, "Недопустимое имя файла")
+    if Path(name).suffix.lower() not in MEDIA_EXT | IMAGE_EXT:
+        raise HTTPException(400, "Недопустимое расширение")
+    directory = {
+        "background": OWN_BACKGROUNDS,
+        "studio-background": BACKGROUNDS,
+        "banner": OWN_BANNERS,
+    }[kind]
+    target = directory / name
+    if not target.is_file():
+        raise HTTPException(404, "Файл не найден")
+    return FileResponse(target, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/preview-studio-banner")
+def preview_studio_banner(request: Request):
+    _local(request)
+    target = current_banner()
+    if not target or not target.is_file():
+        raise HTTPException(404, "Баннер Telegram Studio не найден")
+    return FileResponse(target, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/capabilities")
@@ -485,6 +522,11 @@ async def analyze(project_id: str, request: Request):
     config = Config.model_validate(p["config"])
     if not config.clips:
         raise HTTPException(400, "Сначала загрузи кружок")
+    return await _analyze_project(p)
+
+
+async def _analyze_project(p: dict):
+    config = Config.model_validate(p["config"])
     findings = []
     fingerprints = []
     for i, clip in enumerate(config.clips):
@@ -542,21 +584,33 @@ def _ass_timestamp(t: float) -> str:
     return f"{cs // 360000}:{(cs // 6000) % 60:02d}:{(cs // 100) % 60:02d}.{cs % 100:02d}"
 
 
+def _caption_style(config: Config) -> tuple[str, str, int, int, int]:
+    """Font, main colour, bold flag, outline and opaque-box mode."""
+    palette = {
+        "classic": (config.caption_color, -1, 4, 1),
+        "bold": ("#FFFFFF", -1, 6, 1),
+        "highlight": ("#FFE237", -1, 5, 1),
+        "minimal": (config.caption_color, 0, 2, 1),
+        "box": ("#FFFFFF", -1, 1, 3),
+    }
+    color, bold, outline, border_style = palette[config.caption_template]
+    return config.caption_font, color, bold, outline, border_style
+
+
 def _make_ass(words: list[Word], temp: Path, config: Config, offset: float = 0):
-    color = config.caption_color.lstrip("#")
-    if not re.fullmatch(r"[0-9a-fA-F]{6}", color):
-        color = "FFFFFF"
+    font, color, bold, outline, border_style = _caption_style(config)
+    color = color.lstrip("#")
     bgr = color[4:6] + color[2:4] + color[0:2]
     head = (f"[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n"
             "[V4+ Styles]\n"
             "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,"
             "BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,"
             "BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n"
-            f"Style: Viral,Arial,{config.caption_font_size},&H00{bgr},&H0000D9FF,"
-            "&H00000000,&H90000000,-1,0,0,0,100,100,0,0,1,4,1,2,50,50,80,1\n"
+            f"Style: Viral,{font},{config.caption_font_size},&H00{bgr},&H0000D9FF,"
+            f"&H00000000,&H90000000,{bold},0,0,0,100,100,0,0,"
+            f"{border_style},{outline},1,2,50,50,80,1\n"
             "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n")
     lines = []
-    # Each spoken word is visibly displayed while it is active.
     for w in words:
         start, end = w.start - offset, w.end - offset
         if end <= 0 or start >= 900:
@@ -569,7 +623,6 @@ def _make_ass(words: list[Word], temp: Path, config: Config, offset: float = 0):
             f"{{\\an5\\pos(540,{config.caption_y})}}{safe}\n"
         )
     temp.write_text(head + "".join(lines), encoding="utf-8-sig")
-
 
 @router.post("/projects/{project_id}/transcribe")
 async def transcribe(project_id: str, request: Request):
@@ -584,8 +637,16 @@ async def transcribe(project_id: str, request: Request):
         raise HTTPException(503,
             "Установи faster-whisper для реальной транскрипции: "
             r".\.venv\Scripts\python.exe -m pip install faster-whisper") from None
+    result = await _transcribe_words(config)
+    p["config"]["captions"] = result
+    _save(p)
+    return {"words": result, "note": "AI-черновик: проверь текст и таймкоды вручную"}
+
+
+async def _transcribe_words(config: Config) -> list[dict]:
+    from faster_whisper import WhisperModel
     def recognize():
-        model = WhisperModel("small", device="cpu", compute_type="int8")
+        model = WhisperModel("base", device="cpu", compute_type="int8")
         words = []
         offset = 0.0
         for clip in config.clips:
@@ -603,9 +664,7 @@ async def transcribe(project_id: str, request: Request):
             offset += length
         return [w.model_dump() for w in words]
     result = await asyncio.to_thread(recognize)
-    p["config"]["captions"] = result
-    _save(p)
-    return {"words": result, "note": "AI-черновик: проверь текст и таймкоды вручную"}
+    return result
 
 
 def _effective_motion(config: Config, info: dict) -> str:
@@ -788,7 +847,11 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
                     ["-stream_loop", "-1", "-i", str(banner)])
             graph += (
                 f"[{n}:v]scale={config.banner_width}:-1:flags=lanczos,"
-                "format=rgba,fade=t=in:st=0:d=0.3:alpha=1[ad];"
+                + (f"chromakey=0x{config.banner_chroma_color[1:]}:"
+                   f"{config.banner_chroma_similarity:.3f}:"
+                   f"{config.banner_chroma_blend:.3f},"
+                   if config.banner_chroma_enabled else "")
+                + "format=rgba,fade=t=in:st=0:d=0.3:alpha=1[ad];"
                 f"[{prev}][ad]overlay={config.banner_x}:{config.banner_y}:"
                 f"enable='between(t,{max(0,config.banner_start-offset)},{max(0,config.banner_end-offset)})'"
                 "[withad];"
@@ -926,11 +989,17 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
         final.unlink(missing_ok=True)
         raise RuntimeError("Контроль экспорта: неверная частота кадров")
     fp = fingerprint(final)
+    source_hashes = [
+        {"media_id": ident, "sha256": _sha(_source(ident))}
+        for ident in dict.fromkeys(c.media_id for c in config.clips)
+    ]
     return {
         "id": export_id, "variant": variant, "template": "viral_reels_pro_v3",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "sha256": fp["sha256"], "fingerprint": fp,
         "sources": [x.media_id for x in config.clips],
+        "source_sha256": source_hashes,
+        "provenance_note": "Локальный журнал монтажа и проверяемые хеши файлов; не является подтверждением авторства или гарантией решения платформы.",
         "source_fingerprints": [
             x for x in project.get("analysis", {}).get("sources", [])
             if x.get("media_id") in {c.media_id for c in config.clips}
@@ -966,13 +1035,55 @@ async def _job_runner(project_id: str, job: dict):
         try:
             p = _project(project_id)
             job["status"] = "running"
-            job["stage"] = "Начинаю подготовку реальных MP4"
+            cfg = Config.model_validate(p["config"])
+            job["stage"] = "1/4 · Безопасный автомонтаж крайних пауз"
+            if cfg.auto_trim_silences and cfg.captions:
+                job["notes"].append("Ручные субтитры уже размечены: обрезка не меняется, чтобы не сбить таймкоды")
+            if cfg.auto_trim_silences and not cfg.captions:
+                adjusted = 0
+                for index, clip in enumerate(cfg.clips):
+                    src = _source(clip.media_id)
+                    pauses = await asyncio.to_thread(_silences, src)
+                    info = await asyncio.to_thread(_probe, src)
+                    start, end = _segment_bounds(clip, info, "B", pauses)
+                    if start > clip.start + .05 or end < (clip.end or info["duration"]) - .05:
+                        cfg.clips[index] = Clip(media_id=clip.media_id, start=start, end=end)
+                        adjusted += 1
+                if adjusted:
+                    p["config"] = cfg.model_dump()
+                    _save(p)
+                    job["notes"].append(f"Автомонтаж: скорректировано сцен: {adjusted}")
+            if job.get("cancel"):
+                raise asyncio.CancelledError()
+            job["stage"] = "2/4 · AI-субтитры (только если отсутствуют)"
+            if cfg.auto_captions and not cfg.captions:
+                try:
+                    cfg.captions = [Word.model_validate(word) for word in await _transcribe_words(cfg)]
+                    p["config"] = cfg.model_dump()
+                    _save(p)
+                    job["notes"].append(f"Автоматически распознано слов: {len(cfg.captions)}")
+                except Exception as exc:
+                    job["notes"].append("AI-субтитры недоступны: " + str(exc)[:180])
+            if job.get("cancel"):
+                raise asyncio.CancelledError()
+            job["stage"] = "3/4 · Архив исходников и проверяемые отпечатки"
+            try:
+                await _analyze_project(p)
+            except Exception as exc:
+                job["notes"].append("Дополнительный анализ: " + str(exc)[:180])
+            if job.get("cancel"):
+                raise asyncio.CancelledError()
+            job["stage"] = "4/4 · Начинаю создание MP4 A/B/C"
             for variant in ("A", "B", "C"):
                 if job.get("cancel"):
                     raise asyncio.CancelledError()
                 entry = await _render_variant(p, variant, job, work, "ABC".index(variant))
                 p["exports"].append(entry)
                 _save(p)
+                _json_write(EXPORTS / p["id"] / (entry["id"] + "_manifest.json"), {
+                    "project_id": p["id"], "template": p["template"],
+                    "export": entry,
+                })
                 job["done"].append(entry["id"])
             job["status"] = "completed"
             job["progress"] = 100
@@ -1102,6 +1213,21 @@ def download_export(project_id: str, export_id: str, request: Request,
         path, media_type="video/mp4", filename=path.name,
         content_disposition_type="attachment" if download else "inline",
     )
+
+
+@router.get("/projects/{project_id}/export/{export_id}/manifest")
+def download_export_manifest(project_id: str, export_id: str, request: Request):
+    _local(request)
+    p = _project(project_id)
+    entry = next((e for e in p.get("exports", []) if e["id"] == _id(export_id)), None)
+    if not entry:
+        raise HTTPException(404, "Экспорт не найден")
+    path = EXPORTS / p["id"] / (entry["id"] + "_manifest.json")
+    if not path.is_file():
+        # Backwards compatibility with previously rendered files.
+        return {"project_id": p["id"], "template": p["template"], "export": entry}
+    return FileResponse(path, media_type="application/json",
+                        filename="viral_" + entry["id"][:10] + "_manifest.json")
 
 
 @router.post("/projects/{project_id}/export/{export_id}/inbox")
