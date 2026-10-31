@@ -325,7 +325,37 @@
   },{passive:false});
   const dock=document.getElementById('liveDock');
   const grip=document.getElementById('liveResizeGrip');
+  const titleBar=document.getElementById('liveDockDrag');
   const MAX_WIDTH=700,MIN_WIDTH=260;
+  function placeDock(position){
+    if(!position || !Number.isFinite(position.left) || !Number.isFinite(position.top))return;
+    const rect=dock.getBoundingClientRect();
+    dock.style.left=Math.round(clamp(position.left,0,Math.max(0,innerWidth-rect.width)))+'px';
+    dock.style.top=Math.round(clamp(position.top,0,Math.max(0,innerHeight-rect.height)))+'px';
+    dock.style.right='auto';dock.style.bottom='auto';
+  }
+  try{placeDock(JSON.parse(localStorage.getItem('viral_pro_preview_position')||'null'))}catch{}
+  titleBar?.addEventListener('pointerdown',ev=>{
+    if(ev.target.closest('button') || dock.classList.contains('expanded'))return;
+    ev.preventDefault();
+    const original=dock.getBoundingClientRect(),startX=ev.clientX,startY=ev.clientY;
+    titleBar.setPointerCapture(ev.pointerId);
+    const move=e=>{
+      placeDock({left:original.left+(e.clientX-startX),
+                 top:original.top+(e.clientY-startY)});
+    };
+    const release=()=>{
+      titleBar.removeEventListener('pointermove',move);
+      titleBar.removeEventListener('pointerup',release);
+      titleBar.removeEventListener('pointercancel',release);
+      const rect=dock.getBoundingClientRect();
+      localStorage.setItem('viral_pro_preview_position',
+                           JSON.stringify({left:rect.left,top:rect.top}));
+    };
+    titleBar.addEventListener('pointermove',move);
+    titleBar.addEventListener('pointerup',release);
+    titleBar.addEventListener('pointercancel',release);
+  });
   const initial=Number(localStorage.getItem('viral_pro_preview_width'));
   if(Number.isFinite(initial)&&initial>=MIN_WIDTH){
     dock.style.width=Math.min(MAX_WIDTH,initial,window.innerWidth-24)+'px';
@@ -339,6 +369,10 @@
                                        Math.min(MAX_WIDTH,window.innerWidth-24)))+'px';
       dock.style.height=Math.round(clamp(startHeight+startY-e.clientY,300,
                                         Math.max(300,window.innerHeight-24)))+'px';
+      if(dock.style.left && dock.style.left!=='auto'){
+        dock.style.left=Math.max(0,Math.round(rect.left+(e.clientX-startX)))+'px';
+        dock.style.top=Math.max(0,Math.round(rect.top+(e.clientY-startY)))+'px';
+      }
     };
     const finishResize=()=>{
       grip.removeEventListener('pointermove',move);
