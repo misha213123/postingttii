@@ -18,7 +18,7 @@ from unittest.mock import patch
 from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 from starlette.requests import Request
-from PIL import Image
+from PIL import Image, ImageDraw
 from app import viral_reels_pro as pro
 from app import telegram_studio as old
 
@@ -127,6 +127,20 @@ class CaptionTests(unittest.TestCase):
             self.assertIn("0:00:00.50", content)
             self.assertIn("pos(540,770)", content)
             self.assertIn("&H00000000", content)
+
+    def test_caption_fonts_and_presets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = pro.Config(caption_font="Impact", caption_template="highlight")
+            target = Path(folder) / "caption.ass"
+            pro._make_ass([pro.Word(start=.1,end=.3,text="Привет")], target, cfg)
+            text = target.read_text(encoding="utf-8-sig")
+            self.assertIn("Style: Viral,Impact,", text)
+            self.assertIn("37E2FF", text)
+            self.assertIn("Привет", text)
+            with self.assertRaises(ValueError):
+                pro.Config(caption_template="unknown")
+            with self.assertRaises(ValueError):
+                pro.Config(banner_chroma_color="wrong")
 
     def test_word_timestamp_conversion(self):
         self.assertEqual(pro._ass_timestamp(1.25), "0:00:01.25")
@@ -264,8 +278,16 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
             ], check=True, timeout=40)
             bg = bgs / "bg.png"
             Image.new("RGB", (640, 1000), "#123458").save(bg)
+            banners = base / "banners"
+            banners.mkdir()
+            artwork=Image.new("RGB",(240,90),"#00FF00")
+            ImageDraw.Draw(artwork).rectangle((50,16,190,75),fill="#e22228")
+            artwork.save(banners / "ad.png")
             cfg = pro.Config(
                 clips=[pro.Clip(media_id=mid, start=0, end=.7)],
+                banner_enabled=True,banner_file="ad.png",
+                banner_chroma_enabled=True,banner_chroma_color="#00FF00",
+                banner_chroma_similarity=.22,banner_chroma_blend=.07,
                 background_name="bg.png", background_source="local",
                 circle_size=330, circle_x=120, circle_y=300,
                 smooth="off", loudness=False, denoise=False,
@@ -278,6 +300,7 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.object(pro, "MEDIA", media),
                 patch.object(pro, "OWN_BACKGROUNDS", bgs),
+                patch.object(pro, "OWN_BANNERS", banners),
                 patch.object(pro, "EXPORTS", exports),
                 patch.object(pro, "TMP", temp),
                 patch.object(pro, "PROJECTS", projects),
@@ -290,6 +313,9 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(variant["width"], 1080)
                     self.assertEqual(variant["height"], 1920)
                     self.assertTrue(variant["sha256"])
+                    self.assertEqual(variant["source_sha256"][0]["sha256"],
+                                     pro._sha(source))
+                    self.assertEqual(variant["settings"]["banner_chroma_enabled"],True)
                     self.assertGreater(output.stat().st_size, 1000)
                 self.assertGreater(job["progress"], 0)
 
