@@ -204,6 +204,21 @@ class AudioDecodeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
                          [(3, 2), (1, 2)])
         self.assertEqual(seen, [(np.ndarray, True), (np.ndarray, True)])
 
+    @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg is required")
+    async def test_real_audio_extract_works_without_pyav(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "sound.wav"
+            subprocess.run([
+                "ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                "-i", "sine=frequency=420:sample_rate=44100:duration=0.9",
+                "-c:a", "pcm_s16le", str(audio),
+            ], check=True, timeout=35)
+            samples = pro._decode_clip_audio(audio, .2, .35)
+            self.assertEqual(samples.dtype, np.float32)
+            self.assertGreater(len(samples), 4700)
+            self.assertLess(len(samples), 6500)
+            self.assertGreater(float(np.abs(samples).max()), 0.001)
+
     async def test_pcm_ffmpeg_decoder_outputs_float32(self):
         samples = np.array([.2, -.3, 0, .8], dtype=np.float32)
         completed = subprocess.CompletedProcess([], 0, samples.tobytes(), b"")
