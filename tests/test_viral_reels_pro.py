@@ -168,6 +168,55 @@ class AutoEditRepeatedMediaTests(unittest.IsolatedAsyncioTestCase):
                          [mid, mid])
 
 
+class AutomaticPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_one_click_runs_safe_steps_in_order_and_records_manifest(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            temp, exports = base / "tmp", base / "exports"
+            temp.mkdir()
+            exports.mkdir()
+            mid, pid, job_id = "a" * 32, "b" * 32, "c" * 32
+            cfg = pro.Config(clips=[pro.Clip(media_id=mid, start=0, end=2)],
+                             background_name="bg.png", background_source="local")
+            project = {"id": pid, "template": "viral_reels_pro_v3",
+                       "config": cfg.model_dump(), "exports": [], "analysis": {}}
+            job = {"id": job_id, "status": "queued", "notes": [],
+                   "cancel": False, "done": [], "progress": 0, "stage": ""}
+            events = []
+            async def mock_transcribe(config):
+                events.append("caption")
+                return [pro.Word(start=.1, end=.3, text="Привет").model_dump()]
+            async def mock_analysis(project):
+                events.append("analyze")
+            async def mock_render(project, variant, job, work, index):
+                events.append("render_" + variant)
+                (exports / pid).mkdir(exist_ok=True)
+                return {"id": ("d" if variant == "A" else
+                               "e" if variant == "B" else "f") * 32,
+                        "file": "sample.mp4", "variant": variant}
+            with (
+                patch.object(pro, "TMP", temp),
+                patch.object(pro, "EXPORTS", exports),
+                patch.object(pro, "RENDER_LOCK", asyncio.Lock()),
+                patch.object(pro, "_project", return_value=project),
+                patch.object(pro, "_source", return_value=Path("source.mp4")),
+                patch.object(pro, "_probe", return_value={"duration": 2.0}),
+                patch.object(pro, "_silences", return_value=[]),
+                patch.object(pro, "_save"),
+                patch.object(pro, "_transcribe_words", side_effect=mock_transcribe),
+                patch.object(pro, "_analyze_project", side_effect=mock_analysis),
+                patch.object(pro, "_render_variant", side_effect=mock_render),
+            ):
+                await pro._job_runner(pid, job)
+                self.assertEqual(job["status"], "completed")
+                self.assertEqual(events, ["caption", "analyze", "render_A",
+                                          "render_B", "render_C"])
+                self.assertEqual(len(project["exports"]), 3)
+                self.assertEqual(len(project["config"]["captions"]), 1)
+                for item in project["exports"]:
+                    self.assertTrue((exports / pid / (item["id"] + "_manifest.json")).is_file())
+
+
 class RenderProgressTests(unittest.TestCase):
     def test_media_time_progress_is_not_wall_clock(self):
         with tempfile.TemporaryDirectory() as folder:
