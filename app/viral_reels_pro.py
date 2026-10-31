@@ -644,6 +644,7 @@ async def transcribe(project_id: str, request: Request):
 
 
 async def _transcribe_words(config: Config) -> list[dict]:
+    from faster_whisper import WhisperModel
     def recognize():
         model = WhisperModel("base", device="cpu", compute_type="int8")
         words = []
