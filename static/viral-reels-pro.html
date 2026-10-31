@@ -411,6 +411,12 @@ async function refreshProjects(selectId){
 }
 async function selectProject(id){
  project=await request('/projects/'+id);
+ project.config={
+  caption_font:'Arial',caption_template:'classic',auto_trim_silences:true,auto_captions:true,
+  banner_chroma_enabled:false,banner_chroma_color:'#00FF00',
+  banner_chroma_similarity:.22,banner_chroma_blend:.07,
+  ...project.config
+ };
  $('previewVideo').removeAttribute('src');$('previewVideo').load();
  $('previewVideo').hidden=true;$('previewStatus').textContent='Предпросмотр ещё не создан.';
  localStorage.setItem('viral_pro_last_project',id);
