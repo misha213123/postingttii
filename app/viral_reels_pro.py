@@ -219,7 +219,7 @@ class Config(BaseModel):
     captions: list[Word] = Field(default_factory=list, max_length=2000)
     caption_font: Literal["Arial", "Impact", "Verdana", "Georgia", "Trebuchet MS", "DejaVu Sans"] = "Arial"
     caption_template: Literal["classic", "bold", "highlight", "minimal", "box"] = "classic"
-    caption_font_size: int = Field(default=48, ge=20, le=90)
+    caption_font_size: int = Field(default=48, ge=20, le=160)
     caption_y: int = Field(default=820, ge=100, le=1800)
     caption_x: int = Field(default=540, ge=0, le=1080)
     caption_color: str = "#FFFFFF"
