@@ -285,7 +285,7 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
     Chroma key applies only to the banner, never to the circular media.
     """
     banner_key = (
-        f"chromakey=0x{design.chromakey_color[1:]}:"
+        f"colorkey=0x{design.chromakey_color[1:]}:"
         f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
         if design.chromakey_enabled else ""
     )
