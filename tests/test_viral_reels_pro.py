@@ -39,6 +39,8 @@ class ProjectPersistenceTests(unittest.TestCase):
         self.assertEqual(old.RenderDesign(visual_template="orbit_dots").visual_template, "orbit_dots")
         self.assertEqual(pro.Config().fps, 30)
         self.assertEqual(pro.Config().smooth, "auto")
+        self.assertTrue(pro.Config().banner_chroma_enabled)
+        self.assertEqual(pro.Config().banner_chroma_version, 1)
 
     def test_atomic_project_json_can_be_reopened(self):
         with tempfile.TemporaryDirectory() as path:
@@ -416,13 +418,14 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
             Image.new("RGB", (640, 1000), "#123458").save(bg)
             banners = base / "banners"
             banners.mkdir()
-            artwork=Image.new("RGB",(240,90),"#00FF00")
+            artwork=Image.new("RGB",(240,90),"#14F20C")
             ImageDraw.Draw(artwork).rectangle((50,16,190,75),fill="#e22228")
             artwork.save(banners / "ad.png")
             cfg = pro.Config(
                 clips=[pro.Clip(media_id=mid, start=0, end=.7)],
                 banner_enabled=True,banner_file="ad.png",
-                banner_chroma_enabled=True,banner_chroma_color="#00FF00",
+                # Rely on the new default and key a slightly off-green sample.
+                banner_chroma_color="#00FF00",
                 banner_chroma_similarity=.22,banner_chroma_blend=.07,
                 background_name="bg.png", background_source="local",
                 circle_size=330, circle_x=120, circle_y=300,
@@ -455,6 +458,24 @@ class RealFfmpegExportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(variant["source_sha256"][0]["sha256"],
                                      pro._sha(source))
                     self.assertEqual(variant["settings"]["banner_chroma_enabled"],True)
+                    if position == 0:
+                        frame = temp / "chroma-check.png"
+                        subprocess.run([
+                            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                            "-ss", "0.5", "-i", str(output), "-frames:v", "1",
+                            str(frame),
+                        ], check=True, timeout=40)
+                        rendered = Image.open(frame).convert("RGB")
+                        keyed_pixel = rendered.getpixel((230, 1510))
+                        logo_pixel = rendered.getpixel((520, 1600))
+                        self.assertLess(
+                            keyed_pixel[1], 160,
+                            f"Green banner background is still visible: {keyed_pixel}",
+                        )
+                        self.assertGreater(
+                            logo_pixel[0], logo_pixel[1] * 2,
+                            f"Banner artwork was incorrectly keyed: {logo_pixel}",
+                        )
                     self.assertEqual(variant["settings"]["background_zoom"],1.22)
                     self.assertEqual(variant["settings"]["caption_x"],350)
                     self.assertGreater(output.stat().st_size, 1000)
