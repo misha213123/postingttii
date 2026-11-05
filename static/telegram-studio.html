@@ -565,7 +565,7 @@ function drawChromaPreview(now){
     const threshold=designState.chromakey_similarity;
     const blend=Math.max(.001,designState.chromakey_blend);
     for(let i=0;i<pixels.length;i+=4){
-      // Approximation for the browser. FFmpeg uses chroma channels for the exact render.
+      // Browser preview and FFmpeg render use the same RGB color-distance key; encoding may soften edges.
       const distance=Math.hypot(pixels[i]-rgb[0],pixels[i+1]-rgb[1],pixels[i+2]-rgb[2])/(255*Math.sqrt(3));
       const alpha=Math.max(0,Math.min(1,(distance-threshold)/blend));
       pixels[i+3]=Math.round(pixels[i+3]*alpha);
