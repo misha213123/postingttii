@@ -119,14 +119,14 @@ progress{width:100%;height:15px;accent-color:#6d8dff}
 <div class="grid"><label>Начало (сек)<input type="number" id="bannerStart" min="0" step=".1"></label>
 <label>Конец (сек)<input type="number" id="bannerEnd" min=".1" step=".1"></label></div>
 <div class="card dim"><h3>Хромакей баннера</h3>
-<label><span><input type="checkbox" id="bannerChroma"> Удалять цветной фон баннера</span></label>
+<label><span><input type="checkbox" id="bannerChroma" checked> Удалять цветной фон баннера</span></label>
 <div class="grid">
 <label>Цвет для удаления<input id="bannerChromaColor" type="color" value="#00ff00"></label>
 <label>Допуск цвета (0.01–0.60)<input id="bannerSimilarity" type="range" min=".01" max=".6" step=".01" value=".22"></label>
 </div>
 <label>Мягкость края (0–0.35)<input id="bannerBlend" type="range" min="0" max=".35" step=".01" value=".07"></label>
 <button id="eyeDropper" type="button">Пипетка: выбрать цвет на миниатюре</button>
-<p class="hint">После нажатия пипетки кликни на зелёном или синем участке баннера в постоянно видимом предпросмотре справа. Цвет запишется и будет удалён FFmpeg при рендере.</p></div>
+<p class="hint">Зелёный фон удаляется автоматически. Если оттенок отличается, нажми пипетку и выбери участок фона на миниатюре: цвет сохранится в проекте и будет удалён при финальном FFmpeg-рендере.</p></div>
 <p class="hint" id="bannerNotice">При отсутствии собственного баннера можно использовать уже загруженный в Telegram Studio — без изменений оригинала.</p>
 </div></div></section>
 <section id="pane-edit">
@@ -362,8 +362,9 @@ async function uploadAsset(kind){
   const r=await request('/'+kind,{method:'POST',body:data});
   if(kind==='banner'){
    project.config.banner_file=r.name;project.config.banner_enabled=true;
-   $('bannerEnabled').checked=true;
-   alertStatus('Локальный баннер загружен: '+r.name);
+   project.config.banner_chroma_enabled=true;
+   $('bannerEnabled').checked=true;$('bannerChroma').checked=true;
+   alertStatus('Локальный баннер загружен. Удаление зелёного фона включено: '+r.name);
   }else{
    project.config.background_source='local';project.config.background_name=r.name;
    await refreshCapabilities();
@@ -426,12 +427,17 @@ async function refreshProjects(selectId){
 }
 async function selectProject(id){
  project=await request('/projects/'+id);
+ const savedConfig=project.config||{};
+ const migrateChroma=!Object.prototype.hasOwnProperty.call(savedConfig,'banner_chroma_version');
  project.config={
   caption_font:'Arial',caption_template:'classic',auto_trim_silences:true,auto_captions:true,
-  banner_chroma_enabled:false,banner_chroma_color:'#00FF00',
+  banner_chroma_enabled:true,banner_chroma_version:1,banner_chroma_color:'#00FF00',
   banner_chroma_similarity:.22,banner_chroma_blend:.07,
   caption_x:540,background_zoom:1,
-  ...project.config
+  ...savedConfig,
+  // Old projects had chroma explicitly stored as false by the former default.
+  banner_chroma_enabled:migrateChroma?true:!!savedConfig.banner_chroma_enabled,
+  banner_chroma_version:1
  };
  $('previewVideo').removeAttribute('src');$('previewVideo').load();
  $('previewVideo').hidden=true;$('previewStatus').textContent='Предпросмотр ещё не создан.';

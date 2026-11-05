@@ -199,7 +199,9 @@ class Config(BaseModel):
     banner_x: int = Field(default=220, ge=-1080, le=1080)
     banner_y: int = Field(default=1500, ge=-1920, le=1920)
     banner_width: int = Field(default=600, ge=80, le=1080)
-    banner_chroma_enabled: bool = False
+    banner_chroma_enabled: bool = True
+    # Version marker migrates old projects that stored the previous off-by-default setting.
+    banner_chroma_version: int = 1
     banner_chroma_color: str = Field(default="#00FF00", pattern=r"^#[0-9a-fA-F]{6}$")
     banner_chroma_similarity: float = Field(default=0.22, ge=0.01, le=0.6)
     banner_chroma_blend: float = Field(default=0.07, ge=0, le=0.35)
@@ -898,7 +900,8 @@ async def _render_variant(project: dict, variant: str, job: dict, work: Path, po
                     ["-stream_loop", "-1", "-i", str(banner)])
             graph += (
                 f"[{n}:v]scale={config.banner_width}:-1:flags=lanczos,"
-                + (f"chromakey=0x{config.banner_chroma_color[1:]}:"
+                # The eyedropper samples RGB pixels, so key in RGB space too.
+                + (f"format=rgba,colorkey=0x{config.banner_chroma_color[1:]}:"
                    f"{config.banner_chroma_similarity:.3f}:"
                    f"{config.banner_chroma_blend:.3f},"
                    if config.banner_chroma_enabled else "")

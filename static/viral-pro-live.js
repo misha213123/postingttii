@@ -264,7 +264,10 @@
         cfg.banner_chroma_color=hex;
         document.getElementById('bannerChromaColor').value=hex;
         cfg.banner_chroma_enabled=true;document.getElementById('bannerChroma').checked=true;
-        alertStatus('Пипетка выбрала '+hex+' для удаления фона баннера.');
+        if(typeof window.saveProject==='function'){
+          window.saveProject().then(()=>alertStatus('Цвет '+hex+' сохранён. Хромакей применится в предпросмотре и экспорте.'))
+            .catch(err=>alertStatus('Не удалось сохранить цвет хромакея: '+err.message,true));
+        }else alertStatus('Пипетка выбрала '+hex+' для удаления фона баннера. Сохрани проект.');
       }else alertStatus('Нажми на участок баннера внутри миниатюры',true);
       eyedropper=false;document.getElementById('eyeDropper').classList.remove('active');
       return;
