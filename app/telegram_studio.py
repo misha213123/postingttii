@@ -557,6 +557,8 @@ class RenderRequest(BaseModel):
     order: str = "oldest"
     date_from: date | None = None
     date_to: date | None = None
+    # Explicitly rebuild selected outputs after layout/chromakey changes.
+    force_rerender: bool = False
 
 
 @router.get("/status")
@@ -822,6 +824,25 @@ async def qr_password(body: QRPassword):
         QR_STATE["state"] = "authorized"
         await qr_cleanup()
         return {"state": "authorized"}
+
+
+def should_skip_existing_render(
+    key: str, target: Path, completed_keys: list[str], *,
+    force_rerender: bool = False,
+) -> bool:
+    """Skip already processed outputs unless the user explicitly requests a rebuild."""
+    if force_rerender:
+        return False
+    if key in completed_keys:
+        return True
+    return target.is_file() and target.stat().st_size > 0
+
+
+def should_skip_known_source(
+    digest: str, known_hashes: set[str], *, force_rerender: bool = False,
+) -> bool:
+    """Avoid duplicate forwarded media unless explicitly rebuilding existing renders."""
+    return not force_rerender and digest in known_hashes
 
 
 def duration(path):
@@ -1149,7 +1170,8 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                   output_dir: Path | None = None, target_slot: int = 0,
                   media_mode: Literal["circles", "videos"] = "circles",
                   video_layout=None, video_banner: Path | None = None,
-                  video_banner_design: RenderDesign | None = None):
+                  video_banner_design: RenderDesign | None = None,
+                  force_rerender: bool = False):
     JOB.update(status="running", total=0, done=0, errors=[], notes=[], media_mode=media_mode)
     try:
         d = config()
@@ -1212,10 +1234,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                                else f"video:{channel}:{message.id}")
                         filename_prefix = "tg" if media_mode == "circles" else "tgvideo"
                         target = output_dir / f"{filename_prefix}_{channel}_{message.id}.mp4"
-                        if key in completed_keys:
-                            continue
-                        if target.is_file() and target.stat().st_size > 0:
-                            completed_keys.append(key)
+                        if should_skip_existing_render(
+                            key, target, completed_keys,
+                            force_rerender=force_rerender,
+                        ):
+                            if target.is_file() and target.stat().st_size > 0 and key not in completed_keys:
+                                completed_keys.append(key)
                             continue
                         candidates.append(message)
                     if not found_selected_type and not STOP_REQUESTED:
@@ -1254,10 +1278,14 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                 originals_dir = ORIGINALS if media_mode == "circles" else REGULAR_ORIGINALS
                 source = originals_dir / f"{channel}_{message.id}.mp4"
                 target = output_dir / f"{target_prefix}_{channel}_{message.id}.mp4"
+                target_preexisting = target.is_file() and target.stat().st_size > 0
                 try:
-                    # Never overwrite a previously rendered or queued reel.
-                    if target.exists() and target.stat().st_size > 0:
-                        completed_keys.append(key)
+                    # Existing MP4s are preserved by default. Forced rerender writes
+                    # to a temporary file first and replaces the old output only
+                    # after FFprobe validates the newly rendered video.
+                    if target_preexisting and not force_rerender:
+                        if key not in completed_keys:
+                            completed_keys.append(key)
                         save(d)
                         continue
                     # Re-download incomplete or unreadable originals rather than retrying a bad cache.
@@ -1280,9 +1308,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     if not source.exists():
                         raise ValueError("Не удалось скачать Telegram-видео")
                     digest = file_digest(source)
-                    if digest in known_hashes:
+                    if should_skip_known_source(
+                        digest, known_hashes, force_rerender=force_rerender,
+                    ):
                         # Same original media may have been forwarded to another channel.
-                        completed_keys.append(key)
+                        if key not in completed_keys:
+                            completed_keys.append(key)
                         save(d)
                         continue
                     # Render to a temporary file, publish only after ffprobe validates it.
@@ -1310,6 +1341,8 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                         d.setdefault("rendered_hashes_by_target", {})[render_scope] = sorted(known_hashes)
                     else:
                         d["rendered_hashes"] = sorted(known_hashes)
+                    # Keep the processed-key index unique after a forced rebuild.
+                    completed_keys[:] = [item for item in completed_keys if item != key]
                     completed_keys.append(key)
                     d.setdefault("last_outputs", {})[media_mode] = {
                         "name": target.name,
@@ -1323,7 +1356,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     save(d)
                     JOB["done"] += 1
                 except Exception as exc:
-                    target.unlink(missing_ok=True)
+                    # Keep the previous valid MP4 if a forced rebuild fails.
+                    if not target_preexisting:
+                        target.unlink(missing_ok=True)
                     # The error is shown in Telegram Studio, not just the
                     # shortened FFmpeg argument list.
                     JOB["errors"].append(f"{key}: {str(exc)[-1750:]}")
@@ -1395,6 +1430,7 @@ async def run(body: RenderRequest):
         design=design, banner=banner, output_dir=output_dir, target_slot=body.target_slot,
         media_mode=body.media_mode, video_layout=video_layout,
         video_banner=video_banner, video_banner_design=video_design,
+        force_rerender=body.force_rerender,
     ))
     return {"started": True, "media_mode": body.media_mode}
 

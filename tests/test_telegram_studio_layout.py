@@ -16,6 +16,34 @@ from pydantic import ValidationError
 from app import telegram_studio as studio
 
 
+class TelegramRerenderSelectionTests(unittest.TestCase):
+    def test_existing_output_is_skipped_by_default_but_not_when_forced(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "tg_channel_123.mp4"
+            target.write_bytes(b"previous valid render")
+            completed = ["channel:123"]
+
+            self.assertTrue(studio.should_skip_existing_render(
+                "channel:123", target, completed,
+            ))
+            self.assertFalse(studio.should_skip_existing_render(
+                "channel:123", target, completed, force_rerender=True,
+            ))
+
+    def test_known_source_hash_is_bypassed_only_for_forced_rerender(self):
+        hashes = {"same-source-sha256"}
+        self.assertTrue(studio.should_skip_known_source(
+            "same-source-sha256", hashes,
+        ))
+        self.assertFalse(studio.should_skip_known_source(
+            "same-source-sha256", hashes, force_rerender=True,
+        ))
+
+    def test_render_request_force_rerender_defaults_off_and_can_be_enabled(self):
+        self.assertFalse(studio.RenderRequest().force_rerender)
+        self.assertTrue(studio.RenderRequest(force_rerender=True).force_rerender)
+
+
 class TelegramRenderDesignTests(unittest.TestCase):
     def test_circle_is_larger_by_default_and_chromakey_is_optional(self):
         design = studio.RenderDesign()
