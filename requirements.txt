@@ -12,3 +12,4 @@ yt-dlp>=2025.9.26
 instaloader>=4.14
 Pillow>=11,<13
 camoufox[geoip]>=0.5.8,<0.6
+faster-whisper>=1.2,<2

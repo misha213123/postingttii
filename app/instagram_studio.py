@@ -507,6 +507,9 @@ def render(source, target, background, layout: InstagramLayout | None = None,
     args += [
         "-filter_complex", filt,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
+        # Do not inherit optional source metadata or chapters in exports.
+        "-map_metadata", "-1", "-map_metadata:s", "-1",
+        "-map_chapters", "-1",
         "-c:v", "libx264",
         *h264_quality_args(layout.quality_preset, standard_crf="19"),
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",

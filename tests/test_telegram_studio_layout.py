@@ -1,6 +1,8 @@
 """Regression tests for Telegram Studio 9:16 design, banner, and chromakey."""
 from __future__ import annotations
 
+import shutil
+import subprocess
 import tempfile
 import unittest
 from io import BytesIO
@@ -8,10 +10,38 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException, UploadFile
-from PIL import Image
+from PIL import Image, ImageDraw
 from pydantic import ValidationError
 
 from app import telegram_studio as studio
+
+
+class TelegramRerenderSelectionTests(unittest.TestCase):
+    def test_existing_output_is_skipped_by_default_but_not_when_forced(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "tg_channel_123.mp4"
+            target.write_bytes(b"previous valid render")
+            completed = ["channel:123"]
+
+            self.assertTrue(studio.should_skip_existing_render(
+                "channel:123", target, completed,
+            ))
+            self.assertFalse(studio.should_skip_existing_render(
+                "channel:123", target, completed, force_rerender=True,
+            ))
+
+    def test_known_source_hash_is_bypassed_only_for_forced_rerender(self):
+        hashes = {"same-source-sha256"}
+        self.assertTrue(studio.should_skip_known_source(
+            "same-source-sha256", hashes,
+        ))
+        self.assertFalse(studio.should_skip_known_source(
+            "same-source-sha256", hashes, force_rerender=True,
+        ))
+
+    def test_render_request_force_rerender_defaults_off_and_can_be_enabled(self):
+        self.assertFalse(studio.RenderRequest().force_rerender)
+        self.assertTrue(studio.RenderRequest(force_rerender=True).force_rerender)
 
 
 class TelegramRenderDesignTests(unittest.TestCase):
@@ -47,13 +77,13 @@ class TelegramRenderDesignTests(unittest.TestCase):
                     args = run.call_args.args[0]
                     graph = args[args.index("-filter_complex") + 1]
                     self.assertIn(
-                        "chromakey=0x" + color[1:] + ":0.310:0.130,",
+                        "colorkey=0x" + color[1:] + ":0.310:0.130,",
                         graph,
                     )
                     circle, rest = graph.split("[circle];", 1)
-                    self.assertNotIn("chromakey=", circle)
+                    self.assertNotIn("colorkey=", circle)
                     self.assertIn("[2:v]", rest)
-                    self.assertIn("chromakey=", rest.split("[2:v]", 1)[1])
+                    self.assertIn("colorkey=", rest.split("[2:v]", 1)[1])
                     self.assertIn("0:a?", args)
 
     def test_without_banner_chromakey_never_changes_telegram_circle(self):
@@ -69,7 +99,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             )
         args = run.call_args.args[0]
         graph = args[args.index("-filter_complex") + 1]
-        self.assertNotIn("chromakey=", graph)
+        self.assertNotIn("colorkey=", graph)
 
     def test_default_green_still_applies_for_old_saved_designs(self):
         older = studio.RenderDesign.model_validate({"chromakey_enabled": True})
@@ -97,7 +127,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
         graph = args[args.index("-filter_complex") + 1]
         self.assertIn("scale=1040:1040", graph)
         self.assertIn("crop=1080:1920", graph)
-        self.assertNotIn("chromakey=", graph)
+        self.assertNotIn("colorkey=", graph)
         self.assertNotIn("[banner]", graph)
         self.assertIn("0:a?", args)
         self.assertEqual(args.count("-i"), 2)
@@ -119,7 +149,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             args = run.call_args.args[0]
             graph = args[args.index("-filter_complex") + 1]
             self.assertIn("scale=1060:1060", graph)
-            self.assertIn("chromakey=0x00ff00", graph)
+            self.assertIn("colorkey=0x00ff00", graph)
             self.assertIn("scale=620:-1", graph)
             self.assertIn("overlay=125:1570", graph)
             self.assertEqual(args.count("-i"), 3)
@@ -144,8 +174,8 @@ class TelegramRenderDesignTests(unittest.TestCase):
             args = run.call_args.args[0]
             graph = args[args.index("-filter_complex") + 1]
             self.assertIn("[2:v]scale=", graph)
-            self.assertIn("chromakey=0x1a4cdd:0.200:0.070,", graph)
-            self.assertNotIn("chromakey=", graph.split("[circle];")[0])
+            self.assertIn("colorkey=0x1a4cdd:0.200:0.070,", graph)
+            self.assertNotIn("colorkey=", graph.split("[circle];")[0])
             self.assertIn("-loop", args)
 
     def test_video_banner_repeats_frames_but_keeps_only_telegram_audio(self):
@@ -300,6 +330,78 @@ class TelegramDesignApiTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as e:
                 studio.update_design(studio.RenderDesign(banner_enabled=True))
             self.assertEqual(e.exception.status_code, 409)
+
+
+class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(
+        shutil.which("ffmpeg") and shutil.which("ffprobe"),
+        "FFmpeg and FFprobe are required for the real render regression test",
+    )
+    def test_rgb_key_removes_green_banner_in_real_mp4_and_keeps_logo(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source.mp4"
+            background = root / "background.png"
+            banner = root / "banner.png"
+            output = root / "rendered.mp4"
+            frame = root / "rendered-frame.png"
+
+            Image.new("RGB", (1080, 1920), (32, 80, 160)).save(background)
+            banner_image = Image.new("RGB", (100, 50), (20, 242, 12))
+            ImageDraw.Draw(banner_image).rectangle(
+                (40, 15, 60, 35), fill=(225, 32, 38)
+            )
+            banner_image.save(banner)
+
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi", "-i", "color=c=black:s=320x320:r=30:d=1",
+                    "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    str(source),
+                ],
+                check=True, capture_output=True,
+            )
+
+            design = studio.RenderDesign(
+                circle_size=400, circle_x=650, circle_y=1400,
+                progress_enabled=False, timecode_enabled=False,
+                render_speed="quiet",
+                banner_enabled=True, banner_x=0, banner_y=0, banner_width=200,
+                chromakey_enabled=True, chromakey_color="#00ff00",
+                chromakey_similarity=0.20, chromakey_blend=0.07,
+            )
+            studio.render(source, background, output, design, banner)
+
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", "0.7", "-i", str(output),
+                    "-frames:v", "1", str(frame),
+                ],
+                check=True, capture_output=True,
+            )
+            with Image.open(frame) as rendered:
+                rendered = rendered.convert("RGB")
+                keyed_background_pixel = rendered.getpixel((20, 20))
+                preserved_logo_pixel = rendered.getpixel((100, 50))
+
+            background_error = sum(
+                abs(actual - expected)
+                for actual, expected in zip(keyed_background_pixel, (32, 80, 160))
+            )
+            logo_error = sum(
+                abs(actual - expected)
+                for actual, expected in zip(preserved_logo_pixel, (225, 32, 38))
+            )
+            self.assertLess(
+                background_error, 100,
+                f"Green banner background remained: {keyed_background_pixel}",
+            )
+            self.assertLess(
+                logo_error, 100,
+                f"Non-key logo was damaged: {preserved_logo_pixel}",
+            )
 
 
 if __name__ == "__main__":
