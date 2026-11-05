@@ -6,11 +6,15 @@ on:
       - "feature/viral-pro-integrated-mp4-*"
       - "feature/viral-pro-v3-*"
       - "fix/viral-pro-whisper-canvas-*"
+      - "fix/telegram-studio-rgb-colorkey-*"
   pull_request:
     paths:
       - "app/viral_reels_pro.py"
       - "static/viral-reels-pro.html"
       - "tests/test_viral_reels_pro.py"
+      - "app/telegram_studio.py"
+      - "static/telegram-studio.html"
+      - "tests/test_telegram_studio_layout.py"
       - ".github/workflows/viral-pro-windows.yml"
   workflow_dispatch:
 
@@ -49,6 +53,14 @@ jobs:
       - name: Check existing Telegram circle templates
         shell: pwsh
         run: python -m unittest discover -s tests -p "test_circle*.py" -v
+      - name: Check Telegram Studio JavaScript syntax
+        shell: pwsh
+        run: |
+          python -c "from pathlib import Path; import re; source=Path('static/telegram-studio.html').read_text(encoding='utf-8'); scripts=re.findall(r'<script(?:\\s[^>]*)?>(.*?)</script>',source,re.S); Path('_telegram_inline.js').write_text('\\n'.join(scripts),encoding='utf-8')"
+          node --check _telegram_inline.js
+      - name: Run Telegram Studio chromakey render tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_telegram_studio_layout.py" -v
       - name: Check MP4 metadata export regression
         shell: pwsh
         run: python -m unittest discover -s tests -p "test_render_clean_mp4_metadata.py" -v
