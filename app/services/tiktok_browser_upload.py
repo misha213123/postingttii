@@ -1,4 +1,4 @@
-"""Experimental TikTok Studio UI publisher for the second *connected* account.
+"""Experimental TikTok Studio UI publisher for the second *connected* slot.
 
 Use only if AutoTok's normal web-upload API rejects that account. This calls
 TikTok's ordinary creator UI in an installed Chrome browser. No raw TikTok
@@ -24,10 +24,13 @@ from app.config import settings
 STUDIO_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload"
 POST_BUTTON = re.compile(r"^(Post|Publish|Опубликовать|Публикуване|Publier)$", re.I)
 PUBLIC_OPTION = re.compile(r"^(Everyone|Public|Все|Для всех)$", re.I)
+COPYRIGHT_PENDING = re.compile(r"copyright check is incomplete", re.I)
 
 
 def _session(alias: str) -> tuple[list[dict], str | None]:
-    """Read AutoTok's existing login locally; do not print/return cookie values."""
+    """Read one saved AutoTok login; never print or return cookie values in errors."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", alias):
+        raise RuntimeError("Некорректное имя сессии TikTok")
     root = Path(os.getenv("AUTOTOK_HOME") or (Path.home() / ".autotok"))
     path = root / "accounts" / f"{alias}.json"
     if not path.is_file():
@@ -59,7 +62,7 @@ def _session(alias: str) -> tuple[list[dict], str | None]:
         raise RuntimeError("AutoTok: в сохранённом аккаунте отсутствует sessionid")
     if data.get("proxy"):
         raise RuntimeError(
-            "Для account2 настроен прокси. Браузерный маршрут не активируется, "
+            f"Для {alias} настроен прокси. Браузерный маршрут не активируется, "
             "чтобы не отправлять публикацию с другого адреса."
         )
     return cookies, data.get("user_agent")
@@ -123,6 +126,16 @@ def _public_selected(page) -> bool:
     return False
 
 
+def _copyright_check_pending(page) -> bool:
+    """Do not auto-confirm an unfinished TikTok copyright review."""
+    for scope in _scopes(page):
+        pending = scope.get_by_text(COPYRIGHT_PENDING)
+        for index in range(min(pending.count(), 3)):
+            if pending.nth(index).is_visible():
+                return True
+    return False
+
+
 def _active_page(context, page, phase: str):
     """Follow an existing TikTok Studio tab if the site replaces its window.
 
@@ -150,10 +163,10 @@ def _active_page(context, page, phase: str):
     )
 
 
-def _diagnostic_screenshot(page, context=None) -> str:
+def _diagnostic_screenshot(page, context=None, alias: str = "account2") -> str:
     destination = settings.data_dir / "tiktok_browser_errors"
     destination.mkdir(parents=True, exist_ok=True)
-    path = destination / f"account2_{int(time.time())}.png"
+    path = destination / f"{alias}_{int(time.time())}.png"
     pages = [page]
     if context is not None:
         try:
@@ -172,8 +185,8 @@ def _diagnostic_screenshot(page, context=None) -> str:
 
 def publish_browser_account2(video: Path, caption: str, alias: str = "account2") -> dict:
     """One autonomous browser upload. Never attempt a second post automatically."""
-    if alias != "account2":
-        raise RuntimeError("Браузерный режим разрешён только для account2")
+    # Slot 2 can be linked to any validated AutoTok alias, e.g. account5.
+    # _session validates the alias before accessing files or opening Chrome.
     if not video.is_file():
         raise RuntimeError("Не найден файл: " + video.name)
     cookies, user_agent = _session(alias)
@@ -197,7 +210,7 @@ def publish_browser_account2(video: Path, caption: str, alias: str = "account2")
         try:
             page.goto(STUDIO_UPLOAD_URL, wait_until="domcontentloaded", timeout=90000)
             if "login" in page.url.lower():
-                raise RuntimeError("TikTok перенаправил на вход; проверь сохранённую сессию account2")
+                raise RuntimeError(f"TikTok перенаправил на вход; проверь сохранённую сессию {alias}")
 
             phase = "поиск поля загрузки"
             file_input = None
@@ -254,6 +267,13 @@ def publish_browser_account2(video: Path, caption: str, alias: str = "account2")
             # Do not retry a submitted Post even if confirmation times out.
             for _ in range(80):
                 page = _active_page(context, page, phase)
+                if _copyright_check_pending(page):
+                    raise RuntimeError(
+                        "TikTok Studio показал: copyright check is incomplete. "
+                        "Публикация не подтверждена; кнопка 'Post now' автоматически "
+                        "не нажимается. Дождись завершения проверки и проверь "
+                        "раздел Posts до новой попытки."
+                    )
                 if "/tiktokstudio/content" in page.url:
                     return {
                         "id": None, "platform": "tiktok", "provider": "browser",
@@ -263,14 +283,14 @@ def publish_browser_account2(video: Path, caption: str, alias: str = "account2")
                 time.sleep(1)
             raise RuntimeError(
                 "Кнопка Post нажата, но подтверждения от TikTok Studio нет. "
-                "Возможно, публикация прошла — проверь account2 перед повтором."
+                f"Возможно, публикация прошла — проверь {alias} перед повтором."
             )
         except Exception as exc:
-            screenshot = _diagnostic_screenshot(page, context)
+            screenshot = _diagnostic_screenshot(page, context, alias)
             click_state = "после нажатия Post" if posted else "до нажатия Post"
             event_summary = ", ".join(events[-4:]) if events else "событий закрытия нет"
             raise RuntimeError(
-                f"Браузер TikTok account2 ({click_state}; этап: {phase}): {exc}. "
+                f"Браузер TikTok {alias} ({click_state}; этап: {phase}): {exc}. "
                 f"События: {event_summary}. Скриншот ошибки: {screenshot}"
             ) from exc
         finally:
@@ -282,12 +302,12 @@ def publish_browser_account2(video: Path, caption: str, alias: str = "account2")
 
 
 
-def probe_account2_browser() -> dict:
-    """Read-only check: is account2's TikTok Studio upload form accessible?
+def probe_account2_browser(alias: str = "account2") -> dict:
+    """Read-only check: is the saved TikTok Studio upload form accessible?
 
     Does not attach a video, type a caption, click Post, or modify sessions.
     """
-    cookies, user_agent = _session("account2")
+    cookies, user_agent = _session(alias)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel="chrome", headless=False)
         options = {"locale": "en-US", "viewport": {"width": 1440, "height": 900}}
