@@ -22,7 +22,12 @@
   const templateSelect=document.createElement('select');
   for(const [name,title] of [
     ['classic','Шаблон 1 · обычная обводка и полоска'],
-    ['orbit_dots','Шаблон 2 · белый бегущий блик и загрузка (без времени)'],
+    ['orbit_dots','Шаблон 2 · белый бегущий блик и загрузка'],
+    ['orbit_arc','Шаблон 3 · вращающаяся световая дуга'],
+    ['pulse_ring','Шаблон 4 · пульсирующее кольцо'],
+    ['double_orbit','Шаблон 5 · двойная орбита'],
+    ['dashed_spin','Шаблон 6 · вращающийся пунктир'],
+    ['ripple','Шаблон 7 · расходящиеся волны'],
   ]){
     const option=document.createElement('option');
     option.value=name;option.textContent=title;templateSelect.append(option);
@@ -31,7 +36,7 @@
   const templates={};
   window.setStudioTemplatePresets=presets=>{
     if(presets&&typeof presets==='object'){
-      for(const key of ['classic','orbit_dots']){
+      for(const key of ['classic','orbit_dots','orbit_arc','pulse_ring','double_orbit','dashed_spin','ripple']){
         if(presets[key])templates[key]={...presets[key]};
       }
     }
@@ -135,7 +140,7 @@
     // The second style shows the existing backdrop alone for 0.38 seconds;
     // circle, white moving highlight, progress and banner then fade in.
     stage.classList.toggle('studio-intro-frame',
-      designState.visual_template==='orbit_dots' &&
+      designState.visual_template!=='classic' &&
       sample.readyState>=2 && !sample.paused && current<0.38);
   }
   function sync(){
@@ -156,17 +161,19 @@
     color.value=state.circle_border_color;
     fps.value=String(state.output_fps);
     speed.value=state.render_speed||'quiet';
-    const quiet=speed.value==='quiet';
+    const quiet=speed.value==='quiet'&&state.quality_preset!=='maximum';
     fps.disabled=quiet;
     checks.smooth_motion.disabled=speed.value!=='original';
-    speedHint.textContent=quiet?
+    speedHint.textContent=state.quality_preset==='maximum'?
+      'Максимальное качество: 60 FPS, очистка шума и H.264 CRF 16. Рендер медленнее; новые кадры создаются при включённой интерполяции.':
+      quiet?
       'Эффективно 30 FPS, H.264 veryfast, без тяжёлых фильтров и интерполяции. '+
       'Размер 1080×1920, фон, кружок, обводка, прогресс и баннер сохраняются.':
       speed.value==='balanced'?
       'Оставляет выбранные FPS и качество, но ограничивает FFmpeg четырьмя потоками.':
       'Все фильтры и выбранные FPS без ограничения потоков — максимальная нагрузка.';
-    const orbit=state.visual_template==='orbit_dots';
-    templateSelect.value=orbit?'orbit_dots':'classic';
+    const orbit=state.visual_template!=='classic';
+    templateSelect.value=state.visual_template||'classic';
     checks.timecode_enabled.disabled=orbit;
     progress.classList.toggle('studio-progress-loading',orbit);
     orbitLayer.hidden=!orbit;
