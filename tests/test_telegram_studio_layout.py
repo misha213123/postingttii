@@ -440,7 +440,8 @@ class TelegramRenderDesignTests(unittest.TestCase):
                 graph = args[args.index("-filter_complex") + 1]
                 self.assertEqual(args.count("-i"), 5)  # source, background, banner, cached mask and border
                 self.assertEqual(args.count("-stream_loop"), 2)  # background + video banner
-                self.assertNotIn("-loop", args)
+                self.assertEqual(args.count("-loop"), 2)  # static cached PNGs only
+                self.assertLess(args.index(str(banner)), args.index("-loop"))
                 self.assertIn("overlay=120:1460", graph)
                 self.assertEqual(args[args.index("-map") + 1], "[v]")
                 self.assertEqual(args[args.index("-map", args.index("-map")+1) + 1], "0:a?")
