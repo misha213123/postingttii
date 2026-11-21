@@ -25,7 +25,7 @@ class CleanMp4ExportTests(unittest.TestCase):
         with (
             patch.object(telegram, "duration", side_effect=[2.0, 8.0]),
             patch.object(telegram.random, "uniform", return_value=0.0),
-            patch.object(telegram.subprocess, "run") as run,
+            patch.object(telegram, "run_ffmpeg_render") as run,
         ):
             telegram.render(
                 Path("source.mp4"), Path("bg.mp4"), Path("output.mp4"),
