@@ -666,6 +666,15 @@ class TelegramNativeBannerFpsRenderIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(rate, 90, delta=.1)
 
 
+class TelegramTemplateSaveGuardTests(unittest.TestCase):
+    def test_failed_preset_save_blocks_render_instead_of_using_stale_template(self):
+        html = (Path(__file__).resolve().parents[1] /
+                "static/telegram-studio.html").read_text(encoding="utf-8")
+        self.assertIn("designSaveError=err", html)
+        self.assertIn("if(designSaveError)throw Error('Шаблон не сохранён:", html)
+        self.assertIn("await designSaveQueue;", html)
+
+
 class TelegramTemplateRenderFallbackTests(unittest.TestCase):
     def test_optical_flow_failure_retries_same_template_with_banner_and_fps(self):
         with tempfile.TemporaryDirectory() as folder:
