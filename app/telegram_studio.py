@@ -184,7 +184,7 @@ class RenderDesign(BaseModel):
     chromakey_version: int = 1
     chromakey_mode: Literal["standard", "advanced"] = "advanced"
     chromakey_color: str = Field(default="#00ff00", pattern=r"^#[0-9A-Fa-f]{6}$")
-    chromakey_similarity: float = Field(default=0.18, ge=0.01, le=1.0)
+    chromakey_similarity: float = Field(default=0.22, ge=0.01, le=1.0)
     chromakey_blend: float = Field(default=0.07, ge=0.0, le=1.0)
     banner_enabled: bool = False
     # Negative coordinates deliberately allow moving the ad outside the
@@ -309,7 +309,7 @@ def render_performance(design: RenderDesign) -> dict:
 
 def effective_chroma_similarity(design: RenderDesign) -> float:
     """Compression-safe RGB threshold; manual settings above the floor win."""
-    return (max(0.18, design.chromakey_similarity)
+    return (max(0.22, design.chromakey_similarity)
             if design.chromakey_mode == "advanced" else design.chromakey_similarity)
 
 
