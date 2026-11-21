@@ -679,6 +679,24 @@ class TelegramTemplateSaveGuardTests(unittest.TestCase):
 
 
 class TelegramRenderSpeedAndStopTests(unittest.TestCase):
+    def test_saved_maximum_preset_is_migrated_to_safe_speed(self):
+        old = {"quality_preset": "maximum", "render_speed": "original",
+               "smooth_motion": True, "source_max_fps": True}
+        config = {"render_design": old,
+                  "render_design_presets": {"pulse_ring": old}}
+        design = studio.effective_design(config)
+        self.assertEqual(design.render_speed, "balanced")
+        self.assertFalse(design.smooth_motion)
+        self.assertFalse(design.source_max_fps)
+        presets = studio._design_presets(config)
+        self.assertEqual(presets["pulse_ring"]["render_speed"], "balanced")
+        self.assertFalse(presets["pulse_ring"]["smooth_motion"])
+        explicit = studio.effective_design({
+            "render_design": {**old, "performance_version": 2}
+        })
+        self.assertEqual(explicit.render_speed, "original")
+        self.assertTrue(explicit.smooth_motion)
+
     def test_maximum_balanced_has_no_expensive_motion(self):
         d = studio.RenderDesign(quality_preset="maximum",
                                 render_speed="balanced", output_fps=60,
