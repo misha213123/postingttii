@@ -213,7 +213,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             args = run.call_args.args[0]
             graph = args[args.index("-filter_complex") + 1]
             self.assertIn("[2:v]scale=", graph)
-            self.assertIn("colorkey=0x1a4cdd:0.200:0.070,", graph)
+            self.assertIn("colorkey=0x1a4cdd:0.100:0.070,", graph)
             self.assertNotIn("colorkey=", graph.split("[circle];")[0])
             self.assertIn("-loop", args)
 
