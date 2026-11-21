@@ -418,7 +418,9 @@ def render_frame_rate(
         "banner": (video_frame_rate(banner) if banner and design.banner_enabled else None),
     }
     target = performance["fps"]
-    if design.source_max_fps:
+    if design.source_max_fps and not (
+        design.quality_preset == "maximum" and design.render_speed == "quiet"
+    ):
         considered = (native.values() if performance["quality"] == "maximum"
                       else (native["banner"],))
         valid = [rate for rate in considered if rate is not None]
