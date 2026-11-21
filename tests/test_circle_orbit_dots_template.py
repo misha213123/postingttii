@@ -73,7 +73,7 @@ class CircleFFmpegTests(unittest.TestCase):
             patch.object(tg, "is_image_background", return_value=False),
             patch.object(tg.random, "uniform", return_value=0.0),
             patch.object(tg, "orbit_sprite_path", return_value=Path("orbit.png")),
-            patch.object(tg.subprocess, "run") as run,
+            patch.object(tg, "run_ffmpeg_render") as run,
             patch.object(Path, "is_file", return_value=True),
         ):
             tg.render(Path("note.mp4"), Path("background.mp4"),

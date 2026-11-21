@@ -145,16 +145,16 @@
   fps.value=String(designState.output_fps);fpsRow.append(fps);controls.append(fpsRow);
   fps.addEventListener('change',()=>{designState.output_fps=Number(fps.value);saveRenderDesign();});
   checkbox('Авто FPS: сохранить все исходные кадры баннера (до 120 FPS)','source_max_fps');
-  checkbox('Оптическая интерполяция кружка и видеофона','smooth_motion');
+  checkbox('Дополнительные кадры кружка (только режим «Исходный», медленнее)','smooth_motion');
   const ultra=document.createElement('button');
   ultra.type='button';ultra.id='studioUltraQuality';
-  ultra.textContent='🚀 Максимум: улучшить кружок + плавность + исходный FPS баннера';
+  ultra.textContent='🚀 Максимум качества · ускоренный режим';
   ultra.className='studio-ultra-quality';
   controls.append(ultra);
   ultra.addEventListener('click',()=>{
     Object.assign(designState,{
-      quality_preset:'maximum',render_speed:'original',output_fps:60,
-      source_max_fps:true,smooth_motion:true,chromakey_mode:'advanced',
+      quality_preset:'maximum',render_speed:'balanced',output_fps:60,
+      source_max_fps:false,smooth_motion:false,chromakey_mode:'advanced',
       chromakey_enabled:true,
     });
     const preset=document.getElementById('tgQualityPreset');
@@ -164,7 +164,7 @@
     updateDesignPreview();saveRenderDesign();
   });
   const tip=document.createElement('span');
-  tip.className='hint';tip.textContent='Кнопка «Максимум» включает CRF 14, оптическое создание промежуточных кадров кружка и видеофона, авто FPS до 120 и усиленный хромакей. Видео-баннер не интерполируется: его исходные кадры сохраняются, дополнительные кадры удерживаются. Это медленный рендер и большой MP4; из плохого источника нельзя восстановить несуществующие детали.';
+  tip.className='hint';tip.textContent='Кнопка «Максимум» теперь выбирает 60 FPS, быстрый H.264 CRF 16 и улучшение кружка без тяжёлой интерполяции фона. Режим «Исходный» и дополнительные кадры кружка включаются только вручную. Для самого быстрого монтажа выбери «Тихий»: 30 FPS.';
   controls.append(tip);
   scale.closest('.design-field').insertAdjacentElement('afterend',controls);
 
@@ -239,11 +239,11 @@
     color.value=state.circle_border_color;
     fps.value=String(state.output_fps);
     speed.value=state.render_speed||'quiet';
-    const quiet=speed.value==='quiet'&&state.quality_preset!=='maximum';
+    const quiet=speed.value==='quiet';
     fps.disabled=quiet;
-    checks.smooth_motion.disabled=speed.value!=='original'&&state.quality_preset!=='maximum';
+    checks.smooth_motion.disabled=speed.value!=='original';
     speedHint.textContent=state.quality_preset==='maximum'?
-      'Максимум: H.264 CRF 14 без ограничения битрейта, очистка шума и резкость только на кружке, авто 60–120 FPS. Оптическая интерполяция создаёт промежуточные кадры при включённой галочке. Видео-баннер не размывается фильтрами.':
+      'Максимум: «Тихий» — 30 FPS, «Сбалансированный» — выбранные FPS с быстрым CRF 16, «Исходный» — медленнее. Фон больше не проходит тяжёлую интерполяцию; дополнительные кадры кружка — только вручную.':
       quiet?
       'Эффективно 30 FPS, H.264 veryfast, без тяжёлых фильтров и интерполяции. '+
       'Размер 1080×1920, фон, кружок, обводка, прогресс и баннер сохраняются.':

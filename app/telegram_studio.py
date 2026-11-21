@@ -10,6 +10,7 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -41,6 +42,53 @@ LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
 JOB_TASK = None
 STOP_REQUESTED = False
+ACTIVE_RENDER_PROCESS: subprocess.Popen | None = None
+ACTIVE_RENDER_LOCK = threading.Lock()
+
+
+class RenderStopped(Exception):
+    """A user requested to stop the current render and its FFmpeg process."""
+
+
+def run_ffmpeg_render(command: list[str], *, cwd: str | None = None,
+                      timeout: float | None = None) -> subprocess.CompletedProcess:
+    """Run cancellable FFmpeg, tracking the actual child process.
+
+    subprocess.run() hid the PID, so the old UI could not stop a render that
+    was already spending minutes inside FFmpeg. No other FFmpeg tasks on the
+    computer are touched.
+    """
+    global ACTIVE_RENDER_PROCESS
+    if STOP_REQUESTED and JOB.get("status") == "running":
+        raise RenderStopped()
+    process = subprocess.Popen(
+        command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    with ACTIVE_RENDER_LOCK:
+        ACTIVE_RENDER_PROCESS = process
+        if STOP_REQUESTED and JOB.get("status") == "running":
+            process.terminate()
+    try:
+        try:
+            output, errors = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            output, errors = process.communicate()
+            raise subprocess.TimeoutExpired(
+                command, timeout, output=output, stderr=errors
+            ) from exc
+    finally:
+        with ACTIVE_RENDER_LOCK:
+            if ACTIVE_RENDER_PROCESS is process:
+                ACTIVE_RENDER_PROCESS = None
+    if STOP_REQUESTED and JOB.get("status") == "running":
+        raise RenderStopped()
+    if process.returncode:
+        raise subprocess.CalledProcessError(
+            process.returncode, command, output=output, stderr=errors
+        )
+    return subprocess.CompletedProcess(command, process.returncode, output, errors)
 BACKGROUND_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 BACKGROUND_SUFFIXES = BACKGROUND_IMAGE_SUFFIXES | {".mp4"}
 
@@ -172,6 +220,7 @@ class RenderDesign(BaseModel):
     source_max_fps: bool = True  # Match the highest native video FPS (up to 120).
     smooth_motion: bool = False
     quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
+    performance_version: int = Field(default=2, ge=1)
     export_resolution: Literal[1080, 2160] = 1080
     denoise_strength: float = Field(default=1.0, ge=0.0, le=3.0)
     sharpening_strength: float = Field(default=0.5, ge=0.0, le=1.5)
@@ -194,18 +243,33 @@ class RenderDesign(BaseModel):
     banner_width: int = Field(default=540, ge=100, le=1080)
 
 
+def _migrate_legacy_performance(raw: dict) -> dict:
+    """Undo the old Maximum button's accidental optical-flow auto-enable.
+
+    Explicitly saved settings from this release include performance_version=2
+    and are never overridden, even if the user selects Original on purpose.
+    """
+    raw = dict(raw)
+    if raw.get("quality_preset") == "maximum" and "performance_version" not in raw:
+        raw.update(render_speed="balanced", smooth_motion=False,
+                   source_max_fps=False)
+    return raw
+
+
 def _design_presets(data: dict) -> dict[str, dict]:
     """Preserve the existing classic design and store the new style separately."""
-    original = dict(data.get("render_design") or {})
+    original = _migrate_legacy_performance(data.get("render_design") or {})
     saved = dict(data.get("render_design_presets") or {})
-    classic = RenderDesign.model_validate({
-        **original, **saved.get("classic", {}), "visual_template": "classic"
-    }).model_dump()
+    classic = RenderDesign.model_validate(_migrate_legacy_performance({
+        **original, **_migrate_legacy_performance(saved.get("classic", {})),
+        "visual_template": "classic"
+    })).model_dump()
     presets = {"classic": classic}
     for style in ("orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple",
                   "comet_tail", "halo_breathe", "twin_comets", "starlight", "radar_sweep"):
+        style_saved = _migrate_legacy_performance(saved.get(style, {}))
         presets[style] = RenderDesign.model_validate({
-            **classic, **saved.get(style, {}), "visual_template": style,
+            **classic, **style_saved, "visual_template": style,
             **({"timecode_enabled": False} if not saved.get(style) else {}),
         }).model_dump()
     return presets
@@ -213,7 +277,7 @@ def _design_presets(data: dict) -> dict[str, dict]:
 
 def effective_design(data: dict) -> RenderDesign:
     """Migrate pre-chromakey saved banners once, preserving newer manual off choices."""
-    raw = dict(data.get("render_design") or {})
+    raw = _migrate_legacy_performance(data.get("render_design") or {})
     if data.get("banner_file") and "chromakey_version" not in raw:
         raw["chromakey_enabled"] = True
     return RenderDesign.model_validate(raw)
@@ -289,7 +353,17 @@ def render_performance(design: RenderDesign) -> dict:
     """
     # Maximum quality must not silently turn into standard 30 FPS in quiet mode.
     if design.quality_preset == "maximum":
-        return dict(fps=max(60, design.output_fps), motion=design.smooth_motion,
+        # Maximum describes picture quality, not an obligation to run
+        # CPU-heavy optical flow at 1080p/120fps. Quiet/balanced are safe.
+        if design.render_speed == "quiet":
+            return dict(fps=30, motion=False, quality="maximum",
+                        filter_threads=2, video_threads=2,
+                        encoder=["-preset", "veryfast", "-crf", "17"])
+        if design.render_speed == "balanced":
+            return dict(fps=design.output_fps, motion=False, quality="maximum",
+                        filter_threads=4, video_threads=4,
+                        encoder=["-preset", "veryfast", "-crf", "16"])
+        return dict(fps=design.output_fps, motion=design.smooth_motion,
                     quality="maximum", filter_threads=4, video_threads=4,
                     encoder=h264_quality_args("maximum"))
     if design.render_speed == "quiet":
@@ -408,7 +482,9 @@ def render_frame_rate(
         "banner": (video_frame_rate(banner) if banner and design.banner_enabled else None),
     }
     target = performance["fps"]
-    if design.source_max_fps:
+    if design.source_max_fps and not (
+        design.quality_preset == "maximum" and design.render_speed == "quiet"
+    ):
         considered = (native.values() if performance["quality"] == "maximum"
                       else (native["banner"],))
         valid = [rate for rate in considered if rate is not None]
@@ -688,6 +764,21 @@ def status():
             "telegram_configured": bool(os.getenv("TG_API_ID") and os.getenv("TG_API_HASH")),
             "telegram_session_exists": SESSION.with_suffix(".session").exists(),
             "ffmpeg_ready": bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))}
+
+
+@router.post("/stop")
+def stop_render():
+    """Stop only this studio's active FFmpeg process, not other video jobs."""
+    global STOP_REQUESTED
+    if JOB.get("status") != "running":
+        return {"stopping": False, "status": JOB.get("status")}
+    STOP_REQUESTED = True
+    JOB["stopping"] = True
+    with ACTIVE_RENDER_LOCK:
+        active = ACTIVE_RENDER_PROCESS
+        if active is not None and active.poll() is None:
+            active.terminate()
+    return {"stopping": True, "status": "stopping"}
 
 
 @router.post("/channels")
@@ -1221,14 +1312,19 @@ def render(
     # Optical flow is applied only when increasing FPS. Do not interpolate
     # an already high-frame-rate circle, and never interpolate banner frames.
     def motion_filter(native_fps: float | None) -> str:
-        if performance["motion"] and fps >= 60 and (native_fps is None or native_fps < fps - 0.5):
-            return (f"minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc:"
-                    "me_mode=bidir:scd=fdiff:scd_threshold=10,")
+        if (performance["motion"] and fps >= 60 and
+                (native_fps is None or native_fps < fps - 0.5)):
+            # The explicitly selected "original" speed mode can synthesize
+            # circle frames. A blend is much cheaper than CPU optical flow;
+            # full-frame background interpolation is always disabled.
+            return f"minterpolate=fps={min(fps, 60)}:mi_mode=blend,fps={fps},"
         return f"fps={fps},"
 
     motion = motion_filter(native["circle"])
-    background_motion = (f"fps={fps}," if is_image_background(bg)
-                         else motion_filter(native["background"]))
+    # Never optical-flow interpolate a full 1080x1920 video background.
+    # It multiplies work by millions of pixels per frame and can turn
+    # a short Telegram circle into a 30-minute CPU render.
+    background_motion = f"fps={fps},"
     source_cleanup = quality_filter_segment(
         performance["quality"], design.denoise_strength, design.sharpening_strength
     )
@@ -1385,10 +1481,34 @@ def render(
         "-movflags", "+faststart", str(target),
     ]
     try:
-        subprocess.run(
-            cmd, capture_output=True, text=True, check=True,
+        # A short Telegram circle must not monopolize the computer for
+        # 30 minutes. A timed-out high-quality attempt is retried once
+        # with the same template, progress bar, circle and chromakey banner.
+        run_ffmpeg_render(
+            cmd, timeout=min(420, max(120, seconds * 8)),
             cwd=str(ROOT) if _is_windows() else None,
         )
+    except subprocess.TimeoutExpired as exc:
+        if "timeout" not in _fallbacks:
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: рендер превысил лимит времени; "
+                "повторяю в быстром режиме 1080p/30 FPS, сохраняя шаблон, "
+                "обводку, прогресс-бар и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={
+                    "quality_preset": "standard", "render_speed": "quiet",
+                    "smooth_motion": False, "source_max_fps": False,
+                    "output_fps": 30, "export_resolution": 1080,
+                }), banner,
+                _fallbacks=_fallbacks | {"timeout"},
+            )
+        raise RuntimeError(
+            "FFmpeg не успел обработать видео даже в быстром режиме. "
+            "Проверь длительность источника и производительность ПК."
+        ) from exc
     except subprocess.CalledProcessError as exc:
         # A CalledProcessError normally begins with the entire ffmpeg command.
         # The Telegram Studio UI previously truncated it before the real
@@ -1487,7 +1607,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                   video_layout=None, video_banner: Path | None = None,
                   video_banner_design: RenderDesign | None = None,
                   force_rerender: bool = False):
-    JOB.update(status="running", total=0, done=0, errors=[], notes=[], media_mode=media_mode)
+    JOB.update(status="running", total=0, done=0, errors=[], notes=[],
+               stopping=False, current_file=None, current_started_at=None,
+               media_mode=media_mode)
     try:
         d = config()
         d.setdefault("processed", [])
@@ -1632,6 +1754,8 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                         save(d)
                         continue
                     # Render to a temporary file, publish only after ffprobe validates it.
+                    JOB["current_file"] = source.name
+                    JOB["current_started_at"] = time.time()
                     temp_target = target.with_name(target.stem + ".rendering.mp4")
                     try:
                         bg = next_background()
@@ -1670,6 +1794,11 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     }
                     save(d)
                     JOB["done"] += 1
+                except RenderStopped:
+                    JOB.setdefault("notes", []).append(
+                        "Рендер остановлен пользователем. Незавершённый MP4 удалён."
+                    )
+                    break
                 except Exception as exc:
                     # Keep the previous valid MP4 if a forced rebuild fails.
                     if not target_preexisting:
@@ -1677,6 +1806,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     # The error is shown in Telegram Studio, not just the
                     # shortened FFmpeg argument list.
                     JOB["errors"].append(f"{key}: {str(exc)[-1750:]}")
+                finally:
+                    JOB["current_file"] = None
+                    JOB["current_started_at"] = None
 
         JOB["status"] = "stopped" if STOP_REQUESTED else "done"
     except asyncio.CancelledError:
@@ -1686,6 +1818,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
         JOB["status"] = "error"
         JOB["errors"].append(str(exc)[:300])
     finally:
+        JOB["current_file"] = None
+        JOB["current_started_at"] = None
+        JOB["stopping"] = False
         LOCK.release()
 
 
@@ -1701,7 +1836,7 @@ async def run(body: RenderRequest):
         raise HTTPException(400, "Начальная дата позже конечной")
     # Snapshot settings at batch start so every Reel uses one consistent layout.
     data = config()
-    design = RenderDesign.model_validate(data.get("render_design", {}))
+    design = effective_design(data)
     try:
         if body.target_slot:
             chosen_folder = (account_folder(body.target_slot) if body.output_folder == "linked"
@@ -1753,6 +1888,10 @@ async def run(body: RenderRequest):
 async def shutdown_telegram_studio():
     global STOP_REQUESTED
     STOP_REQUESTED = True
+    with ACTIVE_RENDER_LOCK:
+        active = ACTIVE_RENDER_PROCESS
+        if active is not None and active.poll() is None:
+            active.terminate()
     if JOB_TASK is not None and not JOB_TASK.done():
         await JOB_TASK
     async with QR_LOCK:

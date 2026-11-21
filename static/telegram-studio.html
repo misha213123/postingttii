@@ -162,7 +162,7 @@
       <select id="tgQualityPreset">
         <option value="standard">Стандартное — как раньше, быстрее</option>
         <option value="enhanced">Улучшенное — лёгкая очистка, чёткость и цвет</option>
-        <option value="maximum">Максимальное · 60 FPS · шумоподавление · CRF 16 (медленно)</option>
+        <option value="maximum">Максимальное · качественный H.264 · без медленной интерполяции</option>
       </select>
       <label for="tgExportResolution">Разрешение экспорта</label>
       <select id="tgExportResolution"><option value="1080">1080×1920 · Reels (рекомендуется)</option><option value="2160">2160×3840 · 4K UHD (медленно, апскейл)</option></select>
@@ -245,7 +245,7 @@
 <section class="card"><h2>04 / Автомонтаж Telegram</h2><p class="muted">Скачиваются только выбранные в разделе 01 типы медиа: кружки или обычные видео. Кружки монтируются круглыми, обычные видео — прямоугольными по шаблону «Instagram · видео». Результаты сохраняются в выбранную папку публикации.</p><p class="muted">По умолчанию сначала старые сообщения, но можно выбрать новые или случайный порядок. Лимит действует на каждый канал; поиск ведётся среди последних 3000 сообщений.</p><div class="inline" style="margin-bottom:10px"><label>Порядок<br><select id="order"><option value="oldest">Сначала старые</option><option value="random">Случайный порядок</option><option value="newest">Сначала новые</option></select></label><label>С даты<br><input id="dateFrom" type="date"></label><label>По дату<br><input id="dateTo" type="date"></label></div><div class="design-field" style="margin-bottom:12px"><label for="tgRenderFolder">Папка для готовых Telegram Reels</label><select id="tgRenderFolder"><option value="default">Стандартная videos/inbox</option></select></div>
 <div class="design-field" style="margin-bottom:12px"><label for="tgRenderTarget">Для какого Instagram-аккаунта монтировать</label><select id="tgRenderTarget"><option value="0">Общий монтаж / без аккаунта</option></select>
 <span class="editor-note">Если выберешь аккаунт, при рендере применится его фон, заданный на главной странице. Можно выбрать привязанную к аккаунту папку.</span></div>
-<div class="inline"><input id="limit" type="number" min="1" max="500" value="30" title="Видео выбранного типа на канал"><button class="primary" id="run" onclick="run()">Скачать и смонтировать только кружки</button></div><label class="design-check" style="margin-top:10px"><input id="forceRerender" type="checkbox">Пересобрать уже созданные ролики с текущими настройками (включая хромакей)</label><div class="progress"><div id="bar"></div></div><div id="progress" class="muted">Ожидание запуска</div><p class="muted">По умолчанию готовые ролики пропускаются. Для применения изменённого оформления включи повторный рендер.</p><a href="/" target="_blank" rel="noopener">Открыть готовые ролики в очереди PostingTTII ↗</a><pre id="log"></pre></section>
+<div class="inline"><input id="limit" type="number" min="1" max="500" value="30" title="Видео выбранного типа на канал"><button class="primary" id="run" onclick="run()">Скачать и смонтировать только кружки</button><button class="danger" id="tgStopRender" onclick="stopTelegramRender()" disabled>■ Остановить рендер</button></div><label class="design-check" style="margin-top:10px"><input id="forceRerender" type="checkbox">Пересобрать уже созданные ролики с текущими настройками (включая хромакей)</label><div class="progress"><div id="bar"></div></div><div id="progress" class="muted">Ожидание запуска</div><p class="muted">По умолчанию готовые ролики пропускаются. Для применения изменённого оформления включи повторный рендер.</p><a href="/" target="_blank" rel="noopener">Открыть готовые ролики в очереди PostingTTII ↗</a><pre id="log"></pre></section>
 <section class="card wide"><h2>05 / Instagram-источники</h2><div class="item"><div><strong>Вход в Instagram через Chrome</strong><p class="muted">Откроется отдельный профиль Chrome для PostingTTII. Авторизация останется в этом профиле. После входа закрой отдельное окно Chrome перед запуском сканирования. Программа проверит видимые ссылки Reels на странице профиля; Instagram может ограничивать доступ.</p><button class="primary" onclick="igOpenChrome()">Открыть Instagram в Chrome</button><hr style="border:0;border-top:1px solid #293953;margin:16px 0"><strong>Дополнительно: файл сессии Instaloader</strong><p class="muted">Один раз создай файл сессии через Instaloader на своём ПК и загрузи его сюда. Пароль в студии не вводится.</p><span id="igSessionState">Проверка...</span></div><div class="actions"><input id="igSessionFile" type="file" accept=".session"><button id="igSessionUpload" onclick="igSessionConnect()">Подключить</button><button onclick="igSessionDisconnect()">Отключить</button></div></div><p class="muted">Добавь ссылки на свои публичные Instagram-профили. Студия выбирает более старые ролики среди найденных, не скачивает обработанные повторно и монтирует без титров: размытие либо случайный фон TG Studio. Готовые MP4 появятся в общей очереди.</p><div class="design-field" style="margin-top:15px"><label for="igRenderFolder">Папка готовых Instagram Reels</label><select id="igRenderFolder"><option value="default">Стандартная videos/inbox</option></select></div>
 <div class="design-field" style="margin-top:10px"><label for="igRenderTarget">Аккаунт назначения и его фон</label><select id="igRenderTarget"><option value="0">Общий монтаж / без аккаунта</option></select><span class="editor-note">Фон конкретного аккаунта настраивается на главной странице PostingTTII.</span></div>
 <div class="inline" style="margin-top:15px"><label>Новых видео на аккаунт <input id="igLimit" type="number" min="1" max="100" value="5" style="width:90px"></label><button id="igRun" class="primary" onclick="igRun()">Скачать и смонтировать Instagram</button></div><div id="igProgress" class="muted" style="margin-top:10px">Ожидание запуска</div><pre id="igLog" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><p class="muted">Для скачивания публичных видео используется yt-dlp. Instagram может ограничивать доступ; ошибки будут показаны ниже. Не требует ввода пароля Instagram.</p></section>
@@ -856,9 +856,9 @@ function initDesignControls(){
     designState.quality_preset=e.target.value;
     if(e.target.value==='maximum'){
       designState.output_fps=60;
-      designState.smooth_motion=true;
-      designState.render_speed='original';
-      designState.source_max_fps=true;
+      designState.smooth_motion=false;
+      designState.render_speed='balanced';
+      designState.source_max_fps=false;
     }
     updateDesignPreview();
     saveRenderDesign();
@@ -1060,7 +1060,14 @@ if(bgSignature!==lastBackgroundSignature){
   }).join(''):'<div class="empty">Добавь MP4 или фото</div>';
 }
 loadLastRender().catch(()=>{});
-const j=d.job;el('progress').textContent=j.status+' · '+(j.media_mode==='videos'?'обычные видео':'кружки')+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=[...(j.notes||[]),...(j.errors||[])].join('\n');el('run').disabled=j.status==='running';
+const j=d.job;
+const elapsed=j.current_started_at?Math.max(0,Math.floor(Date.now()/1000-j.current_started_at)):0;
+const current=j.current_file?' · сейчас: '+j.current_file+' ('+Math.floor(elapsed/60)+'м '+(elapsed%60)+'с)':'';
+el('progress').textContent=(j.stopping?'Останавливаю':j.status)+' · '+(j.media_mode==='videos'?'обычные видео':'кружки')+' · готово '+j.done+' / '+j.total+current;
+el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';
+el('log').textContent=[...(j.notes||[]),...(j.errors||[])].join('\n');
+el('run').disabled=j.status==='running';
+el('tgStopRender').disabled=j.status!=='running'||!!j.stopping;
 }catch(e){el('log').textContent=e.message}}
 el('addChannel').onsubmit=async e=>{e.preventDefault();try{await request('/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:el('channel').value})});el('channel').value='';await refresh()}catch(e){notify(e)}};
 el('upload').onsubmit=async e=>{e.preventDefault();for(const file of el('files').files){const fd=new FormData();fd.append('file',file);try{await request('/backgrounds',{method:'POST',body:fd})}catch(e){notify(e)}}el('files').value='';await refresh()};
@@ -1068,6 +1075,13 @@ document.addEventListener('click',async e=>{try{if(e.target.dataset.channel){awa
 document.addEventListener('change',async e=>{if(e.target.dataset.toggle){try{await request('/backgrounds/'+encodeURIComponent(e.target.dataset.toggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}catch(err){notify(err)}}});
 async function startLogin(){try{await request('/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:el('phone').value})});el('auth').textContent='Код отправлен'}catch(e){notify(e)}}
 async function finishLogin(){try{const d=await request('/auth/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:el('code').value,password:el('password').value})});el('auth').textContent=d.password_required?'Введи пароль 2FA':'Telegram подключён';el('code').value='';el('password').value=''}catch(e){notify(e)}}
+async function stopTelegramRender(){
+  try{
+    const d=await request('/stop',{method:'POST'});
+    el('progress').textContent=d.stopping?'Останавливаю текущий рендер FFmpeg...':'Сейчас рендер не запущен';
+    await refresh();
+  }catch(e){notify(e)}
+}
 async function run(){
   try{
     const mode=el('tgMediaMode').value==='videos'?'videos':'circles';

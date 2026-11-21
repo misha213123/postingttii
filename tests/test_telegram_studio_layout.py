@@ -37,9 +37,10 @@ class TelegramRingAndQualityTests(unittest.TestCase):
             quality_preset="maximum", render_speed="quiet", output_fps=30,
         )
         performance = studio.render_performance(design)
-        self.assertEqual(performance["fps"], 60)
+        self.assertEqual(performance["fps"], 30)
+        self.assertFalse(performance["motion"])
         self.assertEqual(performance["quality"], "maximum")
-        self.assertIn("14", performance["encoder"])
+        self.assertIn("17", performance["encoder"])
 
     def test_old_banner_chromakey_migrates_but_manual_off_is_preserved(self):
         old = {"banner_file": "old.png", "render_design": {
@@ -56,10 +57,10 @@ class TelegramRingAndQualityTests(unittest.TestCase):
         self.assertNotIn("hqdn3d", studio.quality_filter_segment("maximum", 0, 0.4))
         self.assertNotIn("unsharp", studio.quality_filter_segment("maximum", 1, 0))
         with (patch.object(studio, "duration", side_effect=[8.0, 20.0]),
-              patch.object(studio.subprocess, "run") as run):
+              patch.object(studio, "run_ffmpeg_render") as run):
             studio.render(Path("circle.mp4"), Path("background.mp4"),
                           Path("output.mp4"), studio.RenderDesign(
-                              quality_preset="maximum", render_speed="quiet",
+                              quality_preset="maximum", render_speed="original",
                               smooth_motion=True, denoise_strength=1.4,
                               sharpening_strength=0.7))
         args = run.call_args.args[0]
@@ -76,7 +77,7 @@ class TelegramRingAndQualityTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             studio.RenderDesign(export_resolution=1440)
         with (patch.object(studio, "duration", side_effect=[8.0, 20.0]),
-              patch.object(studio.subprocess, "run") as run):
+              patch.object(studio, "run_ffmpeg_render") as run):
             studio.render(Path("circle.mp4"), Path("background.mp4"),
                           Path("output.mp4"), studio.RenderDesign(
                               export_resolution=2160, quality_preset="maximum"))
@@ -134,6 +135,7 @@ class TelegramUltraRenderSettingsTests(unittest.TestCase):
 
     def test_maximum_matches_native_source_fps_without_downsampling(self):
         design = studio.RenderDesign(quality_preset="maximum",
+                                     render_speed="original",
                                      output_fps=60, source_max_fps=True)
         with patch.object(studio, "video_frame_rate",
                           side_effect=[30.0, 24.0, 90.0]):
@@ -159,11 +161,12 @@ class TelegramUltraRenderSettingsTests(unittest.TestCase):
 
     def test_120fps_is_capped_and_4k_h264_level_is_sufficient(self):
         d = studio.RenderDesign(quality_preset="maximum",
+                                render_speed="original",
                                 export_resolution=2160, output_fps=120,
                                 smooth_motion=False)
         with (patch.object(studio, "duration", side_effect=[1.0, 2.0]),
               patch.object(studio, "video_frame_rate", return_value=120.0),
-              patch.object(studio.subprocess, "run") as run):
+              patch.object(studio, "run_ffmpeg_render") as run):
             studio.render(Path("circle.mp4"), Path("bg.mp4"),
                           Path("out.mp4"), d)
         args = run.call_args.args[0]
@@ -177,7 +180,7 @@ class TelegramUltraRenderSettingsTests(unittest.TestCase):
             banner = Path(folder) / "ad.png"
             banner.write_bytes(b"placeholder")
             with (patch.object(studio, "duration", side_effect=[1.0, 2.0]),
-                  patch.object(studio.subprocess, "run") as run):
+                  patch.object(studio, "run_ffmpeg_render") as run):
                 studio.render(Path("circle.mp4"), Path("bg.mp4"),
                               Path("out.mp4"), studio.RenderDesign(
                                   quality_preset="maximum", smooth_motion=False,
@@ -199,7 +202,7 @@ class TelegramUltraRenderSettingsTests(unittest.TestCase):
 class TelegramProgressStyleTests(unittest.TestCase):
     def _graph(self, **kwargs):
         with (patch.object(studio, "duration", side_effect=[2.0, 10.0]),
-              patch.object(studio.subprocess, "run") as run):
+              patch.object(studio, "run_ffmpeg_render") as run):
             studio.render(Path("circle.mp4"), Path("background.mp4"),
                           Path("out.mp4"), studio.RenderDesign(**kwargs))
         args = run.call_args.args[0]
@@ -304,7 +307,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
                 with (
                     self.subTest(color=color),
                     patch.object(studio, "duration", side_effect=[8.0, 20.0]),
-                    patch.object(studio.subprocess, "run") as run,
+                    patch.object(studio, "run_ffmpeg_render") as run,
                 ):
                     design = studio.RenderDesign(
                         banner_enabled=True, chromakey_enabled=True,
@@ -330,7 +333,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
     def test_without_banner_chromakey_never_changes_telegram_circle(self):
         with (
             patch.object(studio, "duration", side_effect=[8.0, 20.0]),
-            patch.object(studio.subprocess, "run") as run,
+            patch.object(studio, "run_ffmpeg_render") as run,
         ):
             studio.render(
                 Path("tg-circle.mp4"), Path("background.mp4"),
@@ -361,7 +364,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
         with (
             patch.object(studio, "duration", side_effect=[8.0, 20.0]),
             patch.object(studio.random, "uniform", return_value=2.0),
-            patch.object(studio.subprocess, "run") as run,
+            patch.object(studio, "run_ffmpeg_render") as run,
         ):
             studio.render(Path("circle.mp4"), Path("background.mp4"), Path("output.mp4"))
         args = run.call_args.args[0]
@@ -384,7 +387,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             with (
                 patch.object(studio, "duration", side_effect=[8.0, 20.0]),
                 patch.object(studio.random, "uniform", return_value=0),
-                patch.object(studio.subprocess, "run") as run,
+                patch.object(studio, "run_ffmpeg_render") as run,
             ):
                 studio.render(Path("circle.mp4"), Path("bg.mp4"), Path("out.mp4"), d, banner)
             args = run.call_args.args[0]
@@ -403,7 +406,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             banner.write_bytes(b"placeholder")
             with (
                 patch.object(studio, "duration", side_effect=[8.0, 20.0]),
-                patch.object(studio.subprocess, "run") as run,
+                patch.object(studio, "run_ffmpeg_render") as run,
             ):
                 studio.render(
                     Path("circle.mp4"), Path("bg.mp4"), Path("output.mp4"),
@@ -430,7 +433,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
                 )
                 with (
                     patch.object(studio, "duration", side_effect=[8.0, 20.0]),
-                    patch.object(studio.subprocess, "run") as run,
+                    patch.object(studio, "run_ffmpeg_render") as run,
                 ):
                     studio.render(Path("circle.mp4"), Path("bg.mp4"), Path("reel.mp4"), d, banner)
                 args = run.call_args.args[0]
@@ -446,7 +449,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
     def test_missing_enabled_banner_fails_before_running_ffmpeg(self):
         with (
             patch.object(studio, "duration", side_effect=[5.0, 12.0]),
-            patch.object(studio.subprocess, "run") as run,
+            patch.object(studio, "run_ffmpeg_render") as run,
         ):
             with self.assertRaisesRegex(ValueError, "баннер"):
                 studio.render(
@@ -675,6 +678,106 @@ class TelegramTemplateSaveGuardTests(unittest.TestCase):
         self.assertIn("await designSaveQueue;", html)
 
 
+class TelegramRenderSpeedAndStopTests(unittest.TestCase):
+    def test_saved_maximum_preset_is_migrated_to_safe_speed(self):
+        old = {"quality_preset": "maximum", "render_speed": "original",
+               "smooth_motion": True, "source_max_fps": True}
+        config = {"render_design": old,
+                  "render_design_presets": {"pulse_ring": old}}
+        design = studio.effective_design(config)
+        self.assertEqual(design.render_speed, "balanced")
+        self.assertFalse(design.smooth_motion)
+        self.assertFalse(design.source_max_fps)
+        presets = studio._design_presets(config)
+        self.assertEqual(presets["pulse_ring"]["render_speed"], "balanced")
+        self.assertFalse(presets["pulse_ring"]["smooth_motion"])
+        explicit = studio.effective_design({
+            "render_design": {**old, "performance_version": 2}
+        })
+        self.assertEqual(explicit.render_speed, "original")
+        self.assertTrue(explicit.smooth_motion)
+
+    def test_maximum_balanced_has_no_expensive_motion(self):
+        d = studio.RenderDesign(quality_preset="maximum",
+                                render_speed="balanced", output_fps=60,
+                                smooth_motion=True, source_max_fps=False)
+        perf = studio.render_performance(d)
+        self.assertEqual(perf["fps"], 60)
+        self.assertFalse(perf["motion"])
+        self.assertIn("16", perf["encoder"])
+        with (patch.object(studio, "duration", return_value=1.0),
+              patch.object(studio, "video_frame_rate", return_value=30.0),
+              patch.object(studio, "run_ffmpeg_render") as run):
+            studio.render(Path("circle.mp4"), Path("bg.mp4"),
+                          Path("out.mp4"), d)
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        self.assertNotIn("minterpolate=", graph)
+        self.assertIn("fps=60", graph)
+
+    def test_timeout_retries_quickly_without_losing_template(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "ad.png"
+            banner.write_bytes(b"placeholder")
+            timed_out = subprocess.TimeoutExpired(["ffmpeg"], 120)
+            with (patch.object(studio, "duration", return_value=1.0),
+                  patch.object(studio, "video_frame_rate", return_value=30.0),
+                  patch.object(studio, "ring_sprite_path",
+                               return_value=Path("orbit.png")),
+                  patch.object(studio, "run_ffmpeg_render",
+                               side_effect=[timed_out, subprocess.CompletedProcess(
+                                   ["ffmpeg"], 0)]) as run,
+                  patch.dict(studio.JOB, {"notes": []})):
+                studio.render(
+                    Path("circle.mp4"), Path("background.png"),
+                    Path(folder) / "output.mp4",
+                    studio.RenderDesign(
+                        visual_template="pulse_ring", quality_preset="maximum",
+                        render_speed="original", smooth_motion=True,
+                        banner_enabled=True, timecode_enabled=False,
+                    ), banner,
+                )
+                self.assertEqual(run.call_count, 2)
+                second = run.call_args.args[0]
+                graph = second[second.index("-filter_complex") + 1]
+                self.assertIn("[orbit_ring]", graph)
+                self.assertIn("[banner]", graph)
+                self.assertIn("fps=30", graph)
+                self.assertNotIn("minterpolate=", graph)
+                self.assertIn("-preset", second)
+                self.assertEqual(second[second.index("-preset") + 1], "veryfast")
+                self.assertTrue(studio.JOB["notes"])
+
+    def test_stop_endpoint_terminates_only_active_ffmpeg(self):
+        from unittest.mock import MagicMock
+        process = MagicMock()
+        process.poll.return_value = None
+        old = studio.STOP_REQUESTED
+        try:
+            studio.STOP_REQUESTED = False
+            with (patch.object(studio, "ACTIVE_RENDER_PROCESS", process),
+                  patch.dict(studio.JOB, {"status": "running", "stopping": False})):
+                result = studio.stop_render()
+                self.assertTrue(result["stopping"])
+                self.assertTrue(studio.STOP_REQUESTED)
+                process.terminate.assert_called_once()
+        finally:
+            studio.STOP_REQUESTED = old
+
+    def test_ffmpeg_timeout_kills_child_and_releases_reference(self):
+        from unittest.mock import MagicMock
+        process = MagicMock()
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(["ffmpeg"], 1),
+            ("", "timeout"),
+        ]
+        with patch.object(studio.subprocess, "Popen", return_value=process):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                studio.run_ffmpeg_render(["ffmpeg"], timeout=1)
+        process.kill.assert_called_once()
+        self.assertIsNone(studio.ACTIVE_RENDER_PROCESS)
+
+
 class TelegramTemplateRenderFallbackTests(unittest.TestCase):
     def test_optical_flow_failure_retries_same_template_with_banner_and_fps(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -687,7 +790,7 @@ class TelegramTemplateRenderFallbackTests(unittest.TestCase):
                   patch.object(studio, "video_frame_rate", return_value=30.0),
                   patch.object(studio, "ring_sprite_path",
                                return_value=Path("orbit.png")),
-                  patch.object(studio.subprocess, "run",
+                  patch.object(studio, "run_ffmpeg_render",
                                side_effect=[error, subprocess.CompletedProcess(
                                    ["ffmpeg"], 0)]) as run,
                   patch.dict(studio.JOB, {"notes": []})):
@@ -696,6 +799,7 @@ class TelegramTemplateRenderFallbackTests(unittest.TestCase):
                     Path(folder) / "output.mp4",
                     studio.RenderDesign(
                         visual_template="orbit_dots", quality_preset="maximum",
+                        render_speed="original",
                         smooth_motion=True, banner_enabled=True,
                         timecode_enabled=False,
                     ), banner,
@@ -723,7 +827,7 @@ class TelegramTemplateRenderFallbackTests(unittest.TestCase):
                   patch.object(studio, "video_frame_rate", return_value=30.0),
                   patch.object(studio, "ring_sprite_path",
                                return_value=Path("orbit.png")),
-                  patch.object(studio.subprocess, "run",
+                  patch.object(studio, "run_ffmpeg_render",
                                side_effect=[error, subprocess.CompletedProcess(
                                    ["ffmpeg"], 0)]) as run,
                   patch.dict(studio.JOB, {"notes": []})):
@@ -747,12 +851,12 @@ class TelegramTemplateRenderFallbackTests(unittest.TestCase):
     def test_interpolation_is_after_scaling_not_on_large_original_frames(self):
         with (patch.object(studio, "duration", return_value=1.0),
               patch.object(studio, "video_frame_rate", return_value=30.0),
-              patch.object(studio.subprocess, "run") as run):
+              patch.object(studio, "run_ffmpeg_render") as run):
             studio.render(
                 Path("circle.mp4"), Path("background.mp4"),
                 Path("output.mp4"), studio.RenderDesign(
-                    quality_preset="maximum", smooth_motion=True,
-                    timecode_enabled=False,
+                    quality_preset="maximum", render_speed="original",
+                    smooth_motion=True, timecode_enabled=False,
                 ),
             )
         args = run.call_args.args[0]
@@ -760,8 +864,8 @@ class TelegramTemplateRenderFallbackTests(unittest.TestCase):
         circle = graph.split("[inside];")[0]
         background = graph.split("[1:v]")[1].split("[bg];")[0]
         self.assertLess(circle.index("crop="), circle.index("minterpolate="))
-        self.assertLess(background.index("crop="),
-                        background.index("minterpolate="))
+        self.assertIn("fps=", background)
+        self.assertNotIn("minterpolate=", background)
 
 
 class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
@@ -815,7 +919,7 @@ class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
                         smooth_motion=False,
                     )
                     with (patch.object(studio, "duration", return_value=1.0),
-                          patch.object(studio.subprocess, "run",
+                          patch.object(studio, "run_ffmpeg_render",
                                        side_effect=verify_graph)):
                         studio.render(source, background, root / "output.mp4",
                                       design, banner if use_banner else None)
@@ -832,7 +936,7 @@ class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
             )
             with (patch.object(studio, "duration", return_value=1.0),
                   patch.object(studio, "video_frame_rate", return_value=30.0),
-                  patch.object(studio.subprocess, "run",
+                  patch.object(studio, "run_ffmpeg_render",
                                side_effect=verify_graph)):
                 studio.render(source, background, root / "output.mp4",
                               maximum, banner)
