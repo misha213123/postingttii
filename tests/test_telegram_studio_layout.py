@@ -666,6 +666,95 @@ class TelegramNativeBannerFpsRenderIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(rate, 90, delta=.1)
 
 
+class TelegramTemplateRenderFallbackTests(unittest.TestCase):
+    def test_optical_flow_failure_retries_same_template_with_banner_and_fps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "ad.png"
+            banner.write_bytes(b"placeholder")
+            error = subprocess.CalledProcessError(
+                1, ["ffmpeg"], stderr="Failed to configure output pad on auto_scale"
+            )
+            with (patch.object(studio, "duration", return_value=1.0),
+                  patch.object(studio, "video_frame_rate", return_value=30.0),
+                  patch.object(studio, "ring_sprite_path",
+                               return_value=Path("orbit.png")),
+                  patch.object(studio.subprocess, "run",
+                               side_effect=[error, subprocess.CompletedProcess(
+                                   ["ffmpeg"], 0)]) as run,
+                  patch.dict(studio.JOB, {"notes": []})):
+                studio.render(
+                    Path("circle.mp4"), Path("background.png"),
+                    Path(folder) / "output.mp4",
+                    studio.RenderDesign(
+                        visual_template="orbit_dots", quality_preset="maximum",
+                        smooth_motion=True, banner_enabled=True,
+                        timecode_enabled=False,
+                    ), banner,
+                )
+                self.assertEqual(run.call_count, 2)
+                first, second = [c.args[0] for c in run.call_args_list]
+                first_graph = first[first.index("-filter_complex") + 1]
+                second_graph = second[second.index("-filter_complex") + 1]
+                self.assertIn("minterpolate=", first_graph)
+                self.assertNotIn("minterpolate=", second_graph)
+                self.assertIn("[orbit_ring]", second_graph)
+                self.assertIn("[banner]", second_graph)
+                self.assertIn("colorkey=", second_graph)
+                self.assertIn("fps=60", second_graph)
+                self.assertTrue(studio.JOB["notes"])
+
+    def test_advanced_key_failure_keeps_template_and_uses_standard_key(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "ad.png"
+            banner.write_bytes(b"placeholder")
+            error = subprocess.CalledProcessError(
+                1, ["ffmpeg"], stderr="No such filter: despill"
+            )
+            with (patch.object(studio, "duration", return_value=1.0),
+                  patch.object(studio, "video_frame_rate", return_value=30.0),
+                  patch.object(studio, "ring_sprite_path",
+                               return_value=Path("orbit.png")),
+                  patch.object(studio.subprocess, "run",
+                               side_effect=[error, subprocess.CompletedProcess(
+                                   ["ffmpeg"], 0)]) as run,
+                  patch.dict(studio.JOB, {"notes": []})):
+                studio.render(
+                    Path("circle.mp4"), Path("background.png"),
+                    Path(folder) / "output.mp4",
+                    studio.RenderDesign(
+                        visual_template="comet_tail", quality_preset="standard",
+                        smooth_motion=False, banner_enabled=True,
+                        timecode_enabled=False,
+                    ), banner,
+                )
+                self.assertEqual(run.call_count, 2)
+                second = run.call_args.args[0]
+                graph = second[second.index("-filter_complex") + 1]
+                self.assertIn("[orbit_ring]", graph)
+                self.assertIn("[banner]", graph)
+                self.assertIn("colorkey=", graph)
+                self.assertNotIn("despill=", graph)
+
+    def test_interpolation_is_after_scaling_not_on_large_original_frames(self):
+        with (patch.object(studio, "duration", return_value=1.0),
+              patch.object(studio, "video_frame_rate", return_value=30.0),
+              patch.object(studio.subprocess, "run") as run):
+            studio.render(
+                Path("circle.mp4"), Path("background.mp4"),
+                Path("output.mp4"), studio.RenderDesign(
+                    quality_preset="maximum", smooth_motion=True,
+                    timecode_enabled=False,
+                ),
+            )
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        circle = graph.split("[inside];")[0]
+        background = graph.split("[1:v]")[1].split("[bg];")[0]
+        self.assertLess(circle.index("crop="), circle.index("minterpolate="))
+        self.assertLess(background.index("crop="),
+                        background.index("minterpolate="))
+
+
 class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
     """Decode real FFmpeg filter graphs for all twelve templates, not mocks."""
 
