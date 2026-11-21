@@ -289,7 +289,7 @@ def render_performance(design: RenderDesign) -> dict:
     """
     # Maximum quality must not silently turn into standard 30 FPS in quiet mode.
     if design.quality_preset == "maximum":
-        return dict(fps=max(60, design.output_fps), motion=True,
+        return dict(fps=max(60, design.output_fps), motion=design.smooth_motion,
                     quality="maximum", filter_threads=4, video_threads=4,
                     encoder=h264_quality_args("maximum"))
     if design.render_speed == "quiet":
@@ -1214,7 +1214,8 @@ def render(
         return f"fps={fps},"
 
     motion = motion_filter(native["circle"])
-    background_motion = motion_filter(native["background"])
+    background_motion = (f"fps={fps}," if is_image_background(bg)
+                         else motion_filter(native["background"]))
     source_cleanup = quality_filter_segment(
         performance["quality"], design.denoise_strength, design.sharpening_strength
     )
