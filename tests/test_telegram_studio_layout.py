@@ -374,7 +374,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
         self.assertNotIn("colorkey=", graph)
         self.assertNotIn("[banner]", graph)
         self.assertIn("0:a?", args)
-        self.assertEqual(args.count("-i"), 2)
+        self.assertEqual(args.count("-i"), 4)  # source, background, cached mask and border
 
     def test_chromakey_banner_overlay_uses_saved_coordinates(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -396,7 +396,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             self.assertIn("colorkey=0x00ff00", graph)
             self.assertIn("scale=620:-1", graph)
             self.assertIn("overlay=125:1570", graph)
-            self.assertEqual(args.count("-i"), 3)
+            self.assertEqual(args.count("-i"), 5)  # source, background, banner, cached mask and border
             self.assertEqual(args[args.index("-loop")+1], "1")
             self.assertIn("0:a?", args)
 
@@ -438,7 +438,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
                     studio.render(Path("circle.mp4"), Path("bg.mp4"), Path("reel.mp4"), d, banner)
                 args = run.call_args.args[0]
                 graph = args[args.index("-filter_complex") + 1]
-                self.assertEqual(args.count("-i"), 3)
+                self.assertEqual(args.count("-i"), 5)  # source, background, banner, cached mask and border
                 self.assertEqual(args.count("-stream_loop"), 2)  # background + video banner
                 self.assertNotIn("-loop", args)
                 self.assertIn("overlay=120:1460", graph)
