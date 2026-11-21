@@ -16,6 +16,35 @@ from pydantic import ValidationError
 from app import telegram_studio as studio
 
 
+class TelegramRingAndQualityTests(unittest.TestCase):
+    def test_all_seven_templates_validate_and_generate_ring_artwork(self):
+        styles = ("classic", "orbit_dots", "orbit_arc", "pulse_ring",
+                  "double_orbit", "dashed_spin", "ripple")
+        for style in styles:
+            with self.subTest(style=style):
+                design = studio.RenderDesign(visual_template=style)
+                self.assertEqual(design.visual_template, style)
+                if style != "classic":
+                    sprite = studio.ring_sprite_path(600, style)
+                    self.assertTrue(sprite.is_file())
+                    with Image.open(sprite) as img:
+                        self.assertEqual(img.mode, "RGBA")
+                        self.assertGreater(img.getbbox()[2], 0)
+
+    def test_maximum_quality_is_not_downgraded_by_quiet_mode(self):
+        design = studio.RenderDesign(
+            quality_preset="maximum", render_speed="quiet", output_fps=30,
+        )
+        performance = studio.render_performance(design)
+        self.assertEqual(performance["fps"], 60)
+        self.assertEqual(performance["quality"], "maximum")
+        self.assertIn("16", performance["encoder"])
+
+    def test_chromakey_is_enabled_by_default(self):
+        design = studio.RenderDesign()
+        self.assertTrue(design.chromakey_enabled)
+
+
 class TelegramRerenderSelectionTests(unittest.TestCase):
     def test_existing_output_is_skipped_by_default_but_not_when_forced(self):
         with tempfile.TemporaryDirectory() as folder:
