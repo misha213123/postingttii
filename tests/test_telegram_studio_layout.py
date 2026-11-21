@@ -391,6 +391,35 @@ class TelegramDesignApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(e.exception.status_code, 409)
 
 
+class TelegramAnimatedRingRenderTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                         "FFmpeg and FFprobe required")
+    def test_rotating_arc_and_pulse_ring_render_to_mp4(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source.mp4"
+            background = root / "background.png"
+            Image.new("RGB", (1080, 1920), (32, 80, 160)).save(background)
+            subprocess.run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "color=c=black:s=320x320:r=30:d=0.5",
+                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                str(source),
+            ], check=True, capture_output=True)
+            for style in ("orbit_arc", "pulse_ring"):
+                with self.subTest(style=style):
+                    output = root / f"{style}.mp4"
+                    design = studio.RenderDesign(
+                        visual_template=style, circle_size=400,
+                        circle_x=300, circle_y=600,
+                        progress_enabled=False, timecode_enabled=False,
+                        render_speed="quiet", quality_preset="standard",
+                    )
+                    studio.render(source, background, output, design)
+                    self.assertTrue(output.is_file())
+                    self.assertGreater(output.stat().st_size, 1000)
+
+
 class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
