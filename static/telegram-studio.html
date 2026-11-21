@@ -608,7 +608,7 @@ function saveRenderDesign(){
       body:JSON.stringify(snapshot)
     });
     designSaveError=null;
-    designStatus('✓ Оформление сохранено. Следующий рендер использует эти параметры.');
+    designStatus('✓ Шаблон сохранён. Для уже созданных роликов включи «Пересобрать уже созданные ролики», иначе старые MP4 останутся без изменений.');
   }).catch(err=>{
     designSaveError=err;
     designStatus('Ошибка сохранения оформления: '+err.message+'. Рендер не будет запущен с устаревшим шаблоном.');
