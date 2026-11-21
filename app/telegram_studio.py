@@ -10,6 +10,7 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -41,6 +42,53 @@ LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
 JOB_TASK = None
 STOP_REQUESTED = False
+ACTIVE_RENDER_PROCESS: subprocess.Popen | None = None
+ACTIVE_RENDER_LOCK = threading.Lock()
+
+
+class RenderStopped(Exception):
+    """A user requested to stop the current render and its FFmpeg process."""
+
+
+def run_ffmpeg_render(command: list[str], *, cwd: str | None = None,
+                      timeout: float | None = None) -> subprocess.CompletedProcess:
+    """Run cancellable FFmpeg, tracking the actual child process.
+
+    subprocess.run() hid the PID, so the old UI could not stop a render that
+    was already spending minutes inside FFmpeg. No other FFmpeg tasks on the
+    computer are touched.
+    """
+    global ACTIVE_RENDER_PROCESS
+    if STOP_REQUESTED and JOB.get("status") == "running":
+        raise RenderStopped()
+    process = subprocess.Popen(
+        command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    with ACTIVE_RENDER_LOCK:
+        ACTIVE_RENDER_PROCESS = process
+        if STOP_REQUESTED and JOB.get("status") == "running":
+            process.terminate()
+    try:
+        try:
+            output, errors = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            output, errors = process.communicate()
+            raise subprocess.TimeoutExpired(
+                command, timeout, output=output, stderr=errors
+            ) from exc
+    finally:
+        with ACTIVE_RENDER_LOCK:
+            if ACTIVE_RENDER_PROCESS is process:
+                ACTIVE_RENDER_PROCESS = None
+    if STOP_REQUESTED and JOB.get("status") == "running":
+        raise RenderStopped()
+    if process.returncode:
+        raise subprocess.CalledProcessError(
+            process.returncode, command, output=output, stderr=errors
+        )
+    return subprocess.CompletedProcess(command, process.returncode, output, errors)
 BACKGROUND_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 BACKGROUND_SUFFIXES = BACKGROUND_IMAGE_SUFFIXES | {".mp4"}
 
@@ -1402,10 +1450,34 @@ def render(
         "-movflags", "+faststart", str(target),
     ]
     try:
-        subprocess.run(
-            cmd, capture_output=True, text=True, check=True,
+        # A short Telegram circle must not monopolize the computer for
+        # 30 minutes. A timed-out high-quality attempt is retried once
+        # with the same template, progress bar, circle and chromakey banner.
+        run_ffmpeg_render(
+            cmd, timeout=min(420, max(120, seconds * 8)),
             cwd=str(ROOT) if _is_windows() else None,
         )
+    except subprocess.TimeoutExpired as exc:
+        if "timeout" not in _fallbacks:
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: рендер превысил лимит времени; "
+                "повторяю в быстром режиме 1080p/30 FPS, сохраняя шаблон, "
+                "обводку, прогресс-бар и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={
+                    "quality_preset": "standard", "render_speed": "quiet",
+                    "smooth_motion": False, "source_max_fps": False,
+                    "output_fps": 30, "export_resolution": 1080,
+                }), banner,
+                _fallbacks=_fallbacks | {"timeout"},
+            )
+        raise RuntimeError(
+            "FFmpeg не успел обработать видео даже в быстром режиме. "
+            "Проверь длительность источника и производительность ПК."
+        ) from exc
     except subprocess.CalledProcessError as exc:
         # A CalledProcessError normally begins with the entire ffmpeg command.
         # The Telegram Studio UI previously truncated it before the real
