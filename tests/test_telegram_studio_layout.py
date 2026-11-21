@@ -70,6 +70,20 @@ class TelegramRingAndQualityTests(unittest.TestCase):
         self.assertIn("bt709", args)
         self.assertIn("192k", args)
 
+    def test_4k_export_is_opt_in_and_uses_2160x3840(self):
+        self.assertEqual(studio.RenderDesign().export_resolution, 1080)
+        with self.assertRaises(ValidationError):
+            studio.RenderDesign(export_resolution=1440)
+        with (patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+              patch.object(studio.subprocess, "run") as run):
+            studio.render(Path("circle.mp4"), Path("background.mp4"),
+                          Path("output.mp4"), studio.RenderDesign(
+                              export_resolution=2160, quality_preset="maximum"))
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        self.assertIn("scale=2160:3840:flags=lanczos", graph)
+        self.assertEqual(args[args.index("-level:v")+1], "5.2")
+
     def test_chromakey_is_enabled_by_default(self):
         design = studio.RenderDesign()
         self.assertTrue(design.chromakey_enabled)
