@@ -66,7 +66,7 @@
 
 .bg-thumbnail{width:120px;height:150px;object-fit:cover;border-radius:10px;flex-shrink:0}
 
-</style><link rel="stylesheet" href="/static/studio-circle-ui.css?v=20261121-progress-v1"></head><body><main>
+</style><link rel="stylesheet" href="/static/studio-circle-ui.css?v=20261121-ultra-v1"></head><body><main>
 <header><div><a href="/">← Вернуться к PostingTTII</a><h1>◉ Telegram Studio</h1><div class="muted">Кружки Telegram → случайный фон → готовые Reels</div><p style="margin:8px 0 0"><a href="/viral-reels-pro" style="color:#9dd3ff;font-weight:750">★ Шаблон №3 · Viral Reels Pro — отдельный монтаж и экспорт A/B/C</a></p></div><span class="pill" id="health">Проверка системы...</span></header>
 <div class="layout">
 <section class="card"><h2>01 / Источники: Telegram + Instagram</h2><p class="muted">Telegram-каналы и Instagram-аккаунты в одном списке. Каждый источник можно включать и отключать.</p>
@@ -853,7 +853,8 @@ function initDesignControls(){
     if(e.target.value==='maximum'){
       designState.output_fps=60;
       designState.smooth_motion=true;
-      designState.render_speed='balanced';
+      designState.render_speed='original';
+      designState.source_max_fps=true;
     }
     updateDesignPreview();
     saveRenderDesign();
