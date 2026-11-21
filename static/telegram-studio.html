@@ -262,7 +262,7 @@ const designState={
   circle_size:1040,circle_x:20,circle_y:90,
   background_mode:'shuffle',background_name:'',
   chromakey_enabled:true,chromakey_mode:'advanced',chromakey_color:'#00ff00',
-  chromakey_similarity:.18,chromakey_blend:.07,banner_enabled:false,
+  chromakey_similarity:.22,chromakey_blend:.07,banner_enabled:false,
   banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced',export_resolution:1080,denoise_strength:1,sharpening_strength:.5
 };
 let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
@@ -367,7 +367,7 @@ function drawVideoBannerChroma(now){
     const key=designState.chromakey_color;
     const rgb=[1,3,5].map(j=>parseInt(key.slice(j,j+2),16));
     const sim=designState.chromakey_mode==='standard'
-      ?designState.chromakey_similarity:Math.max(.18,designState.chromakey_similarity);
+      ?designState.chromakey_similarity:Math.max(.22,designState.chromakey_similarity);
     const blend=Math.max(.001,designState.chromakey_blend);
     for(let i=0;i<pixels.data.length;i+=4){
       const distance=Math.hypot(pixels.data[i]-rgb[0],pixels.data[i+1]-rgb[1],pixels.data[i+2]-rgb[2])/(255*Math.sqrt(3));
@@ -579,7 +579,7 @@ function drawChromaPreview(now){
     const color=designState.chromakey_color;
     const rgb=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16));
     const threshold=designState.chromakey_mode==='standard'
-      ?designState.chromakey_similarity:Math.max(.18,designState.chromakey_similarity);
+      ?designState.chromakey_similarity:Math.max(.22,designState.chromakey_similarity);
     const blend=Math.max(.001,designState.chromakey_blend);
     for(let i=0;i<pixels.length;i+=4){
       // Browser preview and FFmpeg render use the same RGB color-distance key; encoding may soften edges.
