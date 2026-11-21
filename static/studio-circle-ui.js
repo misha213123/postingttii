@@ -22,7 +22,12 @@
   const templateSelect=document.createElement('select');
   for(const [name,title] of [
     ['classic','Шаблон 1 · обычная обводка и полоска'],
-    ['orbit_dots','Шаблон 2 · белый бегущий блик и загрузка (без времени)'],
+    ['orbit_dots','Шаблон 2 · белый бегущий блик и загрузка'],
+    ['orbit_arc','Шаблон 3 · вращающаяся световая дуга'],
+    ['pulse_ring','Шаблон 4 · пульсирующее кольцо'],
+    ['double_orbit','Шаблон 5 · двойная орбита'],
+    ['dashed_spin','Шаблон 6 · вращающийся пунктир'],
+    ['ripple','Шаблон 7 · расходящиеся волны'],
   ]){
     const option=document.createElement('option');
     option.value=name;option.textContent=title;templateSelect.append(option);
@@ -31,7 +36,7 @@
   const templates={};
   window.setStudioTemplatePresets=presets=>{
     if(presets&&typeof presets==='object'){
-      for(const key of ['classic','orbit_dots']){
+      for(const key of ['classic','orbit_dots','orbit_arc','pulse_ring','double_orbit','dashed_spin','ripple']){
         if(presets[key])templates[key]={...presets[key]};
       }
     }
@@ -116,6 +121,21 @@
   orbitLayer.className='studio-orbit-ring';
   orbitLayer.setAttribute('aria-hidden','true');
   stage.append(orbitLayer);
+  // Live approximation of the exported animated ring. The MP4 is drawn by
+  // FFmpeg; these CSS rings are only an interactive visual guide.
+  const ringStyles=document.createElement('style');
+  ringStyles.textContent=`
+    .studio-orbit-ring.studio-ring-orbit_arc {background:conic-gradient(transparent 0deg 185deg,#fff 195deg 310deg,transparent 325deg 360deg);border-radius:50%;animation:studioSpin 3s linear infinite;mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));}
+    .studio-orbit-ring.studio-ring-pulse_ring {background:none;border:3px solid white;border-radius:50%;animation:studioPulse 1.5s ease-in-out infinite;}
+    .studio-orbit-ring.studio-ring-double_orbit {background:conic-gradient(#fff 0 90deg,transparent 90deg 180deg,#fff 180deg 270deg,transparent 270deg);border-radius:50%;animation:studioSpin 5s linear infinite;mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));}
+    .studio-orbit-ring.studio-ring-dashed_spin {background:repeating-conic-gradient(#fff 0 12deg,transparent 12deg 30deg);border-radius:50%;animation:studioSpin 8s linear infinite;mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));}
+    .studio-orbit-ring.studio-ring-ripple {background:none;border:3px solid white;border-radius:50%;animation:studioRipple 1.7s ease-out infinite;}
+    @keyframes studioSpin {to{transform:rotate(360deg)}}
+    @keyframes studioPulse {50%{transform:scale(1.055);opacity:.45}}
+    @keyframes studioRipple {0%{transform:scale(.98);opacity:1}100%{transform:scale(1.09);opacity:.1}}
+  `;
+  document.head.append(ringStyles);
+
   const timecode=document.createElement('div');timecode.id='studioTimecodeDrag';
   timecode.className='studio-timecode-edit';timecode.title='Перетаскивай таймкод';
   stage.append(progress,timecode);
@@ -135,7 +155,7 @@
     // The second style shows the existing backdrop alone for 0.38 seconds;
     // circle, white moving highlight, progress and banner then fade in.
     stage.classList.toggle('studio-intro-frame',
-      designState.visual_template==='orbit_dots' &&
+      designState.visual_template!=='classic' &&
       sample.readyState>=2 && !sample.paused && current<0.38);
   }
   function sync(){
@@ -156,20 +176,23 @@
     color.value=state.circle_border_color;
     fps.value=String(state.output_fps);
     speed.value=state.render_speed||'quiet';
-    const quiet=speed.value==='quiet';
+    const quiet=speed.value==='quiet'&&state.quality_preset!=='maximum';
     fps.disabled=quiet;
-    checks.smooth_motion.disabled=speed.value!=='original';
-    speedHint.textContent=quiet?
+    checks.smooth_motion.disabled=speed.value!=='original'&&state.quality_preset!=='maximum';
+    speedHint.textContent=state.quality_preset==='maximum'?
+      'Максимальное качество: 60 FPS, очистка шума и H.264 CRF 16. Рендер медленнее; новые кадры создаются при включённой интерполяции.':
+      quiet?
       'Эффективно 30 FPS, H.264 veryfast, без тяжёлых фильтров и интерполяции. '+
       'Размер 1080×1920, фон, кружок, обводка, прогресс и баннер сохраняются.':
       speed.value==='balanced'?
       'Оставляет выбранные FPS и качество, но ограничивает FFmpeg четырьмя потоками.':
       'Все фильтры и выбранные FPS без ограничения потоков — максимальная нагрузка.';
-    const orbit=state.visual_template==='orbit_dots';
-    templateSelect.value=orbit?'orbit_dots':'classic';
+    const orbit=state.visual_template!=='classic';
+    templateSelect.value=state.visual_template||'classic';
     checks.timecode_enabled.disabled=orbit;
     progress.classList.toggle('studio-progress-loading',orbit);
     orbitLayer.hidden=!orbit;
+    orbitLayer.className='studio-orbit-ring studio-ring-'+state.visual_template;
     const margin=36;
     orbitLayer.style.left=((state.circle_x-margin)/1080*100)+'%';
     orbitLayer.style.top=((state.circle_y-margin)/1920*100)+'%';

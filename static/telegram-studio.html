@@ -161,9 +161,16 @@
       <select id="tgQualityPreset">
         <option value="standard">Стандартное — как раньше, быстрее</option>
         <option value="enhanced">Улучшенное — лёгкая очистка, чёткость и цвет</option>
-        <option value="maximum">Максимальное — высокое качество, сбалансированная скорость</option>
+        <option value="maximum">Максимальное · 60 FPS · шумоподавление · CRF 16 (медленно)</option>
       </select>
-      <span class="editor-note">1080×1920, H.264 + AAC. Больше качества не гарантирует рекомендации Instagram и не превращает чужое видео в оригинальное.</span>
+      <label for="tgExportResolution">Разрешение экспорта</label>
+      <select id="tgExportResolution"><option value="1080">1080×1920 · Reels (рекомендуется)</option><option value="2160">2160×3840 · 4K UHD (медленно, апскейл)</option></select>
+      <label for="tgDenoiseStrength">Шумоподавление: <span id="tgDenoiseValue">1.0</span></label>
+      <input id="tgDenoiseStrength" type="range" min="0" max="3" step="0.1" value="1">
+      <label for="tgSharpenStrength">Резкость: <span id="tgSharpenValue">0.5</span></label>
+      <input id="tgSharpenStrength" type="range" min="0" max="1.5" step="0.1" value="0.5">
+      <span class="editor-note">Для слабых исходников начинай с шумоподавления 0.8–1.2 и резкости 0.3–0.5; сильные значения могут смазать лица или подчеркнуть артефакты.</span>
+      <span class="editor-note">1080×1920, H.264 + AAC. Максимальное качество включает реальную очистку шума и 60 FPS независимо от тихого режима. Для создания промежуточных кадров отдельно включи интерполяцию движения. Исходную детализацию сверх возможностей оригинала восстановить нельзя.</span>
     </div>
     <div class="inline"><button id="resetBannerPosition" type="button" onclick="resetBannerPosition()">Сбросить позицию</button>
       <button id="removeBanner" type="button" class="danger" onclick="removeDesignBanner()">Убрать баннер</button></div>
@@ -253,9 +260,9 @@ function notify(e){alert(e.message||String(e))}
 const designState={
   circle_size:1040,circle_x:20,circle_y:90,
   background_mode:'shuffle',background_name:'',
-  chromakey_enabled:false,chromakey_color:'#00ff00',
-  chromakey_similarity:.20,chromakey_blend:.07,banner_enabled:false,
-  banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced'
+  chromakey_enabled:true,chromakey_color:'#00ff00',
+  chromakey_similarity:.10,chromakey_blend:.07,banner_enabled:false,
+  banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced',export_resolution:1080,denoise_strength:1,sharpening_strength:.5
 };
 let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
 
@@ -444,6 +451,11 @@ function updateDesignPreview(){
   el('bannerPositionX').value=designState.banner_x;
   el('bannerPositionY').value=designState.banner_y;
   el('tgQualityPreset').value=designState.quality_preset||'enhanced';
+  el('tgExportResolution').value=String(designState.export_resolution||1080);
+  for(const [field,key,valueId] of [['tgDenoiseStrength','denoise_strength','tgDenoiseValue'],['tgSharpenStrength','sharpening_strength','tgSharpenValue']]){
+    const value=Number(designState[key]??(key==='denoise_strength'?1:.5));
+    el(field).value=value;el(valueId).textContent=value.toFixed(1);
+  }
   el('bannerScale').value=designState.banner_width;
   el('circleScale').value=size;
   el('chromakeyEnabled').checked=designState.chromakey_enabled;
@@ -820,8 +832,25 @@ function initDesignControls(){
       updateDesignPreview();saveRenderDesign();
     });
   }
+  for(const [field,key,valueId] of [['tgDenoiseStrength','denoise_strength','tgDenoiseValue'],['tgSharpenStrength','sharpening_strength','tgSharpenValue']]){
+    el(field).addEventListener('input',e=>{
+      designState[key]=Number(e.target.value);
+      el(valueId).textContent=designState[key].toFixed(1);
+    });
+    el(field).addEventListener('change',()=>saveRenderDesign());
+  }
+  el('tgExportResolution').addEventListener('change',e=>{
+    designState.export_resolution=Number(e.target.value);
+    saveRenderDesign();
+  });
   el('tgQualityPreset').addEventListener('change',e=>{
     designState.quality_preset=e.target.value;
+    if(e.target.value==='maximum'){
+      designState.output_fps=60;
+      designState.smooth_motion=true;
+      designState.render_speed='balanced';
+    }
+    updateDesignPreview();
     saveRenderDesign();
   });
   el('chromakeyEnabled').addEventListener('change',e=>{
@@ -1343,4 +1372,4 @@ async function igRun(){try{await instagramLayoutSave;await designSaveQueue;await
 document.addEventListener('click',async e=>{if(e.target.dataset.igRemove){try{await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igRemove),{method:'DELETE'});await igRefresh()}catch(err){notify(err)}}});
 document.addEventListener('change',async e=>{try{if(e.target.dataset.tgToggle){await request('/channels/'+encodeURIComponent(e.target.dataset.tgToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}if(e.target.dataset.igToggle){await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await igRefresh()}}catch(err){notify(err);await refresh();await igRefresh()}});
 igRefresh();setInterval(igRefresh,2500);
-</script><script src="/static/studio-circle-ui.js?v=20261026-quiet"></script></body></html>
+</script><script src="/static/studio-circle-ui.js?v=20261121-rings-v2"></script></body></html>

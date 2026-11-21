@@ -150,7 +150,7 @@ class LoginFinish(BaseModel):
 
 class RenderDesign(BaseModel):
     """Saved design and layout in 1080 x 1920 video pixels."""
-    visual_template: Literal["classic", "orbit_dots"] = "classic"
+    visual_template: Literal["classic", "orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple"] = "classic"
     circle_size: int = Field(default=1040, ge=400, le=1080)
     circle_x: int = Field(default=20, ge=0, le=1080)
     circle_y: int = Field(default=90, ge=0, le=1920)
@@ -169,14 +169,18 @@ class RenderDesign(BaseModel):
     output_fps: Literal[30, 60] = 60
     smooth_motion: bool = False
     quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
+    export_resolution: Literal[1080, 2160] = 1080
+    denoise_strength: float = Field(default=1.0, ge=0.0, le=3.0)
+    sharpening_strength: float = Field(default=0.5, ge=0.0, le=1.5)
     # Resource-saving mode is the default for both existing and new designs.
     # Users can explicitly restore the previous 60fps/full-filter renderer.
     render_speed: Literal["quiet", "balanced", "original"] = "quiet"
     background_mode: Literal["shuffle", "single"] = "shuffle"
     background_name: str = ""
-    chromakey_enabled: bool = False
+    chromakey_enabled: bool = True
+    chromakey_version: int = 1
     chromakey_color: str = Field(default="#00ff00", pattern=r"^#[0-9A-Fa-f]{6}$")
-    chromakey_similarity: float = Field(default=0.20, ge=0.01, le=1.0)
+    chromakey_similarity: float = Field(default=0.10, ge=0.01, le=1.0)
     chromakey_blend: float = Field(default=0.07, ge=0.0, le=1.0)
     banner_enabled: bool = False
     # Negative coordinates deliberately allow moving the ad outside the
@@ -193,15 +197,25 @@ def _design_presets(data: dict) -> dict[str, dict]:
     classic = RenderDesign.model_validate({
         **original, **saved.get("classic", {}), "visual_template": "classic"
     }).model_dump()
-    orbit = RenderDesign.model_validate({
-        **classic, **saved.get("orbit_dots", {}), "visual_template": "orbit_dots",
-        **({"timecode_enabled": False} if not saved.get("orbit_dots") else {}),
-    }).model_dump()
-    return {"classic": classic, "orbit_dots": orbit}
+    presets = {"classic": classic}
+    for style in ("orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple"):
+        presets[style] = RenderDesign.model_validate({
+            **classic, **saved.get(style, {}), "visual_template": style,
+            **({"timecode_enabled": False} if not saved.get(style) else {}),
+        }).model_dump()
+    return presets
+
+
+def effective_design(data: dict) -> RenderDesign:
+    """Migrate pre-chromakey saved banners once, preserving newer manual off choices."""
+    raw = dict(data.get("render_design") or {})
+    if data.get("banner_file") and "chromakey_version" not in raw:
+        raw["chromakey_enabled"] = True
+    return RenderDesign.model_validate(raw)
 
 
 def saved_design() -> RenderDesign:
-    return RenderDesign.model_validate(config().get("render_design", {}))
+    return effective_design(config())
 
 
 def choose_backgrounds(design: RenderDesign) -> list[Path]:
@@ -226,21 +240,25 @@ def banner_input_args(banner: Path) -> list[str]:
     return ["-loop", "1", "-i", str(banner)]
 
 
-def quality_filter_segment(quality_preset: str) -> str:
+def quality_filter_segment(quality_preset: str, denoise_strength: float = 1.0,
+                           sharpening_strength: float = 0.5) -> str:
     """Conservative picture cleanup; visual quality, not duplicate evasion.
 
     The treatment is applied once after the composition so all layers share
     the same encoding characteristics. Keep the standard preset filter-free.
     """
-    if quality_preset == "enhanced":
-        return ("hqdn3d=0.8:0.8:3:3,"
-                "eq=contrast=1.025:saturation=1.035,"
-                "unsharp=3:3:0.35:3:3:0.0,")
-    if quality_preset == "maximum":
-        return ("hqdn3d=1.2:1.0:4:3,"
-                "eq=contrast=1.045:saturation=1.055,"
-                "unsharp=5:5:0.50:5:5:0.0,")
-    return ""
+    if quality_preset == "standard":
+        return ""
+    # Respect the user's noise/detail tradeoff instead of forcing aggressive
+    # smoothing. All values are Pydantic-validated before entering FFmpeg.
+    filters = []
+    if denoise_strength > 0:
+        strength = denoise_strength * (1.2 if quality_preset == "maximum" else 0.8)
+        filters.append(f"hqdn3d={strength:.2f}:{strength*.85:.2f}:"
+                       f"{strength*3:.2f}:{strength*2.5:.2f}")
+    if sharpening_strength > 0:
+        filters.append(f"unsharp=5:5:{sharpening_strength:.2f}:5:5:0.0")
+    return ",".join(filters) + ("," if filters else "")
 
 
 def h264_quality_args(quality_preset: str, *, standard_crf: str = "18") -> list[str]:
@@ -264,6 +282,11 @@ def render_performance(design: RenderDesign) -> dict:
     sharpening/denoising and optical-flow interpolation, while maintaining
     1080x1920, the white circle, overlay, progress and banner.
     """
+    # Maximum quality must not silently turn into standard 30 FPS in quiet mode.
+    if design.quality_preset == "maximum":
+        return dict(fps=60, motion=design.smooth_motion,
+                    quality="maximum", filter_threads=4, video_threads=4,
+                    encoder=h264_quality_args("maximum"))
     if design.render_speed == "quiet":
         return dict(fps=30, motion=False, quality="standard",
                     filter_threads=2, video_threads=2,
@@ -293,7 +316,7 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
     fps = performance["fps"]
     # Classic keeps its original transition; the second style first shows
     # ONLY the background and then reveals the banner with the circle.
-    delayed = design.visual_template == "orbit_dots"
+    delayed = design.visual_template != "classic"
     fade_start = f"{SECOND_TEMPLATE_INTRO_START:.2f}" if delayed else "0"
     fade_duration = f"{SECOND_TEMPLATE_FADE_SECONDS:.2f}" if delayed else "0.30"
     return (
@@ -302,7 +325,9 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
         f"fade=t=in:st={fade_start}:d={fade_duration}:alpha=1[banner];"
         f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
         f"format=auto:shortest=1,fps={fps},"
-        f"{quality_filter_segment(performance['quality'])}format=yuv420p[v]"
+        f"{quality_filter_segment(performance['quality'], design.denoise_strength, design.sharpening_strength)}"
+        f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
+        "format=yuv420p[v]"
     )
 
 
@@ -319,7 +344,7 @@ def design_response():
     d = config()
     banner = current_banner(d)
     return {
-        "design": RenderDesign.model_validate(d.get("render_design", {})).model_dump(),
+        "design": effective_design(d).model_dump(),
         "presets": _design_presets(d),
         "banner_available": banner is not None,
         "banner_kind": "video" if banner and banner.suffix in {".mp4", ".webm"} else ("image" if banner else None),
@@ -423,6 +448,10 @@ async def upload_banner(file: UploadFile = File(...)):
 
     d = config()
     d["banner_file"] = name
+    design = effective_design(d)
+    d["render_design"] = design.model_copy(update={
+        "banner_enabled": True, "chromakey_enabled": True,
+    }).model_dump()
     save(d)
     return design_response()
 
@@ -911,6 +940,48 @@ def orbit_sprite_path(circle_size: int) -> Path:
     return filename
 
 
+def ring_sprite_path(circle_size: int, style: str) -> Path:
+    """Create transparent ring artwork for each selectable animated template."""
+    if style == "orbit_dots":
+        return orbit_sprite_path(circle_size)
+    filename = ORBIT_ASSETS / f"ring_{style}_v1_{circle_size}.png"
+    if filename.is_file() and filename.stat().st_size:
+        return filename
+    dimension, padding = 512, 36
+    unit = dimension / (circle_size + 2 * padding)
+    center = dimension / 2
+    radius = (circle_size / 2 + 16) * unit
+    image = Image.new("RGBA", (dimension, dimension), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    def arc(r, start, end, color, width):
+        draw.arc((center-r, center-r, center+r, center+r),
+                 start, end, fill=color, width=max(2, int(width*unit)))
+    if style == "orbit_arc":
+        arc(radius, 205, 325, (255,255,255,255), 12)
+        arc(radius+10*unit, 230, 300, (140,215,255,160), 4)
+    elif style == "pulse_ring":
+        arc(radius, 0, 359, (255,255,255,230), 7)
+        arc(radius+13*unit, 0, 359, (180,225,255,120), 4)
+    elif style == "double_orbit":
+        arc(radius, 10, 115, (255,255,255,255), 9)
+        arc(radius, 190, 295, (255,255,255,220), 9)
+    elif style == "dashed_spin":
+        for angle in range(0, 360, 30):
+            arc(radius, angle, angle+16, (255,255,255,240), 9)
+    elif style == "ripple":
+        for offset, opacity in ((0,240),(12,145),(23,75)):
+            arc(radius+offset*unit, 0, 359, (255,255,255,opacity), 5)
+    else:
+        raise ValueError(f"Неизвестный стиль кружка: {style}")
+    temp = filename.with_name(filename.stem+"_"+uuid.uuid4().hex+".png")
+    try:
+        image.save(temp)
+        temp.replace(filename)
+    finally:
+        temp.unlink(missing_ok=True)
+    return filename
+
+
 # A brief backdrop-only introduction before circles/ads reveal.
 SECOND_TEMPLATE_INTRO_START = 0.38
 SECOND_TEMPLATE_FADE_SECONDS = 0.28
@@ -995,7 +1066,7 @@ def render(
         "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
         f"crop=1080:1920,setsar=1,fps={fps}[bg];"
     )
-    orbit = design.visual_template == "orbit_dots"
+    orbit = design.visual_template != "classic"
     if orbit:
         # No circle or outline in the first 0.38s: only the background.
         circle_filter += (
@@ -1008,15 +1079,29 @@ def render(
         f"[bg][{circle_layer}]overlay={x}:{y}:shortest=1[base_circle];"
     )
     last = "base_circle"
-    orbit_asset = orbit_sprite_path(size) if orbit else None
+    orbit_asset = ring_sprite_path(size, design.visual_template) if orbit else None
     if orbit:
         pad = 36
+        style = design.visual_template
+        speed = {"orbit_dots": 6, "orbit_arc": 3, "pulse_ring": 12,
+                 "double_orbit": 5, "dashed_spin": 8, "ripple": 10}[style]
+        # Pulse/ripple grow and shrink around the circle; other styles rotate.
+        pulse = style in {"pulse_ring", "ripple"}
+        base_dimension = size + 2 * pad
+        # Animate opacity instead of changing dimensions: FFmpeg fade/overlay
+        # require constant frame size, otherwise pulse renders fail on Windows.
+        pulse_alpha = (
+            ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+            "a='alpha(X,Y)*(0.7+0.3*sin(T*5))'"
+            if pulse else ""
+        )
         filter_chain += (
-            f"[2:v]format=rgba,rotate=a='2*PI*t/6':ow=iw:oh=ih:c=none,"
-            f"scale={size+2*pad}:{size+2*pad}:flags=bilinear,"
-            f"fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
+            f"[2:v]format=rgba,rotate=a='2*PI*t/{speed}':ow=iw:oh=ih:c=none,"
+            f"scale={base_dimension}:{base_dimension}:flags=bilinear"
+            f"{pulse_alpha},fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
             f"d={SECOND_TEMPLATE_FADE_SECONDS}:alpha=1[orbit_ring];"
-            f"[{last}][orbit_ring]overlay={x-pad}:{y-pad}:"
+            f"[{last}][orbit_ring]overlay=x='{x+size//2}-w/2':"
+            f"y='{y+size//2}-h/2':eval=frame:"
             "shortest=1:format=auto[with_orbit];"
         )
         last = "with_orbit"
@@ -1086,7 +1171,9 @@ def render(
     else:
         filter_chain += (
             f"[composite]fps={fps},"
-            f"{quality_filter_segment(performance['quality'])}format=yuv420p[v]"
+            f"{quality_filter_segment(performance['quality'], design.denoise_strength, design.sharpening_strength)}"
+            f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
+            "format=yuv420p[v]"
         )
 
     cmd += [
@@ -1099,9 +1186,12 @@ def render(
         "-c:v", "libx264", *performance["encoder"],
         *(["-threads", str(performance["video_threads"])]
           if performance["video_threads"] is not None else []),
-        "-profile:v", "high", "-level:v", "5.1" if fps == 60 else "4.2",
+        "-profile:v", "high", "-level:v",
+        "5.2" if design.export_resolution == 2160 else ("5.1" if fps == 60 else "4.2"),
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
+        "-color_primaries", "bt709", "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart", str(target),
     ]
     try:

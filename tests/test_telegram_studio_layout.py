@@ -16,6 +16,79 @@ from pydantic import ValidationError
 from app import telegram_studio as studio
 
 
+class TelegramRingAndQualityTests(unittest.TestCase):
+    def test_all_seven_templates_validate_and_generate_ring_artwork(self):
+        styles = ("classic", "orbit_dots", "orbit_arc", "pulse_ring",
+                  "double_orbit", "dashed_spin", "ripple")
+        for style in styles:
+            with self.subTest(style=style):
+                design = studio.RenderDesign(visual_template=style)
+                self.assertEqual(design.visual_template, style)
+                if style != "classic":
+                    sprite = studio.ring_sprite_path(600, style)
+                    self.assertTrue(sprite.is_file())
+                    with Image.open(sprite) as img:
+                        self.assertEqual(img.mode, "RGBA")
+                        self.assertGreater(img.getbbox()[2], 0)
+
+    def test_maximum_quality_is_not_downgraded_by_quiet_mode(self):
+        design = studio.RenderDesign(
+            quality_preset="maximum", render_speed="quiet", output_fps=30,
+        )
+        performance = studio.render_performance(design)
+        self.assertEqual(performance["fps"], 60)
+        self.assertEqual(performance["quality"], "maximum")
+        self.assertIn("16", performance["encoder"])
+
+    def test_old_banner_chromakey_migrates_but_manual_off_is_preserved(self):
+        old = {"banner_file": "old.png", "render_design": {
+            "chromakey_enabled": False,
+        }}
+        self.assertTrue(studio.effective_design(old).chromakey_enabled)
+        newer = {"banner_file": "old.png", "render_design": {
+            "chromakey_enabled": False, "chromakey_version": 1,
+        }}
+        self.assertFalse(studio.effective_design(newer).chromakey_enabled)
+
+    def test_adjustable_quality_filters_and_export_color_metadata(self):
+        self.assertEqual(studio.quality_filter_segment("standard", 3, 1.5), "")
+        self.assertNotIn("hqdn3d", studio.quality_filter_segment("maximum", 0, 0.4))
+        self.assertNotIn("unsharp", studio.quality_filter_segment("maximum", 1, 0))
+        with (patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+              patch.object(studio.subprocess, "run") as run):
+            studio.render(Path("circle.mp4"), Path("background.mp4"),
+                          Path("output.mp4"), studio.RenderDesign(
+                              quality_preset="maximum", render_speed="quiet",
+                              smooth_motion=True, denoise_strength=1.4,
+                              sharpening_strength=0.7))
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        self.assertIn("minterpolate=fps=60", graph)
+        self.assertIn("hqdn3d=1.68", graph)
+        self.assertIn("unsharp=5:5:0.70", graph)
+        self.assertIn("-color_primaries", args)
+        self.assertIn("bt709", args)
+        self.assertIn("192k", args)
+
+    def test_4k_export_is_opt_in_and_uses_2160x3840(self):
+        self.assertEqual(studio.RenderDesign().export_resolution, 1080)
+        with self.assertRaises(ValidationError):
+            studio.RenderDesign(export_resolution=1440)
+        with (patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+              patch.object(studio.subprocess, "run") as run):
+            studio.render(Path("circle.mp4"), Path("background.mp4"),
+                          Path("output.mp4"), studio.RenderDesign(
+                              export_resolution=2160, quality_preset="maximum"))
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        self.assertIn("scale=2160:3840:flags=lanczos", graph)
+        self.assertEqual(args[args.index("-level:v")+1], "5.2")
+
+    def test_chromakey_is_enabled_by_default(self):
+        design = studio.RenderDesign()
+        self.assertTrue(design.chromakey_enabled)
+
+
 class TelegramRerenderSelectionTests(unittest.TestCase):
     def test_existing_output_is_skipped_by_default_but_not_when_forced(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -48,7 +121,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
     def test_circle_is_larger_by_default_and_chromakey_is_optional(self):
         design = studio.RenderDesign()
         self.assertEqual(design.circle_size, 1040)
-        self.assertFalse(design.chromakey_enabled)
+        self.assertTrue(design.chromakey_enabled)
         self.assertFalse(design.banner_enabled)
         with self.assertRaises(ValidationError):
             studio.RenderDesign(circle_size=1200)
@@ -104,7 +177,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
     def test_default_green_still_applies_for_old_saved_designs(self):
         older = studio.RenderDesign.model_validate({"chromakey_enabled": True})
         self.assertEqual(older.chromakey_color, "#00ff00")
-        self.assertEqual(older.chromakey_similarity, .20)
+        self.assertEqual(older.chromakey_similarity, .10)
         self.assertEqual(older.chromakey_blend, .07)
 
     def test_rejects_invalid_colors_and_ffmpeg_filter_injection(self):
@@ -174,7 +247,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             args = run.call_args.args[0]
             graph = args[args.index("-filter_complex") + 1]
             self.assertIn("[2:v]scale=", graph)
-            self.assertIn("colorkey=0x1a4cdd:0.200:0.070,", graph)
+            self.assertIn("colorkey=0x1a4cdd:0.100:0.070,", graph)
             self.assertNotIn("colorkey=", graph.split("[circle];")[0])
             self.assertIn("-loop", args)
 
@@ -330,6 +403,35 @@ class TelegramDesignApiTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as e:
                 studio.update_design(studio.RenderDesign(banner_enabled=True))
             self.assertEqual(e.exception.status_code, 409)
+
+
+class TelegramAnimatedRingRenderTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                         "FFmpeg and FFprobe required")
+    def test_rotating_arc_and_pulse_ring_render_to_mp4(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source.mp4"
+            background = root / "background.png"
+            Image.new("RGB", (1080, 1920), (32, 80, 160)).save(background)
+            subprocess.run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "color=c=black:s=320x320:r=30:d=0.5",
+                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                str(source),
+            ], check=True, capture_output=True)
+            for style in ("orbit_arc", "pulse_ring"):
+                with self.subTest(style=style):
+                    output = root / f"{style}.mp4"
+                    design = studio.RenderDesign(
+                        visual_template=style, circle_size=400,
+                        circle_x=300, circle_y=600,
+                        progress_enabled=False, timecode_enabled=False,
+                        render_speed="quiet", quality_preset="standard",
+                    )
+                    studio.render(source, background, output, design)
+                    self.assertTrue(output.is_file())
+                    self.assertGreater(output.stat().st_size, 1000)
 
 
 class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):
