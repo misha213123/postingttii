@@ -220,6 +220,7 @@ class RenderDesign(BaseModel):
     source_max_fps: bool = True  # Match the highest native video FPS (up to 120).
     smooth_motion: bool = False
     quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
+    performance_version: int = Field(default=2, ge=1)
     export_resolution: Literal[1080, 2160] = 1080
     denoise_strength: float = Field(default=1.0, ge=0.0, le=3.0)
     sharpening_strength: float = Field(default=0.5, ge=0.0, le=1.5)
@@ -242,18 +243,33 @@ class RenderDesign(BaseModel):
     banner_width: int = Field(default=540, ge=100, le=1080)
 
 
+def _migrate_legacy_performance(raw: dict) -> dict:
+    """Undo the old Maximum button's accidental optical-flow auto-enable.
+
+    Explicitly saved settings from this release include performance_version=2
+    and are never overridden, even if the user selects Original on purpose.
+    """
+    raw = dict(raw)
+    if raw.get("quality_preset") == "maximum" and "performance_version" not in raw:
+        raw.update(render_speed="balanced", smooth_motion=False,
+                   source_max_fps=False)
+    return raw
+
+
 def _design_presets(data: dict) -> dict[str, dict]:
     """Preserve the existing classic design and store the new style separately."""
-    original = dict(data.get("render_design") or {})
+    original = _migrate_legacy_performance(data.get("render_design") or {})
     saved = dict(data.get("render_design_presets") or {})
-    classic = RenderDesign.model_validate({
-        **original, **saved.get("classic", {}), "visual_template": "classic"
-    }).model_dump()
+    classic = RenderDesign.model_validate(_migrate_legacy_performance({
+        **original, **_migrate_legacy_performance(saved.get("classic", {})),
+        "visual_template": "classic"
+    })).model_dump()
     presets = {"classic": classic}
     for style in ("orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple",
                   "comet_tail", "halo_breathe", "twin_comets", "starlight", "radar_sweep"):
+        style_saved = _migrate_legacy_performance(saved.get(style, {}))
         presets[style] = RenderDesign.model_validate({
-            **classic, **saved.get(style, {}), "visual_template": style,
+            **classic, **style_saved, "visual_template": style,
             **({"timecode_enabled": False} if not saved.get(style) else {}),
         }).model_dump()
     return presets
@@ -261,7 +277,7 @@ def _design_presets(data: dict) -> dict[str, dict]:
 
 def effective_design(data: dict) -> RenderDesign:
     """Migrate pre-chromakey saved banners once, preserving newer manual off choices."""
-    raw = dict(data.get("render_design") or {})
+    raw = _migrate_legacy_performance(data.get("render_design") or {})
     if data.get("banner_file") and "chromakey_version" not in raw:
         raw["chromakey_enabled"] = True
     return RenderDesign.model_validate(raw)
@@ -1820,7 +1836,7 @@ async def run(body: RenderRequest):
         raise HTTPException(400, "Начальная дата позже конечной")
     # Snapshot settings at batch start so every Reel uses one consistent layout.
     data = config()
-    design = RenderDesign.model_validate(data.get("render_design", {}))
+    design = effective_design(data)
     try:
         if body.target_slot:
             chosen_folder = (account_folder(body.target_slot) if body.output_folder == "linked"
