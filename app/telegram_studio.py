@@ -1135,8 +1135,14 @@ def circle_alpha_assets(size: int, border: int, color: str) -> tuple[Path, Path]
         f"circle_border_v1_{size}_{border}_{color.lstrip('#').lower()}.png"
     )
 
+    def cached(path: Path) -> bool:
+        try:
+            return path.stat().st_size > 0
+        except OSError:
+            return False
+
     def save_once(path: Path, image: Image.Image) -> None:
-        if path.is_file() and path.stat().st_size > 0:
+        if cached(path):
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(path.stem + "_" + uuid.uuid4().hex + ".png")
@@ -1146,7 +1152,7 @@ def circle_alpha_assets(size: int, border: int, color: str) -> tuple[Path, Path]
         finally:
             temporary.unlink(missing_ok=True)
 
-    if not mask_path.is_file() or mask_path.stat().st_size == 0:
+    if not cached(mask_path):
         factor = 2
         mask = Image.new("L", (inside * factor, inside * factor), 0)
         ImageDraw.Draw(mask).ellipse(
@@ -1154,7 +1160,7 @@ def circle_alpha_assets(size: int, border: int, color: str) -> tuple[Path, Path]
         )
         save_once(mask_path, mask.resize((inside, inside), Image.Resampling.LANCZOS))
 
-    if not ring_path.is_file() or ring_path.stat().st_size == 0:
+    if not cached(ring_path):
         factor = 2
         ring = Image.new("RGBA", (size * factor, size * factor), (0, 0, 0, 0))
         rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
