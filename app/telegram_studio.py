@@ -1422,9 +1422,9 @@ def render(
             if pulse else ""
         )
         filter_chain += (
-            f"[2:v]format=rgba,rotate=a='2*PI*t/{speed}':ow=iw:oh=ih:c=none,"
-            f"scale={base_dimension}:{base_dimension}:flags=bilinear"
-            f"{pulse_alpha},fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
+            f"[2:v]format=rgba,rotate=a='2*PI*t/{speed}':ow=iw:oh=ih:c=none"
+            f"{pulse_alpha},scale={base_dimension}:{base_dimension}:flags=bilinear,"
+            f"fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
             f"d={SECOND_TEMPLATE_FADE_SECONDS}:alpha=1[orbit_ring];"
             f"[{last}][orbit_ring]overlay=x='{x+size//2}-w/2':"
             f"y='{y+size//2}-h/2':eval=frame:"
