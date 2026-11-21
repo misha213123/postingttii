@@ -169,6 +169,7 @@ class RenderDesign(BaseModel):
     output_fps: Literal[30, 60] = 60
     smooth_motion: bool = False
     quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
+    export_resolution: Literal[1080, 2160] = 1080
     denoise_strength: float = Field(default=1.0, ge=0.0, le=3.0)
     sharpening_strength: float = Field(default=0.5, ge=0.0, le=1.5)
     # Resource-saving mode is the default for both existing and new designs.
@@ -324,7 +325,9 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
         f"fade=t=in:st={fade_start}:d={fade_duration}:alpha=1[banner];"
         f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
         f"format=auto:shortest=1,fps={fps},"
-        f"{quality_filter_segment(performance['quality'], design.denoise_strength, design.sharpening_strength)}format=yuv420p[v]"
+        f"{quality_filter_segment(performance['quality'], design.denoise_strength, design.sharpening_strength)}"
+        f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
+        "format=yuv420p[v]"
     )
 
 
@@ -1166,7 +1169,9 @@ def render(
     else:
         filter_chain += (
             f"[composite]fps={fps},"
-            f"{quality_filter_segment(performance['quality'])}format=yuv420p[v]"
+            f"{quality_filter_segment(performance['quality'], design.denoise_strength, design.sharpening_strength)}"
+            f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
+            "format=yuv420p[v]"
         )
 
     cmd += [
@@ -1179,7 +1184,8 @@ def render(
         "-c:v", "libx264", *performance["encoder"],
         *(["-threads", str(performance["video_threads"])]
           if performance["video_threads"] is not None else []),
-        "-profile:v", "high", "-level:v", "5.1" if fps == 60 else "4.2",
+        "-profile:v", "high", "-level:v",
+        "5.2" if design.export_resolution == 2160 else ("5.1" if fps == 60 else "4.2"),
         "-pix_fmt", "yuv420p",
         "-color_primaries", "bt709", "-color_trc", "bt709",
         "-colorspace", "bt709",
