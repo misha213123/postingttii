@@ -17,9 +17,10 @@ from app import telegram_studio as studio
 
 
 class TelegramRingAndQualityTests(unittest.TestCase):
-    def test_all_seven_templates_validate_and_generate_ring_artwork(self):
+    def test_all_twelve_templates_validate_and_generate_ring_artwork(self):
         styles = ("classic", "orbit_dots", "orbit_arc", "pulse_ring",
-                  "double_orbit", "dashed_spin", "ripple")
+                  "double_orbit", "dashed_spin", "ripple", "comet_tail",
+                  "halo_breathe", "twin_comets", "starlight", "radar_sweep")
         for style in styles:
             with self.subTest(style=style):
                 design = studio.RenderDesign(visual_template=style)
@@ -87,6 +88,67 @@ class TelegramRingAndQualityTests(unittest.TestCase):
     def test_chromakey_is_enabled_by_default(self):
         design = studio.RenderDesign()
         self.assertTrue(design.chromakey_enabled)
+
+
+class TelegramProgressStyleTests(unittest.TestCase):
+    def _graph(self, **kwargs):
+        with (patch.object(studio, "duration", side_effect=[2.0, 10.0]),
+              patch.object(studio.subprocess, "run") as run):
+            studio.render(Path("circle.mp4"), Path("background.mp4"),
+                          Path("out.mp4"), studio.RenderDesign(**kwargs))
+        args = run.call_args.args[0]
+        return args[args.index("-filter_complex") + 1]
+
+    def test_progress_can_be_hidden_entirely_in_classic_and_animated_templates(self):
+        for template in ("classic", "orbit_dots", "comet_tail"):
+            for disabled in ({"progress_enabled": False},
+                             {"progress_style": "none"}):
+                with self.subTest(template=template, disabled=disabled):
+                    graph = self._graph(visual_template=template,
+                                        timecode_enabled=False, **disabled)
+                    self.assertNotIn("[progress_track]", graph)
+                    self.assertNotIn("[loading_track]", graph)
+                    self.assertNotIn("[progress_fill]", graph)
+                    self.assertNotIn("[loading_fill]", graph)
+
+    def test_all_seven_visible_bar_styles_generate_real_ffmpeg_filters(self):
+        styles = ("classic", "thin", "capsule", "segmented",
+                  "glow", "dual", "pulse")
+        for template in ("classic", "comet_tail"):
+            for style in styles:
+                with self.subTest(template=template, style=style):
+                    graph = self._graph(visual_template=template,
+                                        progress_style=style,
+                                        timecode_enabled=False)
+                    self.assertIn("[with_progress]", graph)
+                    self.assertIn("min(T/2.000", graph)
+                    if template != "classic":
+                        self.assertIn("[loading_fill]", graph)
+                    if style == "capsule":
+                        self.assertIn("clip(X", graph)
+                    if style == "segmented":
+                        self.assertIn("ceil(min(T/", graph)
+                    if style == "glow":
+                        self.assertIn("0x6deeff", graph)
+                    if style == "pulse":
+                        self.assertIn("sin(T*6)", graph)
+
+    def test_progress_style_validation_and_backward_compatibility(self):
+        self.assertEqual(studio.RenderDesign().progress_style, "classic")
+        self.assertTrue(studio.RenderDesign().progress_enabled)
+        with self.assertRaises(ValidationError):
+            studio.RenderDesign(progress_style="not-a-style")
+        old = studio.RenderDesign.model_validate({"progress_enabled": False})
+        self.assertFalse(old.progress_enabled)
+        self.assertEqual(old.progress_style, "classic")
+
+    def test_browser_off_option_and_new_circle_choices_exist(self):
+        static = Path(__file__).resolve().parents[1] / "static"
+        js = (static / "studio-circle-ui.js").read_text(encoding="utf-8")
+        self.assertIn("studioProgressStyle", js)
+        self.assertIn("Скрыть полностью", js)
+        self.assertIn("progress.hidden=!state.progress_enabled", js)
+        self.assertIn("Шаблон 12", js)
 
 
 class TelegramRerenderSelectionTests(unittest.TestCase):
@@ -420,7 +482,7 @@ class TelegramAnimatedRingRenderTests(unittest.TestCase):
                 "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
                 str(source),
             ], check=True, capture_output=True)
-            for style in ("orbit_arc", "pulse_ring"):
+            for style in ("orbit_arc", "pulse_ring", "comet_tail", "halo_breathe"):
                 with self.subTest(style=style):
                     output = root / f"{style}.mp4"
                     design = studio.RenderDesign(
@@ -432,6 +494,36 @@ class TelegramAnimatedRingRenderTests(unittest.TestCase):
                     studio.render(source, background, output, design)
                     self.assertTrue(output.is_file())
                     self.assertGreater(output.stat().st_size, 1000)
+
+
+class TelegramProgressStyleRenderIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                         "FFmpeg and FFprobe required")
+    def test_capsule_progress_and_hidden_progress_both_render_to_mp4(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source.mp4"
+            background = root / "background.png"
+            Image.new("RGB", (1080, 1920), (32, 80, 160)).save(background)
+            subprocess.run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "color=c=black:s=320x320:r=30:d=0.6",
+                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                str(source),
+            ], check=True, capture_output=True)
+            for style in ("capsule", "none"):
+                with self.subTest(style=style):
+                    target = root / f"{style}.mp4"
+                    studio.render(source, background, target,
+                                  studio.RenderDesign(
+                                      visual_template="comet_tail",
+                                      circle_size=400, circle_x=300, circle_y=600,
+                                      progress_style=style, progress_x=350,
+                                      progress_y=1200, progress_width=250,
+                                      progress_height=12, timecode_enabled=False,
+                                      render_speed="quiet", quality_preset="standard"))
+                    self.assertTrue(target.is_file())
+                    self.assertGreater(target.stat().st_size, 1000)
 
 
 class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):
