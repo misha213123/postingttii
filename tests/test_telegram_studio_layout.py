@@ -820,6 +820,23 @@ class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
                         studio.render(source, background, root / "output.mp4",
                                       design, banner if use_banner else None)
 
+            # Regression for the exact "Maximum" setting: animated ring,
+            # optical-flow circle, advanced key, and progress together.
+            maximum = studio.RenderDesign(
+                visual_template="pulse_ring", circle_size=400,
+                circle_x=100, circle_y=300, progress_style="capsule",
+                timecode_enabled=False, banner_enabled=True,
+                banner_width=220, quality_preset="maximum",
+                render_speed="original", smooth_motion=True,
+                source_max_fps=False,
+            )
+            with (patch.object(studio, "duration", return_value=1.0),
+                  patch.object(studio, "video_frame_rate", return_value=30.0),
+                  patch.object(studio.subprocess, "run",
+                               side_effect=verify_graph)):
+                studio.render(source, background, root / "output.mp4",
+                              maximum, banner)
+
 
 class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(
