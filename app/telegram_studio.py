@@ -10,11 +10,13 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
 from datetime import date
 from io import BytesIO
+from fractions import Fraction
 from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -40,6 +42,53 @@ LOCK = asyncio.Lock()
 JOB = {"status": "idle", "total": 0, "done": 0, "errors": []}
 JOB_TASK = None
 STOP_REQUESTED = False
+ACTIVE_RENDER_PROCESS: subprocess.Popen | None = None
+ACTIVE_RENDER_LOCK = threading.Lock()
+
+
+class RenderStopped(Exception):
+    """A user requested to stop the current render and its FFmpeg process."""
+
+
+def run_ffmpeg_render(command: list[str], *, cwd: str | None = None,
+                      timeout: float | None = None) -> subprocess.CompletedProcess:
+    """Run cancellable FFmpeg, tracking the actual child process.
+
+    subprocess.run() hid the PID, so the old UI could not stop a render that
+    was already spending minutes inside FFmpeg. No other FFmpeg tasks on the
+    computer are touched.
+    """
+    global ACTIVE_RENDER_PROCESS
+    if STOP_REQUESTED and JOB.get("status") == "running":
+        raise RenderStopped()
+    process = subprocess.Popen(
+        command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    with ACTIVE_RENDER_LOCK:
+        ACTIVE_RENDER_PROCESS = process
+        if STOP_REQUESTED and JOB.get("status") == "running":
+            process.terminate()
+    try:
+        try:
+            output, errors = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            output, errors = process.communicate()
+            raise subprocess.TimeoutExpired(
+                command, timeout, output=output, stderr=errors
+            ) from exc
+    finally:
+        with ACTIVE_RENDER_LOCK:
+            if ACTIVE_RENDER_PROCESS is process:
+                ACTIVE_RENDER_PROCESS = None
+    if STOP_REQUESTED and JOB.get("status") == "running":
+        raise RenderStopped()
+    if process.returncode:
+        raise subprocess.CalledProcessError(
+            process.returncode, command, output=output, stderr=errors
+        )
+    return subprocess.CompletedProcess(command, process.returncode, output, errors)
 BACKGROUND_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 BACKGROUND_SUFFIXES = BACKGROUND_IMAGE_SUFFIXES | {".mp4"}
 
@@ -150,7 +199,7 @@ class LoginFinish(BaseModel):
 
 class RenderDesign(BaseModel):
     """Saved design and layout in 1080 x 1920 video pixels."""
-    visual_template: Literal["classic", "orbit_dots"] = "classic"
+    visual_template: Literal["classic", "orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple", "comet_tail", "halo_breathe", "twin_comets", "starlight", "radar_sweep"] = "classic"
     circle_size: int = Field(default=1040, ge=400, le=1080)
     circle_x: int = Field(default=20, ge=0, le=1080)
     circle_y: int = Field(default=90, ge=0, le=1920)
@@ -158,6 +207,7 @@ class RenderDesign(BaseModel):
     circle_border_width: int = Field(default=9, ge=0, le=48)
     circle_border_color: str = Field(default="#ffffff", pattern=r"^#[0-9A-Fa-f]{6}$")
     progress_enabled: bool = True
+    progress_style: Literal["classic", "thin", "capsule", "segmented", "glow", "dual", "pulse", "none"] = "classic"
     progress_x: int = Field(default=310, ge=0, le=1080)
     progress_y: int = Field(default=1190, ge=0, le=1920)
     progress_width: int = Field(default=460, ge=100, le=1080)
@@ -166,17 +216,24 @@ class RenderDesign(BaseModel):
     timecode_x: int = Field(default=445, ge=0, le=1080)
     timecode_y: int = Field(default=1220, ge=0, le=1920)
     timecode_font_size: int = Field(default=32, ge=18, le=64)
-    output_fps: Literal[30, 60] = 60
+    output_fps: Literal[30, 60, 120] = 60
+    source_max_fps: bool = True  # Match the highest native video FPS (up to 120).
     smooth_motion: bool = False
     quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
+    performance_version: int = Field(default=2, ge=1)
+    export_resolution: Literal[1080, 2160] = 1080
+    denoise_strength: float = Field(default=1.0, ge=0.0, le=3.0)
+    sharpening_strength: float = Field(default=0.5, ge=0.0, le=1.5)
     # Resource-saving mode is the default for both existing and new designs.
     # Users can explicitly restore the previous 60fps/full-filter renderer.
     render_speed: Literal["quiet", "balanced", "original"] = "quiet"
     background_mode: Literal["shuffle", "single"] = "shuffle"
     background_name: str = ""
-    chromakey_enabled: bool = False
+    chromakey_enabled: bool = True
+    chromakey_version: int = 1
+    chromakey_mode: Literal["standard", "advanced"] = "advanced"
     chromakey_color: str = Field(default="#00ff00", pattern=r"^#[0-9A-Fa-f]{6}$")
-    chromakey_similarity: float = Field(default=0.20, ge=0.01, le=1.0)
+    chromakey_similarity: float = Field(default=0.22, ge=0.01, le=1.0)
     chromakey_blend: float = Field(default=0.07, ge=0.0, le=1.0)
     banner_enabled: bool = False
     # Negative coordinates deliberately allow moving the ad outside the
@@ -186,22 +243,48 @@ class RenderDesign(BaseModel):
     banner_width: int = Field(default=540, ge=100, le=1080)
 
 
+def _migrate_legacy_performance(raw: dict) -> dict:
+    """Undo the old Maximum button's accidental optical-flow auto-enable.
+
+    Explicitly saved settings from this release include performance_version=2
+    and are never overridden, even if the user selects Original on purpose.
+    """
+    raw = dict(raw)
+    if raw.get("quality_preset") == "maximum" and "performance_version" not in raw:
+        raw.update(render_speed="balanced", smooth_motion=False,
+                   source_max_fps=False)
+    return raw
+
+
 def _design_presets(data: dict) -> dict[str, dict]:
     """Preserve the existing classic design and store the new style separately."""
-    original = dict(data.get("render_design") or {})
+    original = _migrate_legacy_performance(data.get("render_design") or {})
     saved = dict(data.get("render_design_presets") or {})
-    classic = RenderDesign.model_validate({
-        **original, **saved.get("classic", {}), "visual_template": "classic"
-    }).model_dump()
-    orbit = RenderDesign.model_validate({
-        **classic, **saved.get("orbit_dots", {}), "visual_template": "orbit_dots",
-        **({"timecode_enabled": False} if not saved.get("orbit_dots") else {}),
-    }).model_dump()
-    return {"classic": classic, "orbit_dots": orbit}
+    classic = RenderDesign.model_validate(_migrate_legacy_performance({
+        **original, **_migrate_legacy_performance(saved.get("classic", {})),
+        "visual_template": "classic"
+    })).model_dump()
+    presets = {"classic": classic}
+    for style in ("orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple",
+                  "comet_tail", "halo_breathe", "twin_comets", "starlight", "radar_sweep"):
+        style_saved = _migrate_legacy_performance(saved.get(style, {}))
+        presets[style] = RenderDesign.model_validate({
+            **classic, **style_saved, "visual_template": style,
+            **({"timecode_enabled": False} if not saved.get(style) else {}),
+        }).model_dump()
+    return presets
+
+
+def effective_design(data: dict) -> RenderDesign:
+    """Migrate pre-chromakey saved banners once, preserving newer manual off choices."""
+    raw = _migrate_legacy_performance(data.get("render_design") or {})
+    if data.get("banner_file") and "chromakey_version" not in raw:
+        raw["chromakey_enabled"] = True
+    return RenderDesign.model_validate(raw)
 
 
 def saved_design() -> RenderDesign:
-    return RenderDesign.model_validate(config().get("render_design", {}))
+    return effective_design(config())
 
 
 def choose_backgrounds(design: RenderDesign) -> list[Path]:
@@ -226,21 +309,25 @@ def banner_input_args(banner: Path) -> list[str]:
     return ["-loop", "1", "-i", str(banner)]
 
 
-def quality_filter_segment(quality_preset: str) -> str:
+def quality_filter_segment(quality_preset: str, denoise_strength: float = 1.0,
+                           sharpening_strength: float = 0.5) -> str:
     """Conservative picture cleanup; visual quality, not duplicate evasion.
 
     The treatment is applied once after the composition so all layers share
     the same encoding characteristics. Keep the standard preset filter-free.
     """
-    if quality_preset == "enhanced":
-        return ("hqdn3d=0.8:0.8:3:3,"
-                "eq=contrast=1.025:saturation=1.035,"
-                "unsharp=3:3:0.35:3:3:0.0,")
-    if quality_preset == "maximum":
-        return ("hqdn3d=1.2:1.0:4:3,"
-                "eq=contrast=1.045:saturation=1.055,"
-                "unsharp=5:5:0.50:5:5:0.0,")
-    return ""
+    if quality_preset == "standard":
+        return ""
+    # Respect the user's noise/detail tradeoff instead of forcing aggressive
+    # smoothing. All values are Pydantic-validated before entering FFmpeg.
+    filters = []
+    if denoise_strength > 0:
+        strength = denoise_strength * (1.2 if quality_preset == "maximum" else 0.8)
+        filters.append(f"hqdn3d={strength:.2f}:{strength*.85:.2f}:"
+                       f"{strength*3:.2f}:{strength*2.5:.2f}")
+    if sharpening_strength > 0:
+        filters.append(f"unsharp=5:5:{sharpening_strength:.2f}:5:5:0.0")
+    return ",".join(filters) + ("," if filters else "")
 
 
 def h264_quality_args(quality_preset: str, *, standard_crf: str = "18") -> list[str]:
@@ -249,8 +336,8 @@ def h264_quality_args(quality_preset: str, *, standard_crf: str = "18") -> list[
     # efficiency and is extremely costly for short 60fps Reels on Windows.
     # Medium keeps the same CRF quality at the cost of somewhat larger files.
     if quality_preset == "maximum":
-        return ["-preset", "medium", "-crf", "16",
-                "-maxrate", "16M", "-bufsize", "32M"]
+        # Do not constrain bitrate: a hard VBV ceiling can damage a detailed banner.
+        return ["-preset", "medium", "-crf", "14"]
     if quality_preset == "enhanced":
         return ["-preset", "fast", "-crf", "17",
                 "-maxrate", "14M", "-bufsize", "28M"]
@@ -264,6 +351,21 @@ def render_performance(design: RenderDesign) -> dict:
     sharpening/denoising and optical-flow interpolation, while maintaining
     1080x1920, the white circle, overlay, progress and banner.
     """
+    # Maximum quality must not silently turn into standard 30 FPS in quiet mode.
+    if design.quality_preset == "maximum":
+        # Maximum describes picture quality, not an obligation to run
+        # CPU-heavy optical flow at 1080p/120fps. Quiet/balanced are safe.
+        if design.render_speed == "quiet":
+            return dict(fps=30, motion=False, quality="maximum",
+                        filter_threads=2, video_threads=2,
+                        encoder=["-preset", "veryfast", "-crf", "17"])
+        if design.render_speed == "balanced":
+            return dict(fps=design.output_fps, motion=False, quality="maximum",
+                        filter_threads=4, video_threads=4,
+                        encoder=["-preset", "veryfast", "-crf", "16"])
+        return dict(fps=design.output_fps, motion=design.smooth_motion,
+                    quality="maximum", filter_threads=4, video_threads=4,
+                    encoder=h264_quality_args("maximum"))
     if design.render_speed == "quiet":
         return dict(fps=30, motion=False, quality="standard",
                     filter_threads=2, video_threads=2,
@@ -279,31 +381,121 @@ def render_performance(design: RenderDesign) -> dict:
                 encoder=h264_quality_args(design.quality_preset))
 
 
-def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
-    """Composite a video or image banner with 60/30fps and gentle fade-in.
+def effective_chroma_similarity(design: RenderDesign) -> float:
+    """Compression-safe RGB threshold; manual settings above the floor win."""
+    return (max(0.22, design.chromakey_similarity)
+            if design.chromakey_mode == "advanced" else design.chromakey_similarity)
 
-    Chroma key applies only to the banner, never to the circular media.
+
+def banner_overlay_filter(
+    design: RenderDesign, banner_input_index: int, fps: int | None = None,
+) -> str:
+    """Key at original banner resolution, then scale and composite.
+
+    Crucially there is no FPS conversion, denoising or sharpening on the
+    banner input. FFmpeg's overlay synchronizes its native timestamps to
+    the output timeline. This avoids discarding frames before keying and
+    prevents the global cleanup from blurring banner text and logos.
     """
-    banner_key = (
-        f"chromakey=0x{design.chromakey_color[1:]}:"
-        f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
-        if design.chromakey_enabled else ""
-    )
-    performance = render_performance(design)
-    fps = performance["fps"]
-    # Classic keeps its original transition; the second style first shows
-    # ONLY the background and then reveals the banner with the circle.
-    delayed = design.visual_template == "orbit_dots"
+    fps = fps or render_performance(design)["fps"]
+    banner_key = ""
+    if design.chromakey_enabled:
+        banner_key = (
+            f"colorkey=0x{design.chromakey_color[1:]}:"
+            f"{effective_chroma_similarity(design):.3f}:"
+            f"{design.chromakey_blend:.3f},"
+        )
+        if design.chromakey_mode == "advanced":
+            rgb = tuple(int(design.chromakey_color[i:i+2], 16)
+                        for i in (1, 3, 5))
+            # Despill removes reflected green/blue halos without touching
+            # unrelated hues. For red/neutral keys only clean the matte.
+            spill = ("green" if rgb[1] > rgb[0] * 1.15 and rgb[1] > rgb[2] * 1.15
+                     else "blue" if rgb[2] > rgb[0] * 1.15 and rgb[2] > rgb[1] * 1.15
+                     else None)
+            if spill:
+                banner_key += f"despill=type={spill}:mix=0.60:expand=0.08,"
+            # Blur only alpha, not RGB. This softens jagged chroma edges
+            # without degrading banner text, color, detail or frame timing.
+            banner_key += "boxblur=lr=0:lp=0:cr=0:cp=0:ar=1:ap=1,"
+    delayed = design.visual_template != "classic"
     fade_start = f"{SECOND_TEMPLATE_INTRO_START:.2f}" if delayed else "0"
     fade_duration = f"{SECOND_TEMPLATE_FADE_SECONDS:.2f}" if delayed else "0.30"
+    # For 4K output, upscale the *base* first and overlay the banner at
+    # its 4K size directly from the original pixels. Upscaling a finished
+    # 1080p composite would unnecessarily destroy fine banner text.
+    hi_res = design.export_resolution == 2160
+    factor = 2 if hi_res else 1
+    preface = ("[composite]scale=2160:3840:flags=lanczos[composite_hi];"
+               if hi_res else "")
+    base = "composite_hi" if hi_res else "composite"
     return (
-        f"[{banner_input_index}:v]scale={design.banner_width}:-1:flags=lanczos,"
-        f"fps={fps},format=rgba,{banner_key}format=rgba,"
+        preface +
+        f"[{banner_input_index}:v]format=rgba,{banner_key}"
+        f"scale={design.banner_width * factor}:-1:flags=lanczos,format=rgba,"
         f"fade=t=in:st={fade_start}:d={fade_duration}:alpha=1[banner];"
-        f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
-        f"format=auto:shortest=1,fps={fps},"
-        f"{quality_filter_segment(performance['quality'])}format=yuv420p[v]"
+        f"[{base}][banner]overlay={design.banner_x * factor}:"
+        f"{design.banner_y * factor}:format=auto:shortest=1,fps={fps},"
+        "format=yuv420p[v]"
     )
+
+
+def video_frame_rate(path: Path) -> float | None:
+    """Read native FPS without decoding or rewriting the original video."""
+    if not path.is_file() or path.suffix.lower() not in {".mp4", ".webm", ".mov", ".mkv"}:
+        return None
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=avg_frame_rate,r_frame_rate",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, check=True, timeout=15,
+        )
+        streams = json.loads(result.stdout).get("streams", [])
+        for key in ("avg_frame_rate", "r_frame_rate"):
+            if streams and streams[0].get(key):
+                try:
+                    fps = float(Fraction(streams[0][key]))
+                except (ValueError, ZeroDivisionError, TypeError):
+                    continue  # WebM often reports avg_frame_rate=0/0.
+                if 1 <= fps <= 480:
+                    return fps
+    except (OSError, ValueError, TypeError, ZeroDivisionError,
+            subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def render_frame_rate(
+    design: RenderDesign, performance: dict, source: Path, bg: Path,
+    banner: Path | None,
+) -> tuple[int, dict[str, float | None]]:
+    """Avoid downsampling any native video layer when practical (max 120fps).
+
+    A single CFR MP4 cannot retain separate per-layer FPS metadata. Each
+    native banner frame is still used on its original timeline; if the
+    composite FPS is higher, frames are held, not interpolated or altered.
+    """
+    native = {
+        "circle": video_frame_rate(source),
+        "background": None if is_image_background(bg) else video_frame_rate(bg),
+        "banner": (video_frame_rate(banner) if banner and design.banner_enabled else None),
+    }
+    target = performance["fps"]
+    if design.source_max_fps and not (
+        design.quality_preset == "maximum" and design.render_speed == "quiet"
+    ):
+        considered = (native.values() if performance["quality"] == "maximum"
+                      else (native["banner"],))
+        valid = [rate for rate in considered if rate is not None]
+        if valid:
+            target = max(target, math.ceil(max(valid) - 0.01))
+    if target > 120:
+        JOB.setdefault("notes", []).append(
+            "Частота исходника выше 120 FPS: экспорт ограничен 120 FPS "
+            "ради совместимости MP4; оригиналы не изменяются."
+        )
+    return min(120, target), native
 
 
 def current_banner(data=None) -> Path | None:
@@ -319,7 +511,7 @@ def design_response():
     d = config()
     banner = current_banner(d)
     return {
-        "design": RenderDesign.model_validate(d.get("render_design", {})).model_dump(),
+        "design": effective_design(d).model_dump(),
         "presets": _design_presets(d),
         "banner_available": banner is not None,
         "banner_kind": "video" if banner and banner.suffix in {".mp4", ".webm"} else ("image" if banner else None),
@@ -423,6 +615,10 @@ async def upload_banner(file: UploadFile = File(...)):
 
     d = config()
     d["banner_file"] = name
+    design = effective_design(d)
+    d["render_design"] = design.model_copy(update={
+        "banner_enabled": True, "chromakey_enabled": True,
+    }).model_dump()
     save(d)
     return design_response()
 
@@ -557,6 +753,8 @@ class RenderRequest(BaseModel):
     order: str = "oldest"
     date_from: date | None = None
     date_to: date | None = None
+    # Explicitly rebuild selected outputs after layout/chromakey changes.
+    force_rerender: bool = False
 
 
 @router.get("/status")
@@ -566,6 +764,21 @@ def status():
             "telegram_configured": bool(os.getenv("TG_API_ID") and os.getenv("TG_API_HASH")),
             "telegram_session_exists": SESSION.with_suffix(".session").exists(),
             "ffmpeg_ready": bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))}
+
+
+@router.post("/stop")
+def stop_render():
+    """Stop only this studio's active FFmpeg process, not other video jobs."""
+    global STOP_REQUESTED
+    if JOB.get("status") != "running":
+        return {"stopping": False, "status": JOB.get("status")}
+    STOP_REQUESTED = True
+    JOB["stopping"] = True
+    with ACTIVE_RENDER_LOCK:
+        active = ACTIVE_RENDER_PROCESS
+        if active is not None and active.poll() is None:
+            active.terminate()
+    return {"stopping": True, "status": "stopping"}
 
 
 @router.post("/channels")
@@ -824,6 +1037,25 @@ async def qr_password(body: QRPassword):
         return {"state": "authorized"}
 
 
+def should_skip_existing_render(
+    key: str, target: Path, completed_keys: list[str], *,
+    force_rerender: bool = False,
+) -> bool:
+    """Skip already processed outputs unless the user explicitly requests a rebuild."""
+    if force_rerender:
+        return False
+    if key in completed_keys:
+        return True
+    return target.is_file() and target.stat().st_size > 0
+
+
+def should_skip_known_source(
+    digest: str, known_hashes: set[str], *, force_rerender: bool = False,
+) -> bool:
+    """Avoid duplicate forwarded media unless explicitly rebuilding existing renders."""
+    return not force_rerender and digest in known_hashes
+
+
 def duration(path):
     p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
@@ -890,6 +1122,128 @@ def orbit_sprite_path(circle_size: int) -> Path:
     return filename
 
 
+def circle_alpha_assets(size: int, border: int, color: str) -> tuple[Path, Path]:
+    """Cache anti-aliased PNG circle masks instead of evaluating geq per pixel.
+
+    Old rendering evaluated two expensive per-pixel geq expressions on every
+    frame (at 1040px/60fps, millions of expressions each second). The masks
+    are static for a design and can be reused across every frame and video.
+    """
+    inside = size - 2 * border
+    mask_path = ORBIT_ASSETS / f"circle_inside_mask_v1_{inside}.png"
+    ring_path = ORBIT_ASSETS / (
+        f"circle_border_v1_{size}_{border}_{color.lstrip('#').lower()}.png"
+    )
+
+    def cached(path: Path) -> bool:
+        try:
+            return path.stat().st_size > 0
+        except OSError:
+            return False
+
+    def save_once(path: Path, image: Image.Image) -> None:
+        if cached(path):
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.stem + "_" + uuid.uuid4().hex + ".png")
+        try:
+            image.save(temporary, "PNG")
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    if not cached(mask_path):
+        factor = 2
+        mask = Image.new("L", (inside * factor, inside * factor), 0)
+        ImageDraw.Draw(mask).ellipse(
+            (0, 0, inside * factor - 1, inside * factor - 1), fill=255
+        )
+        save_once(mask_path, mask.resize((inside, inside), Image.Resampling.LANCZOS))
+
+    if not cached(ring_path):
+        factor = 2
+        ring = Image.new("RGBA", (size * factor, size * factor), (0, 0, 0, 0))
+        rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+        ImageDraw.Draw(ring).ellipse(
+            (0, 0, size * factor - 1, size * factor - 1), fill=(*rgb, 255)
+        )
+        save_once(ring_path, ring.resize((size, size), Image.Resampling.LANCZOS))
+    return mask_path, ring_path
+
+
+def ring_sprite_path(circle_size: int, style: str) -> Path:
+    """Create transparent ring artwork for each selectable animated template."""
+    if style == "orbit_dots":
+        return orbit_sprite_path(circle_size)
+    filename = ORBIT_ASSETS / f"ring_{style}_v1_{circle_size}.png"
+    if filename.is_file() and filename.stat().st_size:
+        return filename
+    dimension, padding = 512, 36
+    unit = dimension / (circle_size + 2 * padding)
+    center = dimension / 2
+    radius = (circle_size / 2 + 16) * unit
+    image = Image.new("RGBA", (dimension, dimension), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    def arc(r, start, end, color, width):
+        draw.arc((center-r, center-r, center+r, center+r),
+                 start, end, fill=color, width=max(2, int(width*unit)))
+    if style == "orbit_arc":
+        arc(radius, 205, 325, (255,255,255,255), 12)
+        arc(radius+10*unit, 230, 300, (140,215,255,160), 4)
+    elif style == "pulse_ring":
+        arc(radius, 0, 359, (255,255,255,230), 7)
+        arc(radius+13*unit, 0, 359, (180,225,255,120), 4)
+    elif style == "double_orbit":
+        arc(radius, 10, 115, (255,255,255,255), 9)
+        arc(radius, 190, 295, (255,255,255,220), 9)
+    elif style == "dashed_spin":
+        for angle in range(0, 360, 30):
+            arc(radius, angle, angle+16, (255,255,255,240), 9)
+    elif style == "ripple":
+        for offset, opacity in ((0,240),(12,145),(23,75)):
+            arc(radius+offset*unit, 0, 359, (255,255,255,opacity), 5)
+    elif style == "comet_tail":
+        for start, end, opacity, width in ((190, 310, 65, 15),
+                                          (245, 320, 135, 12),
+                                          (290, 335, 240, 10)):
+            arc(radius, start, end, (255, 255, 255, opacity), width)
+        angle = math.radians(335)
+        hx, hy = center + radius*math.cos(angle), center + radius*math.sin(angle)
+        draw.ellipse((hx-7, hy-7, hx+7, hy+7), fill=(255, 255, 255, 255))
+    elif style == "halo_breathe":
+        for offset, opacity, width in ((0, 250, 8), (13, 150, 6), (24, 75, 5)):
+            arc(radius+offset*unit, 0, 359, (195, 235, 255, opacity), width)
+    elif style == "twin_comets":
+        for start, end in ((15, 115), (195, 295)):
+            arc(radius, start, end, (255, 255, 255, 245), 10)
+            angle = math.radians(end)
+            hx, hy = center+radius*math.cos(angle), center+radius*math.sin(angle)
+            draw.ellipse((hx-6, hy-6, hx+6, hy+6), fill=(140, 225, 255, 255))
+    elif style == "starlight":
+        arc(radius, 0, 359, (255, 255, 255, 85), 3)
+        for index in range(16):
+            angle = 2*math.pi*index/16
+            rr = radius + (8*unit if index % 2 else 0)
+            hx, hy = center+rr*math.cos(angle), center+rr*math.sin(angle)
+            dot = max(2, round((7 if index % 4 == 0 else 4)*unit))
+            draw.ellipse((hx-dot, hy-dot, hx+dot, hy+dot),
+                         fill=(255, 255, 255, 255 if index % 4 == 0 else 170))
+    elif style == "radar_sweep":
+        for start, end, opacity in ((175, 225, 60), (226, 275, 130),
+                                    (276, 325, 230)):
+            arc(radius, start, end, (155, 235, 255, opacity), 12)
+        arc(radius, 320, 335, (255, 255, 255, 255), 14)
+    else:
+        raise ValueError(f"Неизвестный стиль кружка: {style}")
+    temp = filename.with_name(filename.stem+"_"+uuid.uuid4().hex+".png")
+    try:
+        image.save(temp)
+        temp.replace(filename)
+    finally:
+        temp.unlink(missing_ok=True)
+    return filename
+
+
 # A brief backdrop-only introduction before circles/ads reveal.
 SECOND_TEMPLATE_INTRO_START = 0.38
 SECOND_TEMPLATE_FADE_SECONDS = 0.28
@@ -919,14 +1273,66 @@ def loading_progress_filter(
     )
 
 
+def styled_progress_filter(
+    design: RenderDesign, seconds: float, fps: int, previous: str, *, orbit: bool
+) -> str:
+    """Render alternative animated progress bars at video resolution.
+
+    This is deliberately separate from the classic filter so old saved
+    designs keep their existing appearance and timecode behavior.
+    """
+    w, original_h = design.progress_width, design.progress_height
+    h = min(4, original_h) if design.progress_style == "thin" else original_h
+    x = max(0, min(design.progress_x, 1080 - w))
+    y = max(0, min(design.progress_y + (original_h-h)//2, 1920-h))
+    style = design.progress_style
+    mask = "1"
+    if style == "capsule":
+        # Signed distance to a horizontal capsule. Escaped commas are needed
+        # inside FFmpeg geq expressions embedded in a filtergraph.
+        mask = ("lte((X-clip(X\\,H/2\\,W-H/2))*(X-clip(X\\,H/2\\,W-H/2))"
+                "+(Y-H/2)*(Y-H/2)\\,(H/2)*(H/2))")
+    elif style == "segmented":
+        cell = max(12, w // 14)
+        mask = f"lt(mod(X\\,{cell})\\,{max(6, cell-5)})"
+    elif style == "dual":
+        mask = "gte(abs(Y-H/2)\\,1.5)"
+    progress = f"lte(X\\,W*min(T/{seconds:.3f}\\,1))"
+    if style == "segmented":
+        progress = f"lte(X\\,W*ceil(min(T/{seconds:.3f}\\,1)*14)/14)"
+    opacity = "(0.72+0.28*sin(T*6))" if style == "pulse" else "1"
+    fill_color = "0x6deeff" if style in {"glow", "dual"} else "white"
+    track_opacity = "0.22" if style == "thin" else "0.34"
+    track_label = "loading_track" if orbit else "progress_track"
+    fill_label = "loading_fill" if orbit else "progress_fill"
+    intro = SECOND_TEMPLATE_INTRO_START
+    enabled = f":enable='gte(t,{intro})'" if orbit else ""
+    fade = (f",fade=t=in:st={intro}:d={SECOND_TEMPLATE_FADE_SECONDS}:alpha=1"
+            if orbit else "")
+    return (
+        f"color=c=white:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
+        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='255*({mask})*{track_opacity}'[styled_track];"
+        f"[{previous}][styled_track]overlay={x}:{y}:shortest=1"
+        f"{enabled}[{track_label}];"
+        f"color=c={fill_color}:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
+        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='255*({mask})*({progress})*{opacity}'{fade}[{fill_label}];"
+        f"[{track_label}][{fill_label}]overlay={x}:{y}:shortest=1"
+        f"{enabled}[with_progress];"
+    )
+
+
 def render(
     source: Path,
     bg: Path,
     target: Path,
     design: RenderDesign | None = None,
     banner: Path | None = None,
+    *,
+    _fallbacks: frozenset[str] = frozenset(),
 ):
-    """Composite a 9:16 Reel with configurable circle and optional banner."""
+    """Composite a 9:16 Reel; preserve template on recoverable FFmpeg failures."""
     design = design or RenderDesign()
     seconds = duration(source)
     if seconds <= 0:
@@ -943,38 +1349,54 @@ def render(
     size = design.circle_size
     border = min(design.circle_border_width, size // 5)
     inside = size - 2 * border
-    radius = inside // 2
-    border_radius = size // 2
+    mask_asset, border_asset = circle_alpha_assets(
+        size, border, design.circle_border_color
+    )
     x = max(0, min(design.circle_x, 1080 - size))
     y = max(0, min(design.circle_y, 1920 - size))
     performance = render_performance(design)
-    fps = performance["fps"]
+    if design.banner_enabled and (not banner or not banner.is_file()):
+        raise ValueError("Включён рекламный баннер, но файл не загружен")
+    fps, native = render_frame_rate(design, performance, source, bg, banner)
 
-    # Optional optical-flow interpolation is considerably slower, but creates
-    # genuinely new frames rather than duplicating 30fps source frames.
-    motion = (
-        "minterpolate=fps=60:mi_mode=mci:mc_mode=obmc:me_mode=bidir,"
-        if fps == 60 and performance["motion"] else f"fps={fps},"
+    # Optical flow is applied only when increasing FPS. Do not interpolate
+    # an already high-frame-rate circle, and never interpolate banner frames.
+    def motion_filter(native_fps: float | None) -> str:
+        if (performance["motion"] and fps >= 60 and
+                (native_fps is None or native_fps < fps - 0.5)):
+            # The explicitly selected "original" speed mode can synthesize
+            # circle frames. A blend is much cheaper than CPU optical flow;
+            # full-frame background interpolation is always disabled.
+            return f"minterpolate=fps={min(fps, 60)}:mi_mode=blend,fps={fps},"
+        return f"fps={fps},"
+
+    motion = motion_filter(native["circle"])
+    # Never optical-flow interpolate a full 1080x1920 video background.
+    # It multiplies work by millions of pixels per frame and can turn
+    # a short Telegram circle into a 30-minute CPU render.
+    background_motion = f"fps={fps},"
+    source_cleanup = quality_filter_segment(
+        performance["quality"], design.denoise_strength, design.sharpening_strength
     )
+    # Keep the existing input positions: 0=source, 1=background,
+    # 2=orbit (when enabled), next=banner (when enabled).
+    # Add cached alpha mask and border PNGs after those inputs.
+    orbit = design.visual_template != "classic"
+    mask_index = 2 + int(orbit) + int(design.banner_enabled)
+    border_index = mask_index + 1
     circle_filter = (
-        f"[0:v]{motion}scale={size}:{size}:force_original_aspect_ratio=increase:"
-        f"flags=lanczos,crop={inside}:{inside}:{border}:{border},format=rgba,"
-        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-        f"a='if(lte((X-{radius})*(X-{radius})+(Y-{radius})*(Y-{radius}),"
-        f"{radius*radius}),alpha(X,Y),0)'[inside];"
-        f"color=c=0x{design.circle_border_color[1:]}:s={size}x{size}:r={fps}:"
-        f"d={seconds:.3f},format=rgba,"
-        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-        f"a='if(lte((X-{border_radius})*(X-{border_radius})+"
-        f"(Y-{border_radius})*(Y-{border_radius}),{border_radius*border_radius}),"
-        "255,0)'[ring];"
+        f"[0:v]scale={size}:{size}:force_original_aspect_ratio=increase:"
+        f"flags=lanczos,crop={inside}:{inside}:{border}:{border},"
+        f"{source_cleanup}{motion}format=rgba[inside_raw];"
+        f"[{mask_index}:v]format=gray[inside_mask];"
+        "[inside_raw][inside_mask]alphamerge[inside];"
+        f"[{border_index}:v]format=rgba[ring];"
         f"[ring][inside]overlay={border}:{border}:shortest=1:format=auto[circle];"
     )
     bg_filter = (
         "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop=1080:1920,setsar=1,fps={fps}[bg];"
+        f"crop=1080:1920,{background_motion}setsar=1[bg];"
     )
-    orbit = design.visual_template == "orbit_dots"
     if orbit:
         # No circle or outline in the first 0.38s: only the background.
         circle_filter += (
@@ -987,36 +1409,58 @@ def render(
         f"[bg][{circle_layer}]overlay={x}:{y}:shortest=1[base_circle];"
     )
     last = "base_circle"
-    orbit_asset = orbit_sprite_path(size) if orbit else None
+    orbit_asset = ring_sprite_path(size, design.visual_template) if orbit else None
     if orbit:
         pad = 36
+        style = design.visual_template
+        speed = {"orbit_dots": 6, "orbit_arc": 3, "pulse_ring": 12,
+                 "double_orbit": 5, "dashed_spin": 8, "ripple": 10,
+                 "comet_tail": 4, "halo_breathe": 15,
+                 "twin_comets": 6, "starlight": 9, "radar_sweep": 5}[style]
+        # Pulse/ripple grow and shrink around the circle; other styles rotate.
+        pulse = style in {"pulse_ring", "ripple", "halo_breathe"}
+        base_dimension = size + 2 * pad
+        # Animate opacity instead of changing dimensions: FFmpeg fade/overlay
+        # require constant frame size, otherwise pulse renders fail on Windows.
+        pulse_alpha = (
+            ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+            "a='alpha(X,Y)*(0.7+0.3*sin(T*5))'"
+            if pulse else ""
+        )
         filter_chain += (
-            f"[2:v]format=rgba,rotate=a='2*PI*t/6':ow=iw:oh=ih:c=none,"
-            f"scale={size+2*pad}:{size+2*pad}:flags=bilinear,"
+            f"[2:v]format=rgba,rotate=a='2*PI*t/{speed}':ow=iw:oh=ih:c=none"
+            f"{pulse_alpha},scale={base_dimension}:{base_dimension}:flags=bilinear,"
             f"fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
             f"d={SECOND_TEMPLATE_FADE_SECONDS}:alpha=1[orbit_ring];"
-            f"[{last}][orbit_ring]overlay={x-pad}:{y-pad}:"
+            f"[{last}][orbit_ring]overlay=x='{x+size//2}-w/2':"
+            f"y='{y+size//2}-h/2':eval=frame:"
             "shortest=1:format=auto[with_orbit];"
         )
         last = "with_orbit"
 
-    if design.progress_enabled and orbit:
-        filter_chain += loading_progress_filter(design, seconds, fps, last)
+    if design.progress_enabled and design.progress_style != "none" and orbit:
+        filter_chain += (loading_progress_filter(design, seconds, fps, last)
+                         if design.progress_style == "classic" else
+                         styled_progress_filter(design, seconds, fps, last, orbit=True))
         last = "with_progress"
-    elif design.progress_enabled:
-        px = max(0, min(design.progress_x, 1080 - design.progress_width))
-        py = max(0, min(design.progress_y, 1920 - design.progress_height))
-        w, h = design.progress_width, design.progress_height
-        filter_chain += (
-            f"[{last}]drawbox=x={px}:y={py}:w={w}:h={h}:"
-            "color=white@0.34:t=fill[progress_track];"
-            f"color=c=white:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
-            "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-            f"a='if(lte(X\\,W*min(T/{seconds:.3f}\\,1))\\,255\\,0)'[progress_fill];"
-            f"[progress_track][progress_fill]overlay={px}:{py}:"
-            "shortest=1[with_progress];"
-        )
-        last = "with_progress"
+    elif design.progress_enabled and design.progress_style != "none":
+        if design.progress_style != "classic":
+            filter_chain += styled_progress_filter(design, seconds, fps, last, orbit=False)
+            last = "with_progress"
+        else:
+            px = max(0, min(design.progress_x, 1080 - design.progress_width))
+            py = max(0, min(design.progress_y, 1920 - design.progress_height))
+            w, h = design.progress_width, design.progress_height
+            filter_chain += (
+                f"[{last}]drawbox=x={px}:y={py}:w={w}:h={h}:"
+                "color=white@0.34:t=fill[progress_track];"
+                f"color=c=white:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
+                "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                f"a='if(lte(X\\,W*min(T/{seconds:.3f}\\,1))\\,255\\,0)'[progress_fill];"
+                f"[progress_track][progress_fill]overlay={px}:{py}:"
+                "shortest=1[with_progress];"
+            )
+            last = "with_progress"
 
     fontfile = _timecode_fontfile() if design.timecode_enabled and not orbit else None
     # On Windows, never call drawtext without an explicit installed font:
@@ -1058,32 +1502,67 @@ def render(
         cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(orbit_asset)]
 
     if design.banner_enabled:
-        if not banner or not banner.is_file():
-            raise ValueError("Включён рекламный баннер, но файл не загружен")
         cmd += banner_input_args(banner)
-        filter_chain += banner_overlay_filter(design, 3 if orbit else 2)
+        filter_chain += banner_overlay_filter(design, 3 if orbit else 2, fps)
     else:
         filter_chain += (
             f"[composite]fps={fps},"
-            f"{quality_filter_segment(performance['quality'])}format=yuv420p[v]"
+            f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
+            "format=yuv420p[v]"
         )
+
+    # Decoding two cached PNGs per frame is far cheaper than recalculating
+    # geq masks over 1M+ pixels for every frame of a large circle.
+    for asset in (mask_asset, border_asset):
+        cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(asset)]
 
     cmd += [
         "-filter_complex", filter_chain,
         "-map", "[v]", "-map", "0:a?", "-t", str(seconds),
+        # Privacy-minded export: don't carry optional input metadata or
+        # chapters into the new MP4. This does not change content ownership.
+        "-map_metadata", "-1", "-map_metadata:s", "-1",
+        "-map_chapters", "-1",
         "-c:v", "libx264", *performance["encoder"],
         *(["-threads", str(performance["video_threads"])]
           if performance["video_threads"] is not None else []),
-        "-profile:v", "high", "-level:v", "5.1" if fps == 60 else "4.2",
+        "-profile:v", "high", "-level:v",
+        ("6.0" if fps > 60 else "5.2") if design.export_resolution == 2160 else ("5.2" if fps > 60 else ("5.1" if fps == 60 else "4.2")),
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
+        "-color_primaries", "bt709", "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart", str(target),
     ]
     try:
-        subprocess.run(
-            cmd, capture_output=True, text=True, check=True,
+        # A short Telegram circle must not monopolize the computer for
+        # 30 minutes. A timed-out high-quality attempt is retried once
+        # with the same template, progress bar, circle and chromakey banner.
+        run_ffmpeg_render(
+            cmd, timeout=min(420, max(120, seconds * 8)),
             cwd=str(ROOT) if _is_windows() else None,
         )
+    except subprocess.TimeoutExpired as exc:
+        if "timeout" not in _fallbacks:
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: рендер превысил лимит времени; "
+                "повторяю в быстром режиме 1080p/30 FPS, сохраняя шаблон, "
+                "обводку, прогресс-бар и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={
+                    "quality_preset": "standard", "render_speed": "quiet",
+                    "smooth_motion": False, "source_max_fps": False,
+                    "output_fps": 30, "export_resolution": 1080,
+                }), banner,
+                _fallbacks=_fallbacks | {"timeout"},
+            )
+        raise RuntimeError(
+            "FFmpeg не успел обработать видео даже в быстром режиме. "
+            "Проверь длительность источника и производительность ПК."
+        ) from exc
     except subprocess.CalledProcessError as exc:
         # A CalledProcessError normally begins with the entire ffmpeg command.
         # The Telegram Studio UI previously truncated it before the real
@@ -1106,6 +1585,39 @@ def render(
             return render(
                 source, bg, target,
                 design.model_copy(update={"timecode_enabled": False}), banner,
+                _fallbacks=_fallbacks | {"timecode"},
+            )
+        # Optical flow may exhaust memory with 120fps/high-resolution sources.
+        # Retry the identical template and FPS without synthesized frames;
+        # do not discard the circle, ring, progress bar, or video banner.
+        if "minterpolate=" in filter_chain and "motion" not in _fallbacks:
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: оптическая интерполяция не удалась; "
+                "повторяю с исходными кадрами, сохраняя шаблон, FPS и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={"smooth_motion": False}), banner,
+                _fallbacks=_fallbacks | {"motion"},
+            )
+        # Some FFmpeg builds cannot initialize advanced alpha/despill filters.
+        # Keep the user's template and retry with the basic RGB colorkey.
+        if (design.banner_enabled and design.chromakey_enabled and
+                design.chromakey_mode == "advanced" and
+                "chroma" not in _fallbacks and
+                ("No such filter" in details or
+                 "Error initializing complex filters" in details or
+                 "Failed to configure output pad" in details)):
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: усиленный хромакей недоступен; "
+                "повторяю с RGB-хромакеем, сохраняя шаблон и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={"chromakey_mode": "standard"}), banner,
+                _fallbacks=_fallbacks | {"chroma"},
             )
         if (performance["quality"] != "standard" and
                 (access_violation or "No such filter" in details or
@@ -1119,7 +1631,9 @@ def render(
             target.unlink(missing_ok=True)
             return render(
                 source, bg, target,
-                design.model_copy(update={"quality_preset": "standard"}), banner,
+                design.model_copy(update={"quality_preset": "standard",
+                                          "smooth_motion": False}), banner,
+                _fallbacks=_fallbacks | {"quality"},
             )
         meaningful = [
             line.strip() for line in details.splitlines()
@@ -1145,8 +1659,11 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                   output_dir: Path | None = None, target_slot: int = 0,
                   media_mode: Literal["circles", "videos"] = "circles",
                   video_layout=None, video_banner: Path | None = None,
-                  video_banner_design: RenderDesign | None = None):
-    JOB.update(status="running", total=0, done=0, errors=[], notes=[], media_mode=media_mode)
+                  video_banner_design: RenderDesign | None = None,
+                  force_rerender: bool = False):
+    JOB.update(status="running", total=0, done=0, errors=[], notes=[],
+               stopping=False, current_file=None, current_started_at=None,
+               media_mode=media_mode)
     try:
         d = config()
         d.setdefault("processed", [])
@@ -1208,10 +1725,12 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                                else f"video:{channel}:{message.id}")
                         filename_prefix = "tg" if media_mode == "circles" else "tgvideo"
                         target = output_dir / f"{filename_prefix}_{channel}_{message.id}.mp4"
-                        if key in completed_keys:
-                            continue
-                        if target.is_file() and target.stat().st_size > 0:
-                            completed_keys.append(key)
+                        if should_skip_existing_render(
+                            key, target, completed_keys,
+                            force_rerender=force_rerender,
+                        ):
+                            if target.is_file() and target.stat().st_size > 0 and key not in completed_keys:
+                                completed_keys.append(key)
                             continue
                         candidates.append(message)
                     if not found_selected_type and not STOP_REQUESTED:
@@ -1250,10 +1769,14 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                 originals_dir = ORIGINALS if media_mode == "circles" else REGULAR_ORIGINALS
                 source = originals_dir / f"{channel}_{message.id}.mp4"
                 target = output_dir / f"{target_prefix}_{channel}_{message.id}.mp4"
+                target_preexisting = target.is_file() and target.stat().st_size > 0
                 try:
-                    # Never overwrite a previously rendered or queued reel.
-                    if target.exists() and target.stat().st_size > 0:
-                        completed_keys.append(key)
+                    # Existing MP4s are preserved by default. Forced rerender writes
+                    # to a temporary file first and replaces the old output only
+                    # after FFprobe validates the newly rendered video.
+                    if target_preexisting and not force_rerender:
+                        if key not in completed_keys:
+                            completed_keys.append(key)
                         save(d)
                         continue
                     # Re-download incomplete or unreadable originals rather than retrying a bad cache.
@@ -1276,12 +1799,17 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     if not source.exists():
                         raise ValueError("Не удалось скачать Telegram-видео")
                     digest = file_digest(source)
-                    if digest in known_hashes:
+                    if should_skip_known_source(
+                        digest, known_hashes, force_rerender=force_rerender,
+                    ):
                         # Same original media may have been forwarded to another channel.
-                        completed_keys.append(key)
+                        if key not in completed_keys:
+                            completed_keys.append(key)
                         save(d)
                         continue
                     # Render to a temporary file, publish only after ffprobe validates it.
+                    JOB["current_file"] = source.name
+                    JOB["current_started_at"] = time.time()
                     temp_target = target.with_name(target.stem + ".rendering.mp4")
                     try:
                         bg = next_background()
@@ -1306,6 +1834,8 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                         d.setdefault("rendered_hashes_by_target", {})[render_scope] = sorted(known_hashes)
                     else:
                         d["rendered_hashes"] = sorted(known_hashes)
+                    # Keep the processed-key index unique after a forced rebuild.
+                    completed_keys[:] = [item for item in completed_keys if item != key]
                     completed_keys.append(key)
                     d.setdefault("last_outputs", {})[media_mode] = {
                         "name": target.name,
@@ -1318,11 +1848,21 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     }
                     save(d)
                     JOB["done"] += 1
+                except RenderStopped:
+                    JOB.setdefault("notes", []).append(
+                        "Рендер остановлен пользователем. Незавершённый MP4 удалён."
+                    )
+                    break
                 except Exception as exc:
-                    target.unlink(missing_ok=True)
+                    # Keep the previous valid MP4 if a forced rebuild fails.
+                    if not target_preexisting:
+                        target.unlink(missing_ok=True)
                     # The error is shown in Telegram Studio, not just the
                     # shortened FFmpeg argument list.
                     JOB["errors"].append(f"{key}: {str(exc)[-1750:]}")
+                finally:
+                    JOB["current_file"] = None
+                    JOB["current_started_at"] = None
 
         JOB["status"] = "stopped" if STOP_REQUESTED else "done"
     except asyncio.CancelledError:
@@ -1332,6 +1872,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
         JOB["status"] = "error"
         JOB["errors"].append(str(exc)[:300])
     finally:
+        JOB["current_file"] = None
+        JOB["current_started_at"] = None
+        JOB["stopping"] = False
         LOCK.release()
 
 
@@ -1347,7 +1890,7 @@ async def run(body: RenderRequest):
         raise HTTPException(400, "Начальная дата позже конечной")
     # Snapshot settings at batch start so every Reel uses one consistent layout.
     data = config()
-    design = RenderDesign.model_validate(data.get("render_design", {}))
+    design = effective_design(data)
     try:
         if body.target_slot:
             chosen_folder = (account_folder(body.target_slot) if body.output_folder == "linked"
@@ -1391,6 +1934,7 @@ async def run(body: RenderRequest):
         design=design, banner=banner, output_dir=output_dir, target_slot=body.target_slot,
         media_mode=body.media_mode, video_layout=video_layout,
         video_banner=video_banner, video_banner_design=video_design,
+        force_rerender=body.force_rerender,
     ))
     return {"started": True, "media_mode": body.media_mode}
 
@@ -1398,6 +1942,10 @@ async def run(body: RenderRequest):
 async def shutdown_telegram_studio():
     global STOP_REQUESTED
     STOP_REQUESTED = True
+    with ACTIVE_RENDER_LOCK:
+        active = ACTIVE_RENDER_PROCESS
+        if active is not None and active.poll() is None:
+            active.terminate()
     if JOB_TASK is not None and not JOB_TASK.done():
         await JOB_TASK
     async with QR_LOCK:

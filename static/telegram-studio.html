@@ -66,8 +66,8 @@
 
 .bg-thumbnail{width:120px;height:150px;object-fit:cover;border-radius:10px;flex-shrink:0}
 
-</style><link rel="stylesheet" href="/static/studio-circle-ui.css?v=20261026-orbit"></head><body><main>
-<header><div><a href="/">← Вернуться к PostingTTII</a><h1>◉ Telegram Studio</h1><div class="muted">Кружки Telegram → случайный фон → готовые Reels</div></div><span class="pill" id="health">Проверка системы...</span></header>
+</style><link rel="stylesheet" href="/static/studio-circle-ui.css?v=20261121-ultra-v1"></head><body><main>
+<header><div><a href="/">← Вернуться к PostingTTII</a><h1>◉ Telegram Studio</h1><div class="muted">Кружки Telegram → случайный фон → готовые Reels</div><p style="margin:8px 0 0"><a href="/viral-reels-pro" style="color:#9dd3ff;font-weight:750">★ Шаблон №3 · Viral Reels Pro — отдельный монтаж и экспорт A/B/C</a></p></div><span class="pill" id="health">Проверка системы...</span></header>
 <div class="layout">
 <section class="card"><h2>01 / Источники: Telegram + Instagram</h2><p class="muted">Telegram-каналы и Instagram-аккаунты в одном списке. Каждый источник можно включать и отключать.</p>
 <div class="design-field" style="margin:10px 0 15px"><label for="tgMediaMode">Какие ролики скачивать из Telegram-каналов?</label>
@@ -135,18 +135,19 @@
     <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
     <div class="chroma-panel">
       <label class="design-check"><input type="checkbox" id="chromakeyEnabled">Удалять фон рекламного баннера (хромакей)</label>
+      <label class="design-check"><input type="checkbox" id="chromaAdvanced" checked>Усиленный хромакей — очистка зелёных/синих ореолов и краёв</label>
       <div class="editor-subtitle">Удаление цвета на изображении или видео-баннере</div>
       <div class="chroma-controls">
         <button id="chromaPickButton" type="button" onclick="toggleChromaPicker()" aria-pressed="false">◉ Пипетка — выбрать на баннере</button>
         <input id="chromaColor" type="color" value="#00ff00" aria-label="Выбрать цвет вручную">
         <code id="chromaColorHex">#00FF00</code>
       </div>
-      <div class="design-field"><label for="chromaSimilarity">Чувствительность: <span id="chromaSimilarityValue">20</span>%</label>
-        <input id="chromaSimilarity" type="range" min="1" max="100" step="1" value="20"></div>
+      <div class="design-field"><label for="chromaSimilarity">Чувствительность: <span id="chromaSimilarityValue">22</span>%</label>
+        <input id="chromaSimilarity" type="range" min="1" max="100" step="1" value="22"></div>
       <div class="design-field"><label for="chromaBlend">Мягкость краёв: <span id="chromaBlendValue">7</span>%</label>
         <input id="chromaBlend" type="range" min="0" max="100" step="1" value="7"></div>
       <span class="editor-note" id="chromaPickStatus" aria-live="polite">Загрузи рекламный баннер, нажми «Пипетка», затем кликни по цвету фона на баннере. Telegram-кружок останется без изменений.</span>
-      <span class="editor-note">Удаление выполняется только на рекламном баннере. Предпросмотр приблизительный; точный результат рассчитывает FFmpeg. Высокая чувствительность удаляет также похожие цвета.</span>
+      <span class="editor-note">Усиленный режим удаляет фон на исходном разрешении баннера, очищает цветные ореолы и мягко обрабатывает только прозрачность краёв. Цвета и резкость текста баннера не фильтруются. В усиленном режиме минимальная эффективная чувствительность — 22%. Предпросмотр приблизительный; результат FFmpeg может отличаться. При слишком высокой чувствительности исчезают похожие цвета.</span>
     </div>
     <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
     <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
@@ -161,9 +162,16 @@
       <select id="tgQualityPreset">
         <option value="standard">Стандартное — как раньше, быстрее</option>
         <option value="enhanced">Улучшенное — лёгкая очистка, чёткость и цвет</option>
-        <option value="maximum">Максимальное — высокое качество, сбалансированная скорость</option>
+        <option value="maximum">Максимальное · качественный H.264 · без медленной интерполяции</option>
       </select>
-      <span class="editor-note">1080×1920, H.264 + AAC. Больше качества не гарантирует рекомендации Instagram и не превращает чужое видео в оригинальное.</span>
+      <label for="tgExportResolution">Разрешение экспорта</label>
+      <select id="tgExportResolution"><option value="1080">1080×1920 · Reels (рекомендуется)</option><option value="2160">2160×3840 · 4K UHD (медленно, апскейл)</option></select>
+      <label for="tgDenoiseStrength">Шумоподавление: <span id="tgDenoiseValue">1.0</span></label>
+      <input id="tgDenoiseStrength" type="range" min="0" max="3" step="0.1" value="1">
+      <label for="tgSharpenStrength">Резкость: <span id="tgSharpenValue">0.5</span></label>
+      <input id="tgSharpenStrength" type="range" min="0" max="1.5" step="0.1" value="0.5">
+      <span class="editor-note">Для слабых исходников начинай с шумоподавления 0.8–1.2 и резкости 0.3–0.5; сильные значения могут смазать лица или подчеркнуть артефакты.</span>
+      <span class="editor-note">1080×1920, H.264 + AAC. Максимальное качество включает реальную очистку шума и 60 FPS независимо от тихого режима. Для создания промежуточных кадров отдельно включи интерполяцию движения. Исходную детализацию сверх возможностей оригинала восстановить нельзя.</span>
     </div>
     <div class="inline"><button id="resetBannerPosition" type="button" onclick="resetBannerPosition()">Сбросить позицию</button>
       <button id="removeBanner" type="button" class="danger" onclick="removeDesignBanner()">Убрать баннер</button></div>
@@ -237,7 +245,7 @@
 <section class="card"><h2>04 / Автомонтаж Telegram</h2><p class="muted">Скачиваются только выбранные в разделе 01 типы медиа: кружки или обычные видео. Кружки монтируются круглыми, обычные видео — прямоугольными по шаблону «Instagram · видео». Результаты сохраняются в выбранную папку публикации.</p><p class="muted">По умолчанию сначала старые сообщения, но можно выбрать новые или случайный порядок. Лимит действует на каждый канал; поиск ведётся среди последних 3000 сообщений.</p><div class="inline" style="margin-bottom:10px"><label>Порядок<br><select id="order"><option value="oldest">Сначала старые</option><option value="random">Случайный порядок</option><option value="newest">Сначала новые</option></select></label><label>С даты<br><input id="dateFrom" type="date"></label><label>По дату<br><input id="dateTo" type="date"></label></div><div class="design-field" style="margin-bottom:12px"><label for="tgRenderFolder">Папка для готовых Telegram Reels</label><select id="tgRenderFolder"><option value="default">Стандартная videos/inbox</option></select></div>
 <div class="design-field" style="margin-bottom:12px"><label for="tgRenderTarget">Для какого Instagram-аккаунта монтировать</label><select id="tgRenderTarget"><option value="0">Общий монтаж / без аккаунта</option></select>
 <span class="editor-note">Если выберешь аккаунт, при рендере применится его фон, заданный на главной странице. Можно выбрать привязанную к аккаунту папку.</span></div>
-<div class="inline"><input id="limit" type="number" min="1" max="500" value="30" title="Новых видео выбранного типа на канал"><button class="primary" id="run" onclick="run()">Скачать и смонтировать только кружки</button></div><div class="progress"><div id="bar"></div></div><div id="progress" class="muted">Ожидание запуска</div><p class="muted">Оригиналы сохраняются без изменений. Готовые ролики не перезаписываются, повторные сообщения пропускаются.</p><a href="/" target="_blank" rel="noopener">Открыть готовые ролики в очереди PostingTTII ↗</a><pre id="log"></pre></section>
+<div class="inline"><input id="limit" type="number" min="1" max="500" value="30" title="Видео выбранного типа на канал"><button class="primary" id="run" onclick="run()">Скачать и смонтировать только кружки</button><button class="danger" id="tgStopRender" onclick="stopTelegramRender()" disabled>■ Остановить рендер</button></div><label class="design-check" style="margin-top:10px"><input id="forceRerender" type="checkbox">Пересобрать уже созданные ролики с текущими настройками (включая хромакей)</label><div class="progress"><div id="bar"></div></div><div id="progress" class="muted">Ожидание запуска</div><p class="muted">По умолчанию готовые ролики пропускаются. Для применения изменённого оформления включи повторный рендер.</p><a href="/" target="_blank" rel="noopener">Открыть готовые ролики в очереди PostingTTII ↗</a><pre id="log"></pre></section>
 <section class="card wide"><h2>05 / Instagram-источники</h2><div class="item"><div><strong>Вход в Instagram через Chrome</strong><p class="muted">Откроется отдельный профиль Chrome для PostingTTII. Авторизация останется в этом профиле. После входа закрой отдельное окно Chrome перед запуском сканирования. Программа проверит видимые ссылки Reels на странице профиля; Instagram может ограничивать доступ.</p><button class="primary" onclick="igOpenChrome()">Открыть Instagram в Chrome</button><hr style="border:0;border-top:1px solid #293953;margin:16px 0"><strong>Дополнительно: файл сессии Instaloader</strong><p class="muted">Один раз создай файл сессии через Instaloader на своём ПК и загрузи его сюда. Пароль в студии не вводится.</p><span id="igSessionState">Проверка...</span></div><div class="actions"><input id="igSessionFile" type="file" accept=".session"><button id="igSessionUpload" onclick="igSessionConnect()">Подключить</button><button onclick="igSessionDisconnect()">Отключить</button></div></div><p class="muted">Добавь ссылки на свои публичные Instagram-профили. Студия выбирает более старые ролики среди найденных, не скачивает обработанные повторно и монтирует без титров: размытие либо случайный фон TG Studio. Готовые MP4 появятся в общей очереди.</p><div class="design-field" style="margin-top:15px"><label for="igRenderFolder">Папка готовых Instagram Reels</label><select id="igRenderFolder"><option value="default">Стандартная videos/inbox</option></select></div>
 <div class="design-field" style="margin-top:10px"><label for="igRenderTarget">Аккаунт назначения и его фон</label><select id="igRenderTarget"><option value="0">Общий монтаж / без аккаунта</option></select><span class="editor-note">Фон конкретного аккаунта настраивается на главной странице PostingTTII.</span></div>
 <div class="inline" style="margin-top:15px"><label>Новых видео на аккаунт <input id="igLimit" type="number" min="1" max="100" value="5" style="width:90px"></label><button id="igRun" class="primary" onclick="igRun()">Скачать и смонтировать Instagram</button></div><div id="igProgress" class="muted" style="margin-top:10px">Ожидание запуска</div><pre id="igLog" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><p class="muted">Для скачивания публичных видео используется yt-dlp. Instagram может ограничивать доступ; ошибки будут показаны ниже. Не требует ввода пароля Instagram.</p></section>
@@ -253,11 +261,11 @@ function notify(e){alert(e.message||String(e))}
 const designState={
   circle_size:1040,circle_x:20,circle_y:90,
   background_mode:'shuffle',background_name:'',
-  chromakey_enabled:false,chromakey_color:'#00ff00',
-  chromakey_similarity:.20,chromakey_blend:.07,banner_enabled:false,
-  banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced'
+  chromakey_enabled:true,chromakey_mode:'advanced',chromakey_color:'#00ff00',
+  chromakey_similarity:.22,chromakey_blend:.07,banner_enabled:false,
+  banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced',export_resolution:1080,denoise_strength:1,sharpening_strength:.5
 };
-let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
+let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),designSaveError=null,sampleCircleLoaded=false;
 
 function designStatus(message){el('designStatus').textContent=message;}
 function bannerHeightPx(){return designState.banner_width*bannerRatio;}
@@ -358,7 +366,9 @@ function drawVideoBannerChroma(now){
     const pixels=ctx.getImageData(0,0,width,height);
     const key=designState.chromakey_color;
     const rgb=[1,3,5].map(j=>parseInt(key.slice(j,j+2),16));
-    const sim=designState.chromakey_similarity,blend=Math.max(.001,designState.chromakey_blend);
+    const sim=designState.chromakey_mode==='standard'
+      ?designState.chromakey_similarity:Math.max(.22,designState.chromakey_similarity);
+    const blend=Math.max(.001,designState.chromakey_blend);
     for(let i=0;i<pixels.data.length;i+=4){
       const distance=Math.hypot(pixels.data[i]-rgb[0],pixels.data[i+1]-rgb[1],pixels.data[i+2]-rgb[2])/(255*Math.sqrt(3));
       pixels.data[i+3]=Math.round(pixels.data[i+3]*Math.max(0,Math.min(1,(distance-sim)/blend)));
@@ -444,9 +454,15 @@ function updateDesignPreview(){
   el('bannerPositionX').value=designState.banner_x;
   el('bannerPositionY').value=designState.banner_y;
   el('tgQualityPreset').value=designState.quality_preset||'enhanced';
+  el('tgExportResolution').value=String(designState.export_resolution||1080);
+  for(const [field,key,valueId] of [['tgDenoiseStrength','denoise_strength','tgDenoiseValue'],['tgSharpenStrength','sharpening_strength','tgSharpenValue']]){
+    const value=Number(designState[key]??(key==='denoise_strength'?1:.5));
+    el(field).value=value;el(valueId).textContent=value.toFixed(1);
+  }
   el('bannerScale').value=designState.banner_width;
   el('circleScale').value=size;
   el('chromakeyEnabled').checked=designState.chromakey_enabled;
+  el('chromaAdvanced').checked=(designState.chromakey_mode||'advanced')==='advanced';
   el('chromaColor').value=designState.chromakey_color;
   el('chromaColorHex').textContent=designState.chromakey_color.toUpperCase();
   el('chromaSimilarity').value=Math.round(designState.chromakey_similarity*100);
@@ -562,10 +578,11 @@ function drawChromaPreview(now){
     const pixels=frame.data;
     const color=designState.chromakey_color;
     const rgb=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16));
-    const threshold=designState.chromakey_similarity;
+    const threshold=designState.chromakey_mode==='standard'
+      ?designState.chromakey_similarity:Math.max(.22,designState.chromakey_similarity);
     const blend=Math.max(.001,designState.chromakey_blend);
     for(let i=0;i<pixels.length;i+=4){
-      // Approximation for the browser. FFmpeg uses chroma channels for the exact render.
+      // Browser preview and FFmpeg render use the same RGB color-distance key; encoding may soften edges.
       const distance=Math.hypot(pixels[i]-rgb[0],pixels[i+1]-rgb[1],pixels[i+2]-rgb[2])/(255*Math.sqrt(3));
       const alpha=Math.max(0,Math.min(1,(distance-threshold)/blend));
       pixels[i+3]=Math.round(pixels[i+3]*alpha);
@@ -590,8 +607,12 @@ function saveRenderDesign(){
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(snapshot)
     });
-    designStatus('✓ Оформление сохранено. Следующий рендер использует эти параметры.');
-  }).catch(err=>designStatus('Ошибка сохранения: '+err.message));
+    designSaveError=null;
+    designStatus('✓ Шаблон сохранён. Для уже созданных роликов включи «Пересобрать уже созданные ролики», иначе старые MP4 останутся без изменений.');
+  }).catch(err=>{
+    designSaveError=err;
+    designStatus('Ошибка сохранения оформления: '+err.message+'. Рендер не будет запущен с устаревшим шаблоном.');
+  });
   return designSaveQueue;
 }
 function setTelegramBgMode(mode){
@@ -820,12 +841,34 @@ function initDesignControls(){
       updateDesignPreview();saveRenderDesign();
     });
   }
+  for(const [field,key,valueId] of [['tgDenoiseStrength','denoise_strength','tgDenoiseValue'],['tgSharpenStrength','sharpening_strength','tgSharpenValue']]){
+    el(field).addEventListener('input',e=>{
+      designState[key]=Number(e.target.value);
+      el(valueId).textContent=designState[key].toFixed(1);
+    });
+    el(field).addEventListener('change',()=>saveRenderDesign());
+  }
+  el('tgExportResolution').addEventListener('change',e=>{
+    designState.export_resolution=Number(e.target.value);
+    saveRenderDesign();
+  });
   el('tgQualityPreset').addEventListener('change',e=>{
     designState.quality_preset=e.target.value;
+    if(e.target.value==='maximum'){
+      designState.output_fps=60;
+      designState.smooth_motion=false;
+      designState.render_speed='balanced';
+      designState.source_max_fps=false;
+    }
+    updateDesignPreview();
     saveRenderDesign();
   });
   el('chromakeyEnabled').addEventListener('change',e=>{
     designState.chromakey_enabled=e.target.checked;updateDesignPreview();saveRenderDesign();
+  });
+  el('chromaAdvanced').addEventListener('change',e=>{
+    designState.chromakey_mode=e.target.checked?'advanced':'standard';
+    updateDesignPreview();saveRenderDesign();
   });
   el('chromaColor').addEventListener('input',e=>{
     designState.chromakey_color=e.target.value;
@@ -1017,7 +1060,14 @@ if(bgSignature!==lastBackgroundSignature){
   }).join(''):'<div class="empty">Добавь MP4 или фото</div>';
 }
 loadLastRender().catch(()=>{});
-const j=d.job;el('progress').textContent=j.status+' · '+(j.media_mode==='videos'?'обычные видео':'кружки')+' · готово '+j.done+' / '+j.total;el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';el('log').textContent=[...(j.notes||[]),...(j.errors||[])].join('\n');el('run').disabled=j.status==='running';
+const j=d.job;
+const elapsed=j.current_started_at?Math.max(0,Math.floor(Date.now()/1000-j.current_started_at)):0;
+const current=j.current_file?' · сейчас: '+j.current_file+' ('+Math.floor(elapsed/60)+'м '+(elapsed%60)+'с)':'';
+el('progress').textContent=(j.stopping?'Останавливаю':j.status)+' · '+(j.media_mode==='videos'?'обычные видео':'кружки')+' · готово '+j.done+' / '+j.total+current;
+el('bar').style.width=j.total?Math.round(j.done/j.total*100)+'%':'0%';
+el('log').textContent=[...(j.notes||[]),...(j.errors||[])].join('\n');
+el('run').disabled=j.status==='running';
+el('tgStopRender').disabled=j.status!=='running'||!!j.stopping;
 }catch(e){el('log').textContent=e.message}}
 el('addChannel').onsubmit=async e=>{e.preventDefault();try{await request('/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:el('channel').value})});el('channel').value='';await refresh()}catch(e){notify(e)}};
 el('upload').onsubmit=async e=>{e.preventDefault();for(const file of el('files').files){const fd=new FormData();fd.append('file',file);try{await request('/backgrounds',{method:'POST',body:fd})}catch(e){notify(e)}}el('files').value='';await refresh()};
@@ -1025,17 +1075,26 @@ document.addEventListener('click',async e=>{try{if(e.target.dataset.channel){awa
 document.addEventListener('change',async e=>{if(e.target.dataset.toggle){try{await request('/backgrounds/'+encodeURIComponent(e.target.dataset.toggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}catch(err){notify(err)}}});
 async function startLogin(){try{await request('/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:el('phone').value})});el('auth').textContent='Код отправлен'}catch(e){notify(e)}}
 async function finishLogin(){try{const d=await request('/auth/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:el('code').value,password:el('password').value})});el('auth').textContent=d.password_required?'Введи пароль 2FA':'Telegram подключён';el('code').value='';el('password').value=''}catch(e){notify(e)}}
+async function stopTelegramRender(){
+  try{
+    const d=await request('/stop',{method:'POST'});
+    el('progress').textContent=d.stopping?'Останавливаю текущий рендер FFmpeg...':'Сейчас рендер не запущен';
+    await refresh();
+  }catch(e){notify(e)}
+}
 async function run(){
   try{
     const mode=el('tgMediaMode').value==='videos'?'videos':'circles';
     updateTelegramMediaMode();
     await designSaveQueue;
+    if(designSaveError)throw Error('Шаблон не сохранён: '+designSaveError.message+'. Исправь ошибку сохранения перед рендером.');
     if(mode==='videos')await instagramLayoutSave;
     const response=await request('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       limit_per_channel:Number(el('limit').value),media_mode:mode,
       order:el('order').value,date_from:el('dateFrom').value||null,
       date_to:el('dateTo').value||null,output_folder:el('tgRenderFolder').value,
-      target_slot:Number(el('tgRenderTarget').value)
+      target_slot:Number(el('tgRenderTarget').value),
+      force_rerender:el('forceRerender').checked
     })});
     if(response.media_mode!==mode)throw Error('Сервер выбрал другой тип видео. Монтаж остановлен.');
     el('progress').textContent='Запущено: '+(mode==='circles'?'ТОЛЬКО КРУЖКИ':'ТОЛЬКО ОБЫЧНЫЕ ВИДЕО');
@@ -1338,8 +1397,8 @@ el('igAdd').onsubmit=async e=>{e.preventDefault();try{await igRequest('/accounts
 async function igOpenChrome(){try{const d=await igRequest('/chrome/open',{method:'POST'});alert(d.message)}catch(e){notify(e)}}
 async function igSessionConnect(){try{const file=el('igSessionFile').files[0];if(!file)throw Error('Выбери .session файл');const form=new FormData();form.append('file',file);await igRequest('/session',{method:'POST',body:form});await igRefresh()}catch(e){notify(e)}}
 async function igSessionDisconnect(){try{await igRequest('/session',{method:'DELETE'});await igRefresh()}catch(e){notify(e)}}
-async function igRun(){try{await instagramLayoutSave;await designSaveQueue;await igRequest('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_account:Number(el('igLimit').value),output_folder:el('igRenderFolder').value,target_slot:Number(el('igRenderTarget').value)})});await chooseLastRender('instagram');await igRefresh()}catch(e){notify(e)}}
+async function igRun(){try{await instagramLayoutSave;await designSaveQueue;if(designSaveError)throw Error('Оформление Telegram Studio не сохранено: '+designSaveError.message);await igRequest('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit_per_account:Number(el('igLimit').value),output_folder:el('igRenderFolder').value,target_slot:Number(el('igRenderTarget').value)})});await chooseLastRender('instagram');await igRefresh()}catch(e){notify(e)}}
 document.addEventListener('click',async e=>{if(e.target.dataset.igRemove){try{await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igRemove),{method:'DELETE'});await igRefresh()}catch(err){notify(err)}}});
 document.addEventListener('change',async e=>{try{if(e.target.dataset.tgToggle){await request('/channels/'+encodeURIComponent(e.target.dataset.tgToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}if(e.target.dataset.igToggle){await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await igRefresh()}}catch(err){notify(err);await refresh();await igRefresh()}});
 igRefresh();setInterval(igRefresh,2500);
-</script><script src="/static/studio-circle-ui.js?v=20261026-quiet"></script></body></html>
+</script><script src="/static/studio-circle-ui.js?v=20261121-ultra-chroma-v1"></script></body></html>

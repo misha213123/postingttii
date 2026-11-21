@@ -15,7 +15,7 @@ def graph_for(design: studio.RenderDesign) -> tuple[str, list[str]]:
         patch.object(studio, "is_image_background", return_value=False),
         patch.object(studio.random, "uniform", return_value=0.0),
         patch.object(studio, "_timecode_fontfile", return_value="_timecode_render_font.ttf"),
-        patch.object(studio.subprocess, "run") as call,
+        patch.object(studio, "run_ffmpeg_render") as call,
     ):
         studio.render(Path("circle.mp4"), Path("background.mp4"), Path("reel.mp4"),
                       design.model_copy(update={"render_speed": "original"}))
@@ -31,7 +31,8 @@ class StyledCircleTests(unittest.TestCase):
         self.assertTrue(design.timecode_enabled)
         graph, args = graph_for(design)
         self.assertIn("scale=1040:1040", graph)
-        self.assertIn("color=c=0xffffff", graph)
+        self.assertIn("alphamerge[inside]", graph)
+        self.assertTrue(any("circle_border_v1_1040_9_ffffff.png" in arg for arg in args))
         self.assertIn("[ring][inside]overlay=9:9", graph)
         self.assertIn("overlay=20:90", graph)
         self.assertIn("[progress_fill]", graph)
@@ -72,7 +73,7 @@ class StyledCircleTests(unittest.TestCase):
             {"circle_border_color": "x;movie=evil"},
             {"progress_width": 0},
             {"timecode_font_size": 1000},
-            {"output_fps": 120},
+            {"output_fps": 121},
         ):
             with self.subTest(update=update), self.assertRaises(ValidationError):
                 studio.RenderDesign(**update)
@@ -84,13 +85,14 @@ class StyledCircleTests(unittest.TestCase):
              patch.object(studio, "is_image_background", return_value=False), \
              patch.object(studio.random, "uniform", return_value=0.0), \
              patch.object(studio, "_timecode_fontfile", return_value="_timecode_render_font.ttf"), \
-             patch.object(studio.subprocess, "run") as call, \
+             patch.object(studio, "run_ffmpeg_render") as call, \
              patch.object(Path, "is_file", return_value=True):
             studio.render(Path("circle.mp4"), Path("background.mp4"),
                           Path("render.mp4"), design, Path("banner.png"))
         args = call.call_args.args[0]
         graph = args[args.index("-filter_complex") + 1]
-        self.assertIn("[2:v]scale=540:-1", graph)
+        self.assertIn("[2:v]format=rgba,colorkey=", graph)
+        self.assertIn("scale=540:-1", graph)
         self.assertIn("fade=t=in:st=0:d=0.30:alpha=1", graph)
         self.assertIn("fps=60", graph)
 
