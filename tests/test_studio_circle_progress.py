@@ -32,7 +32,7 @@ class StyledCircleTests(unittest.TestCase):
         graph, args = graph_for(design)
         self.assertIn("scale=1040:1040", graph)
         self.assertIn("alphamerge[inside]", graph)
-        self.assertIn("circle_border_v1_1040_9_ffffff.png", args)
+        self.assertTrue(any("circle_border_v1_1040_9_ffffff.png" in arg for arg in args))
         self.assertIn("[ring][inside]overlay=9:9", graph)
         self.assertIn("overlay=20:90", graph)
         self.assertIn("[progress_fill]", graph)
