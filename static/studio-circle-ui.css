@@ -59,3 +59,22 @@
 #designPreview #designBannerVideo,
 #designPreview #chromaPreviewCanvas{transition:opacity .28s ease}
 @media (prefers-reduced-motion:reduce){.studio-orbit-ring{animation:none}}
+
+
+/* Progress-bar skins. Preview and MP4 use the same saved progress_style.
+   The square resize handle is an editor control, never part of the MP4. */
+.studio-progress-edit.studio-progress-style-thin{border:0;border-radius:2px;box-shadow:none;background:#ffffff55}
+.studio-progress-style-thin .studio-progress-fill{background:#fff;border-radius:2px}
+.studio-progress-edit.studio-progress-style-capsule{border:0;border-radius:999px;box-shadow:none;background:#ffffff55}
+.studio-progress-style-capsule .studio-progress-fill{background:#fff;border-radius:999px}
+.studio-progress-edit.studio-progress-style-segmented{border:0;border-radius:0;box-shadow:none;background:repeating-linear-gradient(90deg,#ffffff55 0 7%,transparent 7% 8%)}
+.studio-progress-style-segmented .studio-progress-fill{border-radius:0;background:repeating-linear-gradient(90deg,#fff 0 7%,transparent 7% 8%)}
+.studio-progress-edit.studio-progress-style-glow{border:0;border-radius:20px;background:#6deeff44;box-shadow:0 0 7px #6deeff66}
+.studio-progress-style-glow .studio-progress-fill{background:#6deeff;box-shadow:0 0 8px #6deeff,0 0 16px #6deeff88}
+.studio-progress-edit.studio-progress-style-dual{border:0;border-radius:0;box-shadow:none;background:linear-gradient(to bottom,#ffffff55 0 42%,transparent 42% 58%,#6deeff55 58% 100%)}
+.studio-progress-style-dual .studio-progress-fill{border-radius:0;background:linear-gradient(to bottom,#fff 0 42%,transparent 42% 58%,#6deeff 58% 100%)}
+.studio-progress-edit.studio-progress-style-pulse{border:0;border-radius:20px;background:#ffffff55;box-shadow:none}
+.studio-progress-style-pulse .studio-progress-fill{background:#fff;animation:studioBarPulse 1.05s ease-in-out infinite}
+@keyframes studioBarPulse{50%{opacity:.5}}
+.studio-progress-edit[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){.studio-progress-style-pulse .studio-progress-fill{animation:none}}

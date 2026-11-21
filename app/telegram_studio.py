@@ -150,7 +150,7 @@ class LoginFinish(BaseModel):
 
 class RenderDesign(BaseModel):
     """Saved design and layout in 1080 x 1920 video pixels."""
-    visual_template: Literal["classic", "orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple"] = "classic"
+    visual_template: Literal["classic", "orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple", "comet_tail", "halo_breathe", "twin_comets", "starlight", "radar_sweep"] = "classic"
     circle_size: int = Field(default=1040, ge=400, le=1080)
     circle_x: int = Field(default=20, ge=0, le=1080)
     circle_y: int = Field(default=90, ge=0, le=1920)
@@ -158,6 +158,7 @@ class RenderDesign(BaseModel):
     circle_border_width: int = Field(default=9, ge=0, le=48)
     circle_border_color: str = Field(default="#ffffff", pattern=r"^#[0-9A-Fa-f]{6}$")
     progress_enabled: bool = True
+    progress_style: Literal["classic", "thin", "capsule", "segmented", "glow", "dual", "pulse", "none"] = "classic"
     progress_x: int = Field(default=310, ge=0, le=1080)
     progress_y: int = Field(default=1190, ge=0, le=1920)
     progress_width: int = Field(default=460, ge=100, le=1080)
@@ -198,7 +199,8 @@ def _design_presets(data: dict) -> dict[str, dict]:
         **original, **saved.get("classic", {}), "visual_template": "classic"
     }).model_dump()
     presets = {"classic": classic}
-    for style in ("orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple"):
+    for style in ("orbit_dots", "orbit_arc", "pulse_ring", "double_orbit", "dashed_spin", "ripple",
+                  "comet_tail", "halo_breathe", "twin_comets", "starlight", "radar_sweep"):
         presets[style] = RenderDesign.model_validate({
             **classic, **saved.get(style, {}), "visual_template": style,
             **({"timecode_enabled": False} if not saved.get(style) else {}),
@@ -971,6 +973,37 @@ def ring_sprite_path(circle_size: int, style: str) -> Path:
     elif style == "ripple":
         for offset, opacity in ((0,240),(12,145),(23,75)):
             arc(radius+offset*unit, 0, 359, (255,255,255,opacity), 5)
+    elif style == "comet_tail":
+        for start, end, opacity, width in ((190, 310, 65, 15),
+                                          (245, 320, 135, 12),
+                                          (290, 335, 240, 10)):
+            arc(radius, start, end, (255, 255, 255, opacity), width)
+        angle = math.radians(335)
+        hx, hy = center + radius*math.cos(angle), center + radius*math.sin(angle)
+        draw.ellipse((hx-7, hy-7, hx+7, hy+7), fill=(255, 255, 255, 255))
+    elif style == "halo_breathe":
+        for offset, opacity, width in ((0, 250, 8), (13, 150, 6), (24, 75, 5)):
+            arc(radius+offset*unit, 0, 359, (195, 235, 255, opacity), width)
+    elif style == "twin_comets":
+        for start, end in ((15, 115), (195, 295)):
+            arc(radius, start, end, (255, 255, 255, 245), 10)
+            angle = math.radians(end)
+            hx, hy = center+radius*math.cos(angle), center+radius*math.sin(angle)
+            draw.ellipse((hx-6, hy-6, hx+6, hy+6), fill=(140, 225, 255, 255))
+    elif style == "starlight":
+        arc(radius, 0, 359, (255, 255, 255, 85), 3)
+        for index in range(16):
+            angle = 2*math.pi*index/16
+            rr = radius + (8*unit if index % 2 else 0)
+            hx, hy = center+rr*math.cos(angle), center+rr*math.sin(angle)
+            dot = max(2, round((7 if index % 4 == 0 else 4)*unit))
+            draw.ellipse((hx-dot, hy-dot, hx+dot, hy+dot),
+                         fill=(255, 255, 255, 255 if index % 4 == 0 else 170))
+    elif style == "radar_sweep":
+        for start, end, opacity in ((175, 225, 60), (226, 275, 130),
+                                    (276, 325, 230)):
+            arc(radius, start, end, (155, 235, 255, opacity), 12)
+        arc(radius, 320, 335, (255, 255, 255, 255), 14)
     else:
         raise ValueError(f"Неизвестный стиль кружка: {style}")
     temp = filename.with_name(filename.stem+"_"+uuid.uuid4().hex+".png")
@@ -1008,6 +1041,56 @@ def loading_progress_filter(
         "[loading_fill];"
         f"[loading_track][loading_fill]overlay={x}:{y}:shortest=1:"
         f"enable='gte(t,{start})'[with_progress];"
+    )
+
+
+def styled_progress_filter(
+    design: RenderDesign, seconds: float, fps: int, previous: str, *, orbit: bool
+) -> str:
+    """Render alternative animated progress bars at video resolution.
+
+    This is deliberately separate from the classic filter so old saved
+    designs keep their existing appearance and timecode behavior.
+    """
+    w, original_h = design.progress_width, design.progress_height
+    h = min(4, original_h) if design.progress_style == "thin" else original_h
+    x = max(0, min(design.progress_x, 1080 - w))
+    y = max(0, min(design.progress_y + (original_h-h)//2, 1920-h))
+    style = design.progress_style
+    mask = "1"
+    if style == "capsule":
+        # Signed distance to a horizontal capsule. Escaped commas are needed
+        # inside FFmpeg geq expressions embedded in a filtergraph.
+        mask = ("lte((X-clip(X\\,H/2\\,W-H/2))*(X-clip(X\\,H/2\\,W-H/2))"
+                "+(Y-H/2)*(Y-H/2)\\,(H/2)*(H/2))")
+    elif style == "segmented":
+        cell = max(12, w // 14)
+        mask = f"lt(mod(X\\,{cell})\\,{max(6, cell-5)})"
+    elif style == "dual":
+        mask = "gte(abs(Y-H/2)\\,1.5)"
+    progress = f"lte(X\\,W*min(T/{seconds:.3f}\\,1))"
+    if style == "segmented":
+        progress = f"lte(X\\,W*ceil(min(T/{seconds:.3f}\\,1)*14)/14)"
+    opacity = "(0.72+0.28*sin(T*6))" if style == "pulse" else "1"
+    fill_color = "0x6deeff" if style in {"glow", "dual"} else "white"
+    track_opacity = "0.22" if style == "thin" else "0.34"
+    track_label = "loading_track" if orbit else "progress_track"
+    fill_label = "loading_fill" if orbit else "progress_fill"
+    intro = SECOND_TEMPLATE_INTRO_START
+    enabled = f":enable='gte(t,{intro})'" if orbit else ""
+    fade = (f",fade=t=in:st={intro}:d={SECOND_TEMPLATE_FADE_SECONDS}:alpha=1"
+            if orbit else "")
+    return (
+        f"color=c=white:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
+        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='255*({mask})*{track_opacity}'[styled_track];"
+        f"[{previous}][styled_track]overlay={x}:{y}:shortest=1"
+        f"{enabled}[{track_label}];"
+        f"color=c={fill_color}:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
+        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+        f"a='255*({mask})*({progress})*{opacity}'{fade}[{fill_label}];"
+        f"[{track_label}][{fill_label}]overlay={x}:{y}:shortest=1"
+        f"{enabled}[with_progress];"
     )
 
 
@@ -1084,9 +1167,11 @@ def render(
         pad = 36
         style = design.visual_template
         speed = {"orbit_dots": 6, "orbit_arc": 3, "pulse_ring": 12,
-                 "double_orbit": 5, "dashed_spin": 8, "ripple": 10}[style]
+                 "double_orbit": 5, "dashed_spin": 8, "ripple": 10,
+                 "comet_tail": 4, "halo_breathe": 15,
+                 "twin_comets": 6, "starlight": 9, "radar_sweep": 5}[style]
         # Pulse/ripple grow and shrink around the circle; other styles rotate.
-        pulse = style in {"pulse_ring", "ripple"}
+        pulse = style in {"pulse_ring", "ripple", "halo_breathe"}
         base_dimension = size + 2 * pad
         # Animate opacity instead of changing dimensions: FFmpeg fade/overlay
         # require constant frame size, otherwise pulse renders fail on Windows.
@@ -1106,23 +1191,29 @@ def render(
         )
         last = "with_orbit"
 
-    if design.progress_enabled and orbit:
-        filter_chain += loading_progress_filter(design, seconds, fps, last)
+    if design.progress_enabled and design.progress_style != "none" and orbit:
+        filter_chain += (loading_progress_filter(design, seconds, fps, last)
+                         if design.progress_style == "classic" else
+                         styled_progress_filter(design, seconds, fps, last, orbit=True))
         last = "with_progress"
-    elif design.progress_enabled:
-        px = max(0, min(design.progress_x, 1080 - design.progress_width))
-        py = max(0, min(design.progress_y, 1920 - design.progress_height))
-        w, h = design.progress_width, design.progress_height
-        filter_chain += (
-            f"[{last}]drawbox=x={px}:y={py}:w={w}:h={h}:"
-            "color=white@0.34:t=fill[progress_track];"
-            f"color=c=white:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
-            "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-            f"a='if(lte(X\\,W*min(T/{seconds:.3f}\\,1))\\,255\\,0)'[progress_fill];"
-            f"[progress_track][progress_fill]overlay={px}:{py}:"
-            "shortest=1[with_progress];"
-        )
-        last = "with_progress"
+    elif design.progress_enabled and design.progress_style != "none":
+        if design.progress_style != "classic":
+            filter_chain += styled_progress_filter(design, seconds, fps, last, orbit=False)
+            last = "with_progress"
+        else:
+            px = max(0, min(design.progress_x, 1080 - design.progress_width))
+            py = max(0, min(design.progress_y, 1920 - design.progress_height))
+            w, h = design.progress_width, design.progress_height
+            filter_chain += (
+                f"[{last}]drawbox=x={px}:y={py}:w={w}:h={h}:"
+                "color=white@0.34:t=fill[progress_track];"
+                f"color=c=white:s={w}x{h}:r={fps}:d={seconds:.3f},format=rgba,"
+                "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+                f"a='if(lte(X\\,W*min(T/{seconds:.3f}\\,1))\\,255\\,0)'[progress_fill];"
+                f"[progress_track][progress_fill]overlay={px}:{py}:"
+                "shortest=1[with_progress];"
+            )
+            last = "with_progress"
 
     fontfile = _timecode_fontfile() if design.timecode_enabled and not orbit else None
     # On Windows, never call drawtext without an explicit installed font:
