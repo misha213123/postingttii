@@ -1189,8 +1189,10 @@ def render(
     target: Path,
     design: RenderDesign | None = None,
     banner: Path | None = None,
+    *,
+    _fallbacks: frozenset[str] = frozenset(),
 ):
-    """Composite a 9:16 Reel with configurable circle and optional banner."""
+    """Composite a 9:16 Reel; preserve template on recoverable FFmpeg failures."""
     design = design or RenderDesign()
     seconds = duration(source)
     if seconds <= 0:
@@ -1409,6 +1411,39 @@ def render(
             return render(
                 source, bg, target,
                 design.model_copy(update={"timecode_enabled": False}), banner,
+                _fallbacks=_fallbacks | {"timecode"},
+            )
+        # Optical flow may exhaust memory with 120fps/high-resolution sources.
+        # Retry the identical template and FPS without synthesized frames;
+        # do not discard the circle, ring, progress bar, or video banner.
+        if "minterpolate=" in filter_chain and "motion" not in _fallbacks:
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: оптическая интерполяция не удалась; "
+                "повторяю с исходными кадрами, сохраняя шаблон, FPS и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={"smooth_motion": False}), banner,
+                _fallbacks=_fallbacks | {"motion"},
+            )
+        # Some FFmpeg builds cannot initialize advanced alpha/despill filters.
+        # Keep the user's template and retry with the basic RGB colorkey.
+        if (design.banner_enabled and design.chromakey_enabled and
+                design.chromakey_mode == "advanced" and
+                "chroma" not in _fallbacks and
+                ("No such filter" in details or
+                 "Error initializing complex filters" in details or
+                 "Failed to configure output pad" in details)):
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: усиленный хромакей недоступен; "
+                "повторяю с RGB-хромакеем, сохраняя шаблон и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={"chromakey_mode": "standard"}), banner,
+                _fallbacks=_fallbacks | {"chroma"},
             )
         if (performance["quality"] != "standard" and
                 (access_violation or "No such filter" in details or
@@ -1422,7 +1457,9 @@ def render(
             target.unlink(missing_ok=True)
             return render(
                 source, bg, target,
-                design.model_copy(update={"quality_preset": "standard"}), banner,
+                design.model_copy(update={"quality_preset": "standard",
+                                          "smooth_motion": False}), banner,
+                _fallbacks=_fallbacks | {"quality"},
             )
         meaningful = [
             line.strip() for line in details.splitlines()
