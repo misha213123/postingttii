@@ -77,7 +77,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
     def test_circle_is_larger_by_default_and_chromakey_is_optional(self):
         design = studio.RenderDesign()
         self.assertEqual(design.circle_size, 1040)
-        self.assertFalse(design.chromakey_enabled)
+        self.assertTrue(design.chromakey_enabled)
         self.assertFalse(design.banner_enabled)
         with self.assertRaises(ValidationError):
             studio.RenderDesign(circle_size=1200)
@@ -133,7 +133,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
     def test_default_green_still_applies_for_old_saved_designs(self):
         older = studio.RenderDesign.model_validate({"chromakey_enabled": True})
         self.assertEqual(older.chromakey_color, "#00ff00")
-        self.assertEqual(older.chromakey_similarity, .20)
+        self.assertEqual(older.chromakey_similarity, .10)
         self.assertEqual(older.chromakey_blend, .07)
 
     def test_rejects_invalid_colors_and_ffmpeg_filter_injection(self):
