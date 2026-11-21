@@ -1189,8 +1189,10 @@ def render(
     target: Path,
     design: RenderDesign | None = None,
     banner: Path | None = None,
+    *,
+    _fallbacks: frozenset[str] = frozenset(),
 ):
-    """Composite a 9:16 Reel with configurable circle and optional banner."""
+    """Composite a 9:16 Reel; preserve template on recoverable FFmpeg failures."""
     design = design or RenderDesign()
     seconds = duration(source)
     if seconds <= 0:
@@ -1231,9 +1233,9 @@ def render(
         performance["quality"], design.denoise_strength, design.sharpening_strength
     )
     circle_filter = (
-        f"[0:v]{motion}scale={size}:{size}:force_original_aspect_ratio=increase:"
+        f"[0:v]scale={size}:{size}:force_original_aspect_ratio=increase:"
         f"flags=lanczos,crop={inside}:{inside}:{border}:{border},"
-        f"{source_cleanup}format=rgba,"
+        f"{source_cleanup}{motion}format=rgba,"
         "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
         f"a='if(lte((X-{radius})*(X-{radius})+(Y-{radius})*(Y-{radius}),"
         f"{radius*radius}),alpha(X,Y),0)'[inside];"
@@ -1246,9 +1248,8 @@ def render(
         f"[ring][inside]overlay={border}:{border}:shortest=1:format=auto[circle];"
     )
     bg_filter = (
-        f"[1:v]{background_motion}"
-        "scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-        "crop=1080:1920,setsar=1[bg];"
+        "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop=1080:1920,{background_motion}setsar=1[bg];"
     )
     orbit = design.visual_template != "classic"
     if orbit:
@@ -1410,6 +1411,39 @@ def render(
             return render(
                 source, bg, target,
                 design.model_copy(update={"timecode_enabled": False}), banner,
+                _fallbacks=_fallbacks | {"timecode"},
+            )
+        # Optical flow may exhaust memory with 120fps/high-resolution sources.
+        # Retry the identical template and FPS without synthesized frames;
+        # do not discard the circle, ring, progress bar, or video banner.
+        if "minterpolate=" in filter_chain and "motion" not in _fallbacks:
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: оптическая интерполяция не удалась; "
+                "повторяю с исходными кадрами, сохраняя шаблон, FPS и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={"smooth_motion": False}), banner,
+                _fallbacks=_fallbacks | {"motion"},
+            )
+        # Some FFmpeg builds cannot initialize advanced alpha/despill filters.
+        # Keep the user's template and retry with the basic RGB colorkey.
+        if (design.banner_enabled and design.chromakey_enabled and
+                design.chromakey_mode == "advanced" and
+                "chroma" not in _fallbacks and
+                ("No such filter" in details or
+                 "Error initializing complex filters" in details or
+                 "Failed to configure output pad" in details)):
+            JOB.setdefault("notes", []).append(
+                f"{source.name}: усиленный хромакей недоступен; "
+                "повторяю с RGB-хромакеем, сохраняя шаблон и баннер."
+            )
+            target.unlink(missing_ok=True)
+            return render(
+                source, bg, target,
+                design.model_copy(update={"chromakey_mode": "standard"}), banner,
+                _fallbacks=_fallbacks | {"chroma"},
             )
         if (performance["quality"] != "standard" and
                 (access_violation or "No such filter" in details or
@@ -1423,7 +1457,9 @@ def render(
             target.unlink(missing_ok=True)
             return render(
                 source, bg, target,
-                design.model_copy(update={"quality_preset": "standard"}), banner,
+                design.model_copy(update={"quality_preset": "standard",
+                                          "smooth_motion": False}), banner,
+                _fallbacks=_fallbacks | {"quality"},
             )
         meaningful = [
             line.strip() for line in details.splitlines()

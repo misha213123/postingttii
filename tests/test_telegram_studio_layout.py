@@ -666,6 +666,178 @@ class TelegramNativeBannerFpsRenderIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(rate, 90, delta=.1)
 
 
+class TelegramTemplateSaveGuardTests(unittest.TestCase):
+    def test_failed_preset_save_blocks_render_instead_of_using_stale_template(self):
+        html = (Path(__file__).resolve().parents[1] /
+                "static/telegram-studio.html").read_text(encoding="utf-8")
+        self.assertIn("designSaveError=err", html)
+        self.assertIn("if(designSaveError)throw Error('Шаблон не сохранён:", html)
+        self.assertIn("await designSaveQueue;", html)
+
+
+class TelegramTemplateRenderFallbackTests(unittest.TestCase):
+    def test_optical_flow_failure_retries_same_template_with_banner_and_fps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "ad.png"
+            banner.write_bytes(b"placeholder")
+            error = subprocess.CalledProcessError(
+                1, ["ffmpeg"], stderr="Failed to configure output pad on auto_scale"
+            )
+            with (patch.object(studio, "duration", return_value=1.0),
+                  patch.object(studio, "video_frame_rate", return_value=30.0),
+                  patch.object(studio, "ring_sprite_path",
+                               return_value=Path("orbit.png")),
+                  patch.object(studio.subprocess, "run",
+                               side_effect=[error, subprocess.CompletedProcess(
+                                   ["ffmpeg"], 0)]) as run,
+                  patch.dict(studio.JOB, {"notes": []})):
+                studio.render(
+                    Path("circle.mp4"), Path("background.png"),
+                    Path(folder) / "output.mp4",
+                    studio.RenderDesign(
+                        visual_template="orbit_dots", quality_preset="maximum",
+                        smooth_motion=True, banner_enabled=True,
+                        timecode_enabled=False,
+                    ), banner,
+                )
+                self.assertEqual(run.call_count, 2)
+                first, second = [c.args[0] for c in run.call_args_list]
+                first_graph = first[first.index("-filter_complex") + 1]
+                second_graph = second[second.index("-filter_complex") + 1]
+                self.assertIn("minterpolate=", first_graph)
+                self.assertNotIn("minterpolate=", second_graph)
+                self.assertIn("[orbit_ring]", second_graph)
+                self.assertIn("[banner]", second_graph)
+                self.assertIn("colorkey=", second_graph)
+                self.assertIn("fps=60", second_graph)
+                self.assertTrue(studio.JOB["notes"])
+
+    def test_advanced_key_failure_keeps_template_and_uses_standard_key(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "ad.png"
+            banner.write_bytes(b"placeholder")
+            error = subprocess.CalledProcessError(
+                1, ["ffmpeg"], stderr="No such filter: despill"
+            )
+            with (patch.object(studio, "duration", return_value=1.0),
+                  patch.object(studio, "video_frame_rate", return_value=30.0),
+                  patch.object(studio, "ring_sprite_path",
+                               return_value=Path("orbit.png")),
+                  patch.object(studio.subprocess, "run",
+                               side_effect=[error, subprocess.CompletedProcess(
+                                   ["ffmpeg"], 0)]) as run,
+                  patch.dict(studio.JOB, {"notes": []})):
+                studio.render(
+                    Path("circle.mp4"), Path("background.png"),
+                    Path(folder) / "output.mp4",
+                    studio.RenderDesign(
+                        visual_template="comet_tail", quality_preset="standard",
+                        smooth_motion=False, banner_enabled=True,
+                        timecode_enabled=False,
+                    ), banner,
+                )
+                self.assertEqual(run.call_count, 2)
+                second = run.call_args.args[0]
+                graph = second[second.index("-filter_complex") + 1]
+                self.assertIn("[orbit_ring]", graph)
+                self.assertIn("[banner]", graph)
+                self.assertIn("colorkey=", graph)
+                self.assertNotIn("despill=", graph)
+
+    def test_interpolation_is_after_scaling_not_on_large_original_frames(self):
+        with (patch.object(studio, "duration", return_value=1.0),
+              patch.object(studio, "video_frame_rate", return_value=30.0),
+              patch.object(studio.subprocess, "run") as run):
+            studio.render(
+                Path("circle.mp4"), Path("background.mp4"),
+                Path("output.mp4"), studio.RenderDesign(
+                    quality_preset="maximum", smooth_motion=True,
+                    timecode_enabled=False,
+                ),
+            )
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        circle = graph.split("[inside];")[0]
+        background = graph.split("[1:v]")[1].split("[bg];")[0]
+        self.assertLess(circle.index("crop="), circle.index("minterpolate="))
+        self.assertLess(background.index("crop="),
+                        background.index("minterpolate="))
+
+
+class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
+    """Decode real FFmpeg filter graphs for all twelve templates, not mocks."""
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg is required")
+    def test_all_twelve_templates_render_real_frames(self):
+        styles = ("classic", "orbit_dots", "orbit_arc", "pulse_ring",
+                  "double_orbit", "dashed_spin", "ripple", "comet_tail",
+                  "halo_breathe", "twin_comets", "starlight", "radar_sweep")
+        real_run = subprocess.run
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source.mp4"
+            background = root / "background.png"
+            Image.new("RGB", (540, 960), (26, 54, 100)).save(background)
+            banner = root / "banner.png"
+            ad = Image.new("RGB", (100, 50), (10, 240, 10))
+            ImageDraw.Draw(ad).rectangle((40, 10, 65, 40), fill=(230, 20, 20))
+            ad.save(banner)
+            real_run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "testsrc2=s=160x160:r=30:d=1",
+                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source),
+            ], check=True, capture_output=True)
+
+            def verify_graph(command, **kwargs):
+                # Run actual FFmpeg on the full 1080x1920 filtergraph, but
+                # stop after a few frames to keep CI fast.
+                i = command.index("-filter_complex")
+                check_cmd = command[:i] + [
+                    "-filter_complex", command[i + 1],
+                    "-map", "[v]", "-frames:v", "4",
+                    "-an", "-f", "null", "-",
+                ]
+                return real_run(check_cmd, **kwargs)
+
+            progress_styles = ("classic", "thin", "capsule", "segmented",
+                               "glow", "dual", "pulse")
+            for index, style in enumerate(styles):
+                with self.subTest(style=style):
+                    use_banner = index % 2 == 0
+                    design = studio.RenderDesign(
+                        visual_template=style, circle_size=400,
+                        circle_x=100, circle_y=300,
+                        timecode_enabled=False, progress_enabled=True,
+                        progress_style=progress_styles[index % len(progress_styles)],
+                        banner_enabled=use_banner, banner_width=220,
+                        quality_preset="standard",
+                        render_speed="quiet", source_max_fps=False,
+                        smooth_motion=False,
+                    )
+                    with (patch.object(studio, "duration", return_value=1.0),
+                          patch.object(studio.subprocess, "run",
+                                       side_effect=verify_graph)):
+                        studio.render(source, background, root / "output.mp4",
+                                      design, banner if use_banner else None)
+
+            # Regression for the exact "Maximum" setting: animated ring,
+            # optical-flow circle, advanced key, and progress together.
+            maximum = studio.RenderDesign(
+                visual_template="pulse_ring", circle_size=400,
+                circle_x=100, circle_y=300, progress_style="capsule",
+                timecode_enabled=False, banner_enabled=True,
+                banner_width=220, quality_preset="maximum",
+                render_speed="original", smooth_motion=True,
+                source_max_fps=False,
+            )
+            with (patch.object(studio, "duration", return_value=1.0),
+                  patch.object(studio, "video_frame_rate", return_value=30.0),
+                  patch.object(studio.subprocess, "run",
+                               side_effect=verify_graph)):
+                studio.render(source, background, root / "output.mp4",
+                              maximum, banner)
+
+
 class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
