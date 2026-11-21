@@ -101,7 +101,7 @@ class TelegramUltraRenderSettingsTests(unittest.TestCase):
                     chromakey_mode="advanced", quality_preset="maximum",
                 )
                 graph = studio.banner_overlay_filter(design, 2, 90)
-                self.assertIn(f"colorkey=0x{color[1:]}:0.180", graph)
+                self.assertIn(f"colorkey=0x{color[1:]}:0.220", graph)
                 self.assertIn("boxblur=lr=0:lp=0:cr=0:cp=0:ar=1:ap=1", graph)
                 self.assertIn("[2:v]format=rgba,", graph)
                 self.assertNotIn("[2:v]fps=", graph)
@@ -345,7 +345,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
     def test_default_green_still_applies_for_old_saved_designs(self):
         older = studio.RenderDesign.model_validate({"chromakey_enabled": True})
         self.assertEqual(older.chromakey_color, "#00ff00")
-        self.assertEqual(older.chromakey_similarity, .18)
+        self.assertEqual(older.chromakey_similarity, .22)
         self.assertEqual(older.chromakey_blend, .07)
 
     def test_rejects_invalid_colors_and_ffmpeg_filter_injection(self):
@@ -415,7 +415,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             args = run.call_args.args[0]
             graph = args[args.index("-filter_complex") + 1]
             self.assertIn("[2:v]format=rgba,", graph)
-            self.assertIn("colorkey=0x1a4cdd:0.180:0.070,", graph)
+            self.assertIn("colorkey=0x1a4cdd:0.220:0.070,", graph)
             self.assertNotIn("colorkey=", graph.split("[circle];")[0])
             self.assertIn("-loop", args)
 
