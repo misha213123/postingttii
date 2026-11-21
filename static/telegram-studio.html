@@ -163,6 +163,8 @@
         <option value="enhanced">Улучшенное — лёгкая очистка, чёткость и цвет</option>
         <option value="maximum">Максимальное · 60 FPS · шумоподавление · CRF 16 (медленно)</option>
       </select>
+      <label for="tgExportResolution">Разрешение экспорта</label>
+      <select id="tgExportResolution"><option value="1080">1080×1920 · Reels (рекомендуется)</option><option value="2160">2160×3840 · 4K UHD (медленно, апскейл)</option></select>
       <label for="tgDenoiseStrength">Шумоподавление: <span id="tgDenoiseValue">1.0</span></label>
       <input id="tgDenoiseStrength" type="range" min="0" max="3" step="0.1" value="1">
       <label for="tgSharpenStrength">Резкость: <span id="tgSharpenValue">0.5</span></label>
@@ -260,7 +262,7 @@ const designState={
   background_mode:'shuffle',background_name:'',
   chromakey_enabled:true,chromakey_color:'#00ff00',
   chromakey_similarity:.10,chromakey_blend:.07,banner_enabled:false,
-  banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced',denoise_strength:1,sharpening_strength:.5
+  banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced',export_resolution:1080,denoise_strength:1,sharpening_strength:.5
 };
 let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
 
@@ -449,6 +451,7 @@ function updateDesignPreview(){
   el('bannerPositionX').value=designState.banner_x;
   el('bannerPositionY').value=designState.banner_y;
   el('tgQualityPreset').value=designState.quality_preset||'enhanced';
+  el('tgExportResolution').value=String(designState.export_resolution||1080);
   for(const [field,key,valueId] of [['tgDenoiseStrength','denoise_strength','tgDenoiseValue'],['tgSharpenStrength','sharpening_strength','tgSharpenValue']]){
     const value=Number(designState[key]??(key==='denoise_strength'?1:.5));
     el(field).value=value;el(valueId).textContent=value.toFixed(1);
@@ -836,6 +839,10 @@ function initDesignControls(){
     });
     el(field).addEventListener('change',()=>saveRenderDesign());
   }
+  el('tgExportResolution').addEventListener('change',e=>{
+    designState.export_resolution=Number(e.target.value);
+    saveRenderDesign();
+  });
   el('tgQualityPreset').addEventListener('change',e=>{
     designState.quality_preset=e.target.value;
     if(e.target.value==='maximum'){
