@@ -1231,9 +1231,9 @@ def render(
         performance["quality"], design.denoise_strength, design.sharpening_strength
     )
     circle_filter = (
-        f"[0:v]{motion}scale={size}:{size}:force_original_aspect_ratio=increase:"
+        f"[0:v]scale={size}:{size}:force_original_aspect_ratio=increase:"
         f"flags=lanczos,crop={inside}:{inside}:{border}:{border},"
-        f"{source_cleanup}format=rgba,"
+        f"{source_cleanup}{motion}format=rgba,"
         "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
         f"a='if(lte((X-{radius})*(X-{radius})+(Y-{radius})*(Y-{radius}),"
         f"{radius*radius}),alpha(X,Y),0)'[inside];"
@@ -1246,9 +1246,8 @@ def render(
         f"[ring][inside]overlay={border}:{border}:shortest=1:format=auto[circle];"
     )
     bg_filter = (
-        f"[1:v]{background_motion}"
-        "scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-        "crop=1080:1920,setsar=1[bg];"
+        "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop=1080:1920,{background_motion}setsar=1[bg];"
     )
     orbit = design.visual_template != "classic"
     if orbit:
