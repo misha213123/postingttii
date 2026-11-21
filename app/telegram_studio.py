@@ -289,7 +289,17 @@ def render_performance(design: RenderDesign) -> dict:
     """
     # Maximum quality must not silently turn into standard 30 FPS in quiet mode.
     if design.quality_preset == "maximum":
-        return dict(fps=max(60, design.output_fps), motion=design.smooth_motion,
+        # Maximum describes picture quality, not an obligation to run
+        # CPU-heavy optical flow at 1080p/120fps. Quiet/balanced are safe.
+        if design.render_speed == "quiet":
+            return dict(fps=30, motion=False, quality="maximum",
+                        filter_threads=2, video_threads=2,
+                        encoder=["-preset", "veryfast", "-crf", "17"])
+        if design.render_speed == "balanced":
+            return dict(fps=design.output_fps, motion=False, quality="maximum",
+                        filter_threads=4, video_threads=4,
+                        encoder=["-preset", "veryfast", "-crf", "16"])
+        return dict(fps=design.output_fps, motion=design.smooth_motion,
                     quality="maximum", filter_threads=4, video_threads=4,
                     encoder=h264_quality_args("maximum"))
     if design.render_speed == "quiet":
@@ -1221,14 +1231,19 @@ def render(
     # Optical flow is applied only when increasing FPS. Do not interpolate
     # an already high-frame-rate circle, and never interpolate banner frames.
     def motion_filter(native_fps: float | None) -> str:
-        if performance["motion"] and fps >= 60 and (native_fps is None or native_fps < fps - 0.5):
-            return (f"minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc:"
-                    "me_mode=bidir:scd=fdiff:scd_threshold=10,")
+        if (performance["motion"] and fps >= 60 and
+                (native_fps is None or native_fps < fps - 0.5)):
+            # The explicitly selected "original" speed mode can synthesize
+            # circle frames. A blend is much cheaper than CPU optical flow;
+            # full-frame background interpolation is always disabled.
+            return f"minterpolate=fps={min(fps, 60)}:mi_mode=blend,fps={fps},"
         return f"fps={fps},"
 
     motion = motion_filter(native["circle"])
-    background_motion = (f"fps={fps}," if is_image_background(bg)
-                         else motion_filter(native["background"]))
+    # Never optical-flow interpolate a full 1080x1920 video background.
+    # It multiplies work by millions of pixels per frame and can turn
+    # a short Telegram circle into a 30-minute CPU render.
+    background_motion = f"fps={fps},"
     source_cleanup = quality_filter_segment(
         performance["quality"], design.denoise_strength, design.sharpening_strength
     )
