@@ -249,12 +249,13 @@
       circle.style.boxSizing='border-box';
       circle.style.border=(state.circle_border_width*scaleFactor)+'px solid '+state.circle_border_color;
     }
+    if(state.progress_enabled && state.progress_style && state.progress_style!=='none')
+      lastProgressStyle=state.progress_style;
     progressStyleSelect.value=state.progress_enabled?(state.progress_style||'classic'):'none';
     ranges.progress_width.input.disabled=!state.progress_enabled;
     ranges.progress_height.input.disabled=!state.progress_enabled;
     progress.hidden=!state.progress_enabled||state.progress_style==='none';
     progress.style.left=(state.progress_x/1080*100)+'%';
-    progress.style.top=(state.progress_y/1920*100)+'%';
     progress.style.width=(state.progress_width/1080*100)+'%';
     const barHeight=state.progress_style==='thin'?Math.min(4,state.progress_height):state.progress_height;
     const offsetY=(state.progress_height-barHeight)/2;
