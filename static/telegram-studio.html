@@ -142,12 +142,12 @@
         <input id="chromaColor" type="color" value="#00ff00" aria-label="Выбрать цвет вручную">
         <code id="chromaColorHex">#00FF00</code>
       </div>
-      <div class="design-field"><label for="chromaSimilarity">Чувствительность: <span id="chromaSimilarityValue">20</span>%</label>
-        <input id="chromaSimilarity" type="range" min="1" max="100" step="1" value="20"></div>
+      <div class="design-field"><label for="chromaSimilarity">Чувствительность: <span id="chromaSimilarityValue">22</span>%</label>
+        <input id="chromaSimilarity" type="range" min="1" max="100" step="1" value="22"></div>
       <div class="design-field"><label for="chromaBlend">Мягкость краёв: <span id="chromaBlendValue">7</span>%</label>
         <input id="chromaBlend" type="range" min="0" max="100" step="1" value="7"></div>
       <span class="editor-note" id="chromaPickStatus" aria-live="polite">Загрузи рекламный баннер, нажми «Пипетка», затем кликни по цвету фона на баннере. Telegram-кружок останется без изменений.</span>
-      <span class="editor-note">Усиленный режим удаляет фон на исходном разрешении баннера, очищает цветные ореолы и мягко обрабатывает только прозрачность краёв. Цвета и резкость текста баннера не фильтруются. Предпросмотр приблизительный; результат FFmpeg может отличаться. При слишком высокой чувствительности исчезают похожие цвета.</span>
+      <span class="editor-note">Усиленный режим удаляет фон на исходном разрешении баннера, очищает цветные ореолы и мягко обрабатывает только прозрачность краёв. Цвета и резкость текста баннера не фильтруются. В усиленном режиме минимальная эффективная чувствительность — 22%. Предпросмотр приблизительный; результат FFmpeg может отличаться. При слишком высокой чувствительности исчезают похожие цвета.</span>
     </div>
     <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
     <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
