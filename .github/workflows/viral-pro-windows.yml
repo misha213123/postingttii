@@ -14,6 +14,8 @@ on:
       - "tests/test_viral_reels_pro.py"
       - "app/telegram_studio.py"
       - "static/telegram-studio.html"
+      - "static/studio-circle-ui.js"
+      - "static/studio-circle-ui.css"
       - "tests/test_telegram_studio_layout.py"
       - ".github/workflows/viral-pro-windows.yml"
   workflow_dispatch:
@@ -58,6 +60,10 @@ jobs:
         run: |
           python -c "from pathlib import Path; import re; source=Path('static/telegram-studio.html').read_text(encoding='utf-8'); scripts=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',source,re.S); Path('_telegram_inline.js').write_text('\n'.join(scripts),encoding='utf-8')"
           node --check _telegram_inline.js
+          node --check static/studio-circle-ui.js
+      - name: Check Telegram Studio progress-bar compatibility
+        shell: pwsh
+        run: python -m unittest discover -s tests -p "test_studio_circle_progress.py" -v
       - name: Run Telegram Studio chromakey render tests
         shell: pwsh
         run: python -m unittest discover -s tests -p "test_telegram_studio_layout.py" -v
