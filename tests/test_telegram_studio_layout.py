@@ -542,7 +542,7 @@ class TelegramDesignApiTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.object(studio, "CONFIG", conf),
                 patch.object(studio, "BANNERS", banner_folder),
-                patch.object(studio, "run_ffmpeg_render", side_effect=CalledProcessError(1, "ffprobe")),
+                patch.object(studio.subprocess, "run", side_effect=CalledProcessError(1, "ffprobe")),
                 patch.dict(studio.JOB, {"status": "idle"}),
             ):
                 with self.assertRaises(HTTPException) as err:
