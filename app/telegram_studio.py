@@ -380,7 +380,10 @@ def video_frame_rate(path: Path) -> float | None:
         streams = json.loads(result.stdout).get("streams", [])
         for key in ("avg_frame_rate", "r_frame_rate"):
             if streams and streams[0].get(key):
-                fps = float(Fraction(streams[0][key]))
+                try:
+                    fps = float(Fraction(streams[0][key]))
+                except (ValueError, ZeroDivisionError, TypeError):
+                    continue  # WebM often reports avg_frame_rate=0/0.
                 if 1 <= fps <= 480:
                     return fps
     except (OSError, ValueError, TypeError, ZeroDivisionError,
