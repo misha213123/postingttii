@@ -50,6 +50,26 @@ class TelegramRingAndQualityTests(unittest.TestCase):
         }}
         self.assertFalse(studio.effective_design(newer).chromakey_enabled)
 
+    def test_adjustable_quality_filters_and_export_color_metadata(self):
+        self.assertEqual(studio.quality_filter_segment("standard", 3, 1.5), "")
+        self.assertNotIn("hqdn3d", studio.quality_filter_segment("maximum", 0, 0.4))
+        self.assertNotIn("unsharp", studio.quality_filter_segment("maximum", 1, 0))
+        with (patch.object(studio, "duration", side_effect=[8.0, 20.0]),
+              patch.object(studio.subprocess, "run") as run):
+            studio.render(Path("circle.mp4"), Path("background.mp4"),
+                          Path("output.mp4"), studio.RenderDesign(
+                              quality_preset="maximum", render_speed="quiet",
+                              smooth_motion=True, denoise_strength=1.4,
+                              sharpening_strength=0.7))
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        self.assertIn("minterpolate=fps=60", graph)
+        self.assertIn("hqdn3d=1.68", graph)
+        self.assertIn("unsharp=5:5:0.70", graph)
+        self.assertIn("-color_primaries", args)
+        self.assertIn("bt709", args)
+        self.assertIn("192k", args)
+
     def test_chromakey_is_enabled_by_default(self):
         design = studio.RenderDesign()
         self.assertTrue(design.chromakey_enabled)
