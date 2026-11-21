@@ -1088,15 +1088,17 @@ def render(
         # Pulse/ripple grow and shrink around the circle; other styles rotate.
         pulse = style in {"pulse_ring", "ripple"}
         base_dimension = size + 2 * pad
-        zoom = (
-            ",scale=w='trunc(iw*(1+0.045*sin(n/10))/2)*2':"
-            "h='trunc(ih*(1+0.045*sin(n/10))/2)*2':eval=frame"
+        # Animate opacity instead of changing dimensions: FFmpeg fade/overlay
+        # require constant frame size, otherwise pulse renders fail on Windows.
+        pulse_alpha = (
+            ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+            "a='alpha(X,Y)*(0.7+0.3*sin(T*5))'"
             if pulse else ""
         )
         filter_chain += (
             f"[2:v]format=rgba,rotate=a='2*PI*t/{speed}':ow=iw:oh=ih:c=none,"
             f"scale={base_dimension}:{base_dimension}:flags=bilinear"
-            f"{zoom},fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
+            f"{pulse_alpha},fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
             f"d={SECOND_TEMPLATE_FADE_SECONDS}:alpha=1[orbit_ring];"
             f"[{last}][orbit_ring]overlay=x='{x+size//2}-w/2':"
             f"y='{y+size//2}-h/2':eval=frame:"
