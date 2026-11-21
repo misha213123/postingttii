@@ -175,6 +175,7 @@ class RenderDesign(BaseModel):
     background_mode: Literal["shuffle", "single"] = "shuffle"
     background_name: str = ""
     chromakey_enabled: bool = True
+    chromakey_version: int = 1
     chromakey_color: str = Field(default="#00ff00", pattern=r"^#[0-9A-Fa-f]{6}$")
     chromakey_similarity: float = Field(default=0.10, ge=0.01, le=1.0)
     chromakey_blend: float = Field(default=0.07, ge=0.0, le=1.0)
@@ -202,8 +203,16 @@ def _design_presets(data: dict) -> dict[str, dict]:
     return presets
 
 
+def effective_design(data: dict) -> RenderDesign:
+    """Migrate pre-chromakey saved banners once, preserving newer manual off choices."""
+    raw = dict(data.get("render_design") or {})
+    if data.get("banner_file") and "chromakey_version" not in raw:
+        raw["chromakey_enabled"] = True
+    return RenderDesign.model_validate(raw)
+
+
 def saved_design() -> RenderDesign:
-    return RenderDesign.model_validate(config().get("render_design", {}))
+    return effective_design(config())
 
 
 def choose_backgrounds(design: RenderDesign) -> list[Path]:
@@ -326,7 +335,7 @@ def design_response():
     d = config()
     banner = current_banner(d)
     return {
-        "design": RenderDesign.model_validate(d.get("render_design", {})).model_dump(),
+        "design": effective_design(d).model_dump(),
         "presets": _design_presets(d),
         "banner_available": banner is not None,
         "banner_kind": "video" if banner and banner.suffix in {".mp4", ".webm"} else ("image" if banner else None),
@@ -430,7 +439,7 @@ async def upload_banner(file: UploadFile = File(...)):
 
     d = config()
     d["banner_file"] = name
-    design = RenderDesign.model_validate(d.get("render_design", {}))
+    design = effective_design(d)
     d["render_design"] = design.model_copy(update={
         "banner_enabled": True, "chromakey_enabled": True,
     }).model_dump()
