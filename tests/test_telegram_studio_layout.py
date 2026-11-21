@@ -40,6 +40,16 @@ class TelegramRingAndQualityTests(unittest.TestCase):
         self.assertEqual(performance["quality"], "maximum")
         self.assertIn("16", performance["encoder"])
 
+    def test_old_banner_chromakey_migrates_but_manual_off_is_preserved(self):
+        old = {"banner_file": "old.png", "render_design": {
+            "chromakey_enabled": False,
+        }}
+        self.assertTrue(studio.effective_design(old).chromakey_enabled)
+        newer = {"banner_file": "old.png", "render_design": {
+            "chromakey_enabled": False, "chromakey_version": 1,
+        }}
+        self.assertFalse(studio.effective_design(newer).chromakey_enabled)
+
     def test_chromakey_is_enabled_by_default(self):
         design = studio.RenderDesign()
         self.assertTrue(design.chromakey_enabled)
