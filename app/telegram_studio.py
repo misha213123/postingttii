@@ -169,6 +169,8 @@ class RenderDesign(BaseModel):
     output_fps: Literal[30, 60] = 60
     smooth_motion: bool = False
     quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
+    denoise_strength: float = Field(default=1.0, ge=0.0, le=3.0)
+    sharpening_strength: float = Field(default=0.5, ge=0.0, le=1.5)
     # Resource-saving mode is the default for both existing and new designs.
     # Users can explicitly restore the previous 60fps/full-filter renderer.
     render_speed: Literal["quiet", "balanced", "original"] = "quiet"
@@ -237,21 +239,25 @@ def banner_input_args(banner: Path) -> list[str]:
     return ["-loop", "1", "-i", str(banner)]
 
 
-def quality_filter_segment(quality_preset: str) -> str:
+def quality_filter_segment(quality_preset: str, denoise_strength: float = 1.0,
+                           sharpening_strength: float = 0.5) -> str:
     """Conservative picture cleanup; visual quality, not duplicate evasion.
 
     The treatment is applied once after the composition so all layers share
     the same encoding characteristics. Keep the standard preset filter-free.
     """
-    if quality_preset == "enhanced":
-        return ("hqdn3d=0.8:0.8:3:3,"
-                "eq=contrast=1.025:saturation=1.035,"
-                "unsharp=3:3:0.35:3:3:0.0,")
-    if quality_preset == "maximum":
-        return ("hqdn3d=1.2:1.0:4:3,"
-                "eq=contrast=1.045:saturation=1.055,"
-                "unsharp=5:5:0.50:5:5:0.0,")
-    return ""
+    if quality_preset == "standard":
+        return ""
+    # Respect the user's noise/detail tradeoff instead of forcing aggressive
+    # smoothing. All values are Pydantic-validated before entering FFmpeg.
+    filters = []
+    if denoise_strength > 0:
+        strength = denoise_strength * (1.2 if quality_preset == "maximum" else 0.8)
+        filters.append(f"hqdn3d={strength:.2f}:{strength*.85:.2f}:"
+                       f"{strength*3:.2f}:{strength*2.5:.2f}")
+    if sharpening_strength > 0:
+        filters.append(f"unsharp=5:5:{sharpening_strength:.2f}:5:5:0.0")
+    return ",".join(filters) + ("," if filters else "")
 
 
 def h264_quality_args(quality_preset: str, *, standard_crf: str = "18") -> list[str]:
@@ -318,7 +324,7 @@ def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
         f"fade=t=in:st={fade_start}:d={fade_duration}:alpha=1[banner];"
         f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
         f"format=auto:shortest=1,fps={fps},"
-        f"{quality_filter_segment(performance['quality'])}format=yuv420p[v]"
+        f"{quality_filter_segment(performance['quality'], design.denoise_strength, design.sharpening_strength)}format=yuv420p[v]"
     )
 
 
@@ -1175,7 +1181,9 @@ def render(
           if performance["video_threads"] is not None else []),
         "-profile:v", "high", "-level:v", "5.1" if fps == 60 else "4.2",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
+        "-color_primaries", "bt709", "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart", str(target),
     ]
     try:
