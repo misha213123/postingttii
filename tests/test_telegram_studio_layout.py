@@ -666,6 +666,53 @@ class TelegramNativeBannerFpsRenderIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(rate, 90, delta=.1)
 
 
+class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
+    """Decode real FFmpeg filter graphs for all twelve templates, not mocks."""
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg is required")
+    def test_all_twelve_templates_render_real_frames(self):
+        styles = ("classic", "orbit_dots", "orbit_arc", "pulse_ring",
+                  "double_orbit", "dashed_spin", "ripple", "comet_tail",
+                  "halo_breathe", "twin_comets", "starlight", "radar_sweep")
+        real_run = subprocess.run
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "source.mp4"
+            background = root / "background.png"
+            Image.new("RGB", (540, 960), (26, 54, 100)).save(background)
+            real_run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "testsrc2=s=160x160:r=30:d=1",
+                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source),
+            ], check=True, capture_output=True)
+
+            def verify_graph(command, **kwargs):
+                # Run actual FFmpeg on the full 1080x1920 filtergraph, but
+                # stop after a few frames to keep CI fast.
+                i = command.index("-filter_complex")
+                check_cmd = command[:i] + [
+                    "-filter_complex", command[i + 1],
+                    "-map", "[v]", "-frames:v", "4",
+                    "-an", "-f", "null", "-",
+                ]
+                return real_run(check_cmd, **kwargs)
+
+            for style in styles:
+                with self.subTest(style=style):
+                    design = studio.RenderDesign(
+                        visual_template=style, circle_size=360,
+                        circle_x=100, circle_y=300,
+                        timecode_enabled=False, progress_enabled=True,
+                        progress_style="classic", quality_preset="standard",
+                        render_speed="quiet", source_max_fps=False,
+                        smooth_motion=False,
+                    )
+                    with (patch.object(studio, "duration", return_value=1.0),
+                          patch.object(studio.subprocess, "run",
+                                       side_effect=verify_graph)):
+                        studio.render(source, background, root / "output.mp4", design)
+
+
 class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
