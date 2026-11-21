@@ -1219,7 +1219,7 @@ def render(
     # Optical flow is applied only when increasing FPS. Do not interpolate
     # an already high-frame-rate circle, and never interpolate banner frames.
     def motion_filter(native_fps: float | None) -> str:
-        if performance["motion"] and (native_fps is None or native_fps < fps - 0.5):
+        if performance["motion"] and fps >= 60 and (native_fps is None or native_fps < fps - 0.5):
             return (f"minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc:"
                     "me_mode=bidir:scd=fdiff:scd_threshold=10,")
         return f"fps={fps},"
