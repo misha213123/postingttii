@@ -374,7 +374,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
         self.assertNotIn("colorkey=", graph)
         self.assertNotIn("[banner]", graph)
         self.assertIn("0:a?", args)
-        self.assertEqual(args.count("-i"), 2)
+        self.assertEqual(args.count("-i"), 4)  # source, background, cached mask and border
 
     def test_chromakey_banner_overlay_uses_saved_coordinates(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -396,7 +396,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
             self.assertIn("colorkey=0x00ff00", graph)
             self.assertIn("scale=620:-1", graph)
             self.assertIn("overlay=125:1570", graph)
-            self.assertEqual(args.count("-i"), 3)
+            self.assertEqual(args.count("-i"), 5)  # source, background, banner, cached mask and border
             self.assertEqual(args[args.index("-loop")+1], "1")
             self.assertIn("0:a?", args)
 
@@ -438,9 +438,10 @@ class TelegramRenderDesignTests(unittest.TestCase):
                     studio.render(Path("circle.mp4"), Path("bg.mp4"), Path("reel.mp4"), d, banner)
                 args = run.call_args.args[0]
                 graph = args[args.index("-filter_complex") + 1]
-                self.assertEqual(args.count("-i"), 3)
+                self.assertEqual(args.count("-i"), 5)  # source, background, banner, cached mask and border
                 self.assertEqual(args.count("-stream_loop"), 2)  # background + video banner
-                self.assertNotIn("-loop", args)
+                self.assertEqual(args.count("-loop"), 2)  # static cached PNGs only
+                self.assertLess(args.index(str(banner)), args.index("-loop"))
                 self.assertIn("overlay=120:1460", graph)
                 self.assertEqual(args[args.index("-map") + 1], "[v]")
                 self.assertEqual(args[args.index("-map", args.index("-map")+1) + 1], "0:a?")
@@ -866,6 +867,54 @@ class TelegramTemplateRenderFallbackTests(unittest.TestCase):
         self.assertLess(circle.index("crop="), circle.index("minterpolate="))
         self.assertIn("fps=", background)
         self.assertNotIn("minterpolate=", background)
+
+
+class TelegramCachedCircleMaskTests(unittest.TestCase):
+    def test_cached_mask_is_opaque_inside_and_transparent_outside(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            studio, "ORBIT_ASSETS", Path(folder)
+        ):
+            mask, ring = studio.circle_alpha_assets(400, 12, "#12abef")
+            self.assertTrue(mask.is_file())
+            self.assertTrue(ring.is_file())
+            with Image.open(mask) as alpha:
+                self.assertEqual(alpha.mode, "L")
+                self.assertEqual(alpha.size, (376, 376))
+                self.assertEqual(alpha.getpixel((188, 188)), 255)
+                self.assertEqual(alpha.getpixel((0, 0)), 0)
+            with Image.open(ring) as border:
+                self.assertEqual(border.mode, "RGBA")
+                self.assertEqual(border.size, (400, 400))
+                self.assertEqual(border.getpixel((200, 200))[:3],
+                                 (0x12, 0xab, 0xef))
+                self.assertEqual(border.getpixel((0, 0))[3], 0)
+            before = (mask.stat().st_mtime_ns, ring.stat().st_mtime_ns)
+            self.assertEqual((mask, ring),
+                             studio.circle_alpha_assets(400, 12, "#12abef"))
+            self.assertEqual(before, (mask.stat().st_mtime_ns,
+                                      ring.stat().st_mtime_ns))
+
+    def test_render_uses_cached_pngs_not_per_frame_circle_geq(self):
+        with (patch.object(studio, "duration", return_value=1.0),
+              patch.object(studio, "video_frame_rate", return_value=30.0),
+              patch.object(studio, "run_ffmpeg_render") as call):
+            studio.render(
+                Path("circle.mp4"), Path("bg.png"), Path("out.mp4"),
+                studio.RenderDesign(
+                    circle_size=1040, quality_preset="maximum",
+                    render_speed="balanced", progress_enabled=False,
+                    timecode_enabled=False,
+                ),
+            )
+        args = call.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        circle_part = graph.split("[circle];")[0]
+        self.assertIn("alphamerge[inside]", circle_part)
+        self.assertNotIn("geq=", circle_part)
+        self.assertIn("[2:v]format=gray[inside_mask]", circle_part)
+        self.assertIn("[3:v]format=rgba[ring]", circle_part)
+        self.assertTrue(any("circle_inside_mask_v1_" in arg for arg in args))
+        self.assertTrue(any("circle_border_v1_" in arg for arg in args))
 
 
 class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):

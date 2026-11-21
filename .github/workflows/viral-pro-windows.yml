@@ -9,6 +9,7 @@ on:
       - "fix/telegram-studio-rgb-colorkey-*"
       - "feature/telegram-studio-ultra-chroma-native-fps-*"
       - "fix/telegram-studio-template-render-stability-*"
+      - "fix/telegram-circle-mask-render-speed-*"
   pull_request:
     paths:
       - "app/viral_reels_pro.py"

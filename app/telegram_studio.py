@@ -1122,6 +1122,55 @@ def orbit_sprite_path(circle_size: int) -> Path:
     return filename
 
 
+def circle_alpha_assets(size: int, border: int, color: str) -> tuple[Path, Path]:
+    """Cache anti-aliased PNG circle masks instead of evaluating geq per pixel.
+
+    Old rendering evaluated two expensive per-pixel geq expressions on every
+    frame (at 1040px/60fps, millions of expressions each second). The masks
+    are static for a design and can be reused across every frame and video.
+    """
+    inside = size - 2 * border
+    mask_path = ORBIT_ASSETS / f"circle_inside_mask_v1_{inside}.png"
+    ring_path = ORBIT_ASSETS / (
+        f"circle_border_v1_{size}_{border}_{color.lstrip('#').lower()}.png"
+    )
+
+    def cached(path: Path) -> bool:
+        try:
+            return path.stat().st_size > 0
+        except OSError:
+            return False
+
+    def save_once(path: Path, image: Image.Image) -> None:
+        if cached(path):
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.stem + "_" + uuid.uuid4().hex + ".png")
+        try:
+            image.save(temporary, "PNG")
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    if not cached(mask_path):
+        factor = 2
+        mask = Image.new("L", (inside * factor, inside * factor), 0)
+        ImageDraw.Draw(mask).ellipse(
+            (0, 0, inside * factor - 1, inside * factor - 1), fill=255
+        )
+        save_once(mask_path, mask.resize((inside, inside), Image.Resampling.LANCZOS))
+
+    if not cached(ring_path):
+        factor = 2
+        ring = Image.new("RGBA", (size * factor, size * factor), (0, 0, 0, 0))
+        rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+        ImageDraw.Draw(ring).ellipse(
+            (0, 0, size * factor - 1, size * factor - 1), fill=(*rgb, 255)
+        )
+        save_once(ring_path, ring.resize((size, size), Image.Resampling.LANCZOS))
+    return mask_path, ring_path
+
+
 def ring_sprite_path(circle_size: int, style: str) -> Path:
     """Create transparent ring artwork for each selectable animated template."""
     if style == "orbit_dots":
@@ -1300,8 +1349,9 @@ def render(
     size = design.circle_size
     border = min(design.circle_border_width, size // 5)
     inside = size - 2 * border
-    radius = inside // 2
-    border_radius = size // 2
+    mask_asset, border_asset = circle_alpha_assets(
+        size, border, design.circle_border_color
+    )
     x = max(0, min(design.circle_x, 1080 - size))
     y = max(0, min(design.circle_y, 1920 - size))
     performance = render_performance(design)
@@ -1328,26 +1378,25 @@ def render(
     source_cleanup = quality_filter_segment(
         performance["quality"], design.denoise_strength, design.sharpening_strength
     )
+    # Keep the existing input positions: 0=source, 1=background,
+    # 2=orbit (when enabled), next=banner (when enabled).
+    # Add cached alpha mask and border PNGs after those inputs.
+    orbit = design.visual_template != "classic"
+    mask_index = 2 + int(orbit) + int(design.banner_enabled)
+    border_index = mask_index + 1
     circle_filter = (
         f"[0:v]scale={size}:{size}:force_original_aspect_ratio=increase:"
         f"flags=lanczos,crop={inside}:{inside}:{border}:{border},"
-        f"{source_cleanup}{motion}format=rgba,"
-        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-        f"a='if(lte((X-{radius})*(X-{radius})+(Y-{radius})*(Y-{radius}),"
-        f"{radius*radius}),alpha(X,Y),0)'[inside];"
-        f"color=c=0x{design.circle_border_color[1:]}:s={size}x{size}:r={fps}:"
-        f"d={seconds:.3f},format=rgba,"
-        "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
-        f"a='if(lte((X-{border_radius})*(X-{border_radius})+"
-        f"(Y-{border_radius})*(Y-{border_radius}),{border_radius*border_radius}),"
-        "255,0)'[ring];"
+        f"{source_cleanup}{motion}format=rgba[inside_raw];"
+        f"[{mask_index}:v]format=gray[inside_mask];"
+        "[inside_raw][inside_mask]alphamerge[inside];"
+        f"[{border_index}:v]format=rgba[ring];"
         f"[ring][inside]overlay={border}:{border}:shortest=1:format=auto[circle];"
     )
     bg_filter = (
         "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
         f"crop=1080:1920,{background_motion}setsar=1[bg];"
     )
-    orbit = design.visual_template != "classic"
     if orbit:
         # No circle or outline in the first 0.38s: only the background.
         circle_filter += (
@@ -1379,9 +1428,9 @@ def render(
             if pulse else ""
         )
         filter_chain += (
-            f"[2:v]format=rgba,rotate=a='2*PI*t/{speed}':ow=iw:oh=ih:c=none,"
-            f"scale={base_dimension}:{base_dimension}:flags=bilinear"
-            f"{pulse_alpha},fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
+            f"[2:v]format=rgba,rotate=a='2*PI*t/{speed}':ow=iw:oh=ih:c=none"
+            f"{pulse_alpha},scale={base_dimension}:{base_dimension}:flags=bilinear,"
+            f"fade=t=in:st={SECOND_TEMPLATE_INTRO_START}:"
             f"d={SECOND_TEMPLATE_FADE_SECONDS}:alpha=1[orbit_ring];"
             f"[{last}][orbit_ring]overlay=x='{x+size//2}-w/2':"
             f"y='{y+size//2}-h/2':eval=frame:"
@@ -1461,6 +1510,11 @@ def render(
             f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
             "format=yuv420p[v]"
         )
+
+    # Decoding two cached PNGs per frame is far cheaper than recalculating
+    # geq masks over 1M+ pixels for every frame of a large circle.
+    for asset in (mask_asset, border_asset):
+        cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(asset)]
 
     cmd += [
         "-filter_complex", filter_chain,
