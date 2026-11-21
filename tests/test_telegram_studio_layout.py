@@ -789,7 +789,7 @@ class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
             for style in styles:
                 with self.subTest(style=style):
                     design = studio.RenderDesign(
-                        visual_template=style, circle_size=360,
+                        visual_template=style, circle_size=400,
                         circle_x=100, circle_y=300,
                         timecode_enabled=False, progress_enabled=True,
                         progress_style="classic", quality_preset="standard",
