@@ -148,7 +148,7 @@
   checkbox('Дополнительные кадры кружка (только режим «Исходный», медленнее)','smooth_motion');
   const ultra=document.createElement('button');
   ultra.type='button';ultra.id='studioUltraQuality';
-  ultra.textContent='🚀 Максимум качества · без 30-минутного рендера';
+  ultra.textContent='🚀 Максимум качества · ускоренный режим';
   ultra.className='studio-ultra-quality';
   controls.append(ultra);
   ultra.addEventListener('click',()=>{
