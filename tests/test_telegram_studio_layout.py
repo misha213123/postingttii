@@ -678,6 +678,88 @@ class TelegramTemplateSaveGuardTests(unittest.TestCase):
         self.assertIn("await designSaveQueue;", html)
 
 
+class TelegramRenderSpeedAndStopTests(unittest.TestCase):
+    def test_maximum_balanced_has_no_expensive_motion(self):
+        d = studio.RenderDesign(quality_preset="maximum",
+                                render_speed="balanced", output_fps=60,
+                                smooth_motion=True, source_max_fps=False)
+        perf = studio.render_performance(d)
+        self.assertEqual(perf["fps"], 60)
+        self.assertFalse(perf["motion"])
+        self.assertIn("16", perf["encoder"])
+        with (patch.object(studio, "duration", return_value=1.0),
+              patch.object(studio, "video_frame_rate", return_value=30.0),
+              patch.object(studio, "run_ffmpeg_render") as run):
+            studio.render(Path("circle.mp4"), Path("bg.mp4"),
+                          Path("out.mp4"), d)
+        args = run.call_args.args[0]
+        graph = args[args.index("-filter_complex") + 1]
+        self.assertNotIn("minterpolate=", graph)
+        self.assertIn("fps=60", graph)
+
+    def test_timeout_retries_quickly_without_losing_template(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "ad.png"
+            banner.write_bytes(b"placeholder")
+            timed_out = subprocess.TimeoutExpired(["ffmpeg"], 120)
+            with (patch.object(studio, "duration", return_value=1.0),
+                  patch.object(studio, "video_frame_rate", return_value=30.0),
+                  patch.object(studio, "ring_sprite_path",
+                               return_value=Path("orbit.png")),
+                  patch.object(studio, "run_ffmpeg_render",
+                               side_effect=[timed_out, subprocess.CompletedProcess(
+                                   ["ffmpeg"], 0)]) as run,
+                  patch.dict(studio.JOB, {"notes": []})):
+                studio.render(
+                    Path("circle.mp4"), Path("background.png"),
+                    Path(folder) / "output.mp4",
+                    studio.RenderDesign(
+                        visual_template="pulse_ring", quality_preset="maximum",
+                        render_speed="original", smooth_motion=True,
+                        banner_enabled=True, timecode_enabled=False,
+                    ), banner,
+                )
+                self.assertEqual(run.call_count, 2)
+                second = run.call_args.args[0]
+                graph = second[second.index("-filter_complex") + 1]
+                self.assertIn("[orbit_ring]", graph)
+                self.assertIn("[banner]", graph)
+                self.assertIn("fps=30", graph)
+                self.assertNotIn("minterpolate=", graph)
+                self.assertIn("-preset", second)
+                self.assertEqual(second[second.index("-preset") + 1], "veryfast")
+                self.assertTrue(studio.JOB["notes"])
+
+    def test_stop_endpoint_terminates_only_active_ffmpeg(self):
+        from unittest.mock import MagicMock
+        process = MagicMock()
+        process.poll.return_value = None
+        old = studio.STOP_REQUESTED
+        try:
+            studio.STOP_REQUESTED = False
+            with (patch.object(studio, "ACTIVE_RENDER_PROCESS", process),
+                  patch.dict(studio.JOB, {"status": "running", "stopping": False})):
+                result = studio.stop_render()
+                self.assertTrue(result["stopping"])
+                self.assertTrue(studio.STOP_REQUESTED)
+                process.terminate.assert_called_once()
+        finally:
+            studio.STOP_REQUESTED = old
+
+    def test_ffmpeg_timeout_kills_child_and_releases_reference(self):
+        from unittest.mock import MagicMock
+        process = MagicMock()
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(["ffmpeg"], 1),
+            ("", "timeout"),
+        ]
+        with patch.object(studio.subprocess, "Popen", return_value=process):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                studio.run_ffmpeg_render(["ffmpeg"], timeout=1)
+        process.kill.assert_called_once()
+        self.assertIsNone(studio.ACTIVE_RENDER_PROCESS)
+
+
 class TelegramTemplateRenderFallbackTests(unittest.TestCase):
     def test_optical_flow_failure_retries_same_template_with_banner_and_fps(self):
         with tempfile.TemporaryDirectory() as folder:
