@@ -347,13 +347,21 @@ def banner_overlay_filter(
     delayed = design.visual_template != "classic"
     fade_start = f"{SECOND_TEMPLATE_INTRO_START:.2f}" if delayed else "0"
     fade_duration = f"{SECOND_TEMPLATE_FADE_SECONDS:.2f}" if delayed else "0.30"
+    # For 4K output, upscale the *base* first and overlay the banner at
+    # its 4K size directly from the original pixels. Upscaling a finished
+    # 1080p composite would unnecessarily destroy fine banner text.
+    hi_res = design.export_resolution == 2160
+    factor = 2 if hi_res else 1
+    preface = ("[composite]scale=2160:3840:flags=lanczos[composite_hi];"
+               if hi_res else "")
+    base = "composite_hi" if hi_res else "composite"
     return (
+        preface +
         f"[{banner_input_index}:v]format=rgba,{banner_key}"
-        f"scale={design.banner_width}:-1:flags=lanczos,format=rgba,"
+        f"scale={design.banner_width * factor}:-1:flags=lanczos,format=rgba,"
         f"fade=t=in:st={fade_start}:d={fade_duration}:alpha=1[banner];"
-        f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
-        f"format=auto:shortest=1,fps={fps},"
-        f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
+        f"[{base}][banner]overlay={design.banner_x * factor}:"
+        f"{design.banner_y * factor}:format=auto:shortest=1,fps={fps},"
         "format=yuv420p[v]"
     )
 
