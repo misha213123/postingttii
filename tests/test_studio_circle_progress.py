@@ -72,7 +72,7 @@ class StyledCircleTests(unittest.TestCase):
             {"circle_border_color": "x;movie=evil"},
             {"progress_width": 0},
             {"timecode_font_size": 1000},
-            {"output_fps": 120},
+            {"output_fps": 121},
         ):
             with self.subTest(update=update), self.assertRaises(ValidationError):
                 studio.RenderDesign(**update)
@@ -90,7 +90,8 @@ class StyledCircleTests(unittest.TestCase):
                           Path("render.mp4"), design, Path("banner.png"))
         args = call.call_args.args[0]
         graph = args[args.index("-filter_complex") + 1]
-        self.assertIn("[2:v]scale=540:-1", graph)
+        self.assertIn("[2:v]format=rgba,colorkey=", graph)
+        self.assertIn("scale=540:-1", graph)
         self.assertIn("fade=t=in:st=0:d=0.30:alpha=1", graph)
         self.assertIn("fps=60", graph)
 

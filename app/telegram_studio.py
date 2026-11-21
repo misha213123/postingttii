@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from datetime import date
 from io import BytesIO
+from fractions import Fraction
 from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -167,7 +168,8 @@ class RenderDesign(BaseModel):
     timecode_x: int = Field(default=445, ge=0, le=1080)
     timecode_y: int = Field(default=1220, ge=0, le=1920)
     timecode_font_size: int = Field(default=32, ge=18, le=64)
-    output_fps: Literal[30, 60] = 60
+    output_fps: Literal[30, 60, 120] = 60
+    source_max_fps: bool = True  # Match the highest native video FPS (up to 120).
     smooth_motion: bool = False
     quality_preset: Literal["standard", "enhanced", "maximum"] = "enhanced"
     export_resolution: Literal[1080, 2160] = 1080
@@ -180,8 +182,9 @@ class RenderDesign(BaseModel):
     background_name: str = ""
     chromakey_enabled: bool = True
     chromakey_version: int = 1
+    chromakey_mode: Literal["standard", "advanced"] = "advanced"
     chromakey_color: str = Field(default="#00ff00", pattern=r"^#[0-9A-Fa-f]{6}$")
-    chromakey_similarity: float = Field(default=0.10, ge=0.01, le=1.0)
+    chromakey_similarity: float = Field(default=0.22, ge=0.01, le=1.0)
     chromakey_blend: float = Field(default=0.07, ge=0.0, le=1.0)
     banner_enabled: bool = False
     # Negative coordinates deliberately allow moving the ad outside the
@@ -269,8 +272,8 @@ def h264_quality_args(quality_preset: str, *, standard_crf: str = "18") -> list[
     # efficiency and is extremely costly for short 60fps Reels on Windows.
     # Medium keeps the same CRF quality at the cost of somewhat larger files.
     if quality_preset == "maximum":
-        return ["-preset", "medium", "-crf", "16",
-                "-maxrate", "16M", "-bufsize", "32M"]
+        # Do not constrain bitrate: a hard VBV ceiling can damage a detailed banner.
+        return ["-preset", "medium", "-crf", "14"]
     if quality_preset == "enhanced":
         return ["-preset", "fast", "-crf", "17",
                 "-maxrate", "14M", "-bufsize", "28M"]
@@ -286,7 +289,7 @@ def render_performance(design: RenderDesign) -> dict:
     """
     # Maximum quality must not silently turn into standard 30 FPS in quiet mode.
     if design.quality_preset == "maximum":
-        return dict(fps=60, motion=design.smooth_motion,
+        return dict(fps=max(60, design.output_fps), motion=design.smooth_motion,
                     quality="maximum", filter_threads=4, video_threads=4,
                     encoder=h264_quality_args("maximum"))
     if design.render_speed == "quiet":
@@ -304,33 +307,119 @@ def render_performance(design: RenderDesign) -> dict:
                 encoder=h264_quality_args(design.quality_preset))
 
 
-def banner_overlay_filter(design: RenderDesign, banner_input_index: int) -> str:
-    """Composite a video or image banner with 60/30fps and gentle fade-in.
+def effective_chroma_similarity(design: RenderDesign) -> float:
+    """Compression-safe RGB threshold; manual settings above the floor win."""
+    return (max(0.22, design.chromakey_similarity)
+            if design.chromakey_mode == "advanced" else design.chromakey_similarity)
 
-    Chroma key applies only to the banner, never to the circular media.
+
+def banner_overlay_filter(
+    design: RenderDesign, banner_input_index: int, fps: int | None = None,
+) -> str:
+    """Key at original banner resolution, then scale and composite.
+
+    Crucially there is no FPS conversion, denoising or sharpening on the
+    banner input. FFmpeg's overlay synchronizes its native timestamps to
+    the output timeline. This avoids discarding frames before keying and
+    prevents the global cleanup from blurring banner text and logos.
     """
-    banner_key = (
-        f"colorkey=0x{design.chromakey_color[1:]}:"
-        f"{design.chromakey_similarity:.3f}:{design.chromakey_blend:.3f},"
-        if design.chromakey_enabled else ""
-    )
-    performance = render_performance(design)
-    fps = performance["fps"]
-    # Classic keeps its original transition; the second style first shows
-    # ONLY the background and then reveals the banner with the circle.
+    fps = fps or render_performance(design)["fps"]
+    banner_key = ""
+    if design.chromakey_enabled:
+        banner_key = (
+            f"colorkey=0x{design.chromakey_color[1:]}:"
+            f"{effective_chroma_similarity(design):.3f}:"
+            f"{design.chromakey_blend:.3f},"
+        )
+        if design.chromakey_mode == "advanced":
+            rgb = tuple(int(design.chromakey_color[i:i+2], 16)
+                        for i in (1, 3, 5))
+            # Despill removes reflected green/blue halos without touching
+            # unrelated hues. For red/neutral keys only clean the matte.
+            spill = ("green" if rgb[1] > rgb[0] * 1.15 and rgb[1] > rgb[2] * 1.15
+                     else "blue" if rgb[2] > rgb[0] * 1.15 and rgb[2] > rgb[1] * 1.15
+                     else None)
+            if spill:
+                banner_key += f"despill=type={spill}:mix=0.60:expand=0.08,"
+            # Blur only alpha, not RGB. This softens jagged chroma edges
+            # without degrading banner text, color, detail or frame timing.
+            banner_key += "boxblur=lr=0:lp=0:cr=0:cp=0:ar=1:ap=1,"
     delayed = design.visual_template != "classic"
     fade_start = f"{SECOND_TEMPLATE_INTRO_START:.2f}" if delayed else "0"
     fade_duration = f"{SECOND_TEMPLATE_FADE_SECONDS:.2f}" if delayed else "0.30"
+    # For 4K output, upscale the *base* first and overlay the banner at
+    # its 4K size directly from the original pixels. Upscaling a finished
+    # 1080p composite would unnecessarily destroy fine banner text.
+    hi_res = design.export_resolution == 2160
+    factor = 2 if hi_res else 1
+    preface = ("[composite]scale=2160:3840:flags=lanczos[composite_hi];"
+               if hi_res else "")
+    base = "composite_hi" if hi_res else "composite"
     return (
-        f"[{banner_input_index}:v]scale={design.banner_width}:-1:flags=lanczos,"
-        f"fps={fps},format=rgba,{banner_key}format=rgba,"
+        preface +
+        f"[{banner_input_index}:v]format=rgba,{banner_key}"
+        f"scale={design.banner_width * factor}:-1:flags=lanczos,format=rgba,"
         f"fade=t=in:st={fade_start}:d={fade_duration}:alpha=1[banner];"
-        f"[composite][banner]overlay={design.banner_x}:{design.banner_y}:"
-        f"format=auto:shortest=1,fps={fps},"
-        f"{quality_filter_segment(performance['quality'], design.denoise_strength, design.sharpening_strength)}"
-        f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
+        f"[{base}][banner]overlay={design.banner_x * factor}:"
+        f"{design.banner_y * factor}:format=auto:shortest=1,fps={fps},"
         "format=yuv420p[v]"
     )
+
+
+def video_frame_rate(path: Path) -> float | None:
+    """Read native FPS without decoding or rewriting the original video."""
+    if not path.is_file() or path.suffix.lower() not in {".mp4", ".webm", ".mov", ".mkv"}:
+        return None
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=avg_frame_rate,r_frame_rate",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, check=True, timeout=15,
+        )
+        streams = json.loads(result.stdout).get("streams", [])
+        for key in ("avg_frame_rate", "r_frame_rate"):
+            if streams and streams[0].get(key):
+                try:
+                    fps = float(Fraction(streams[0][key]))
+                except (ValueError, ZeroDivisionError, TypeError):
+                    continue  # WebM often reports avg_frame_rate=0/0.
+                if 1 <= fps <= 480:
+                    return fps
+    except (OSError, ValueError, TypeError, ZeroDivisionError,
+            subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def render_frame_rate(
+    design: RenderDesign, performance: dict, source: Path, bg: Path,
+    banner: Path | None,
+) -> tuple[int, dict[str, float | None]]:
+    """Avoid downsampling any native video layer when practical (max 120fps).
+
+    A single CFR MP4 cannot retain separate per-layer FPS metadata. Each
+    native banner frame is still used on its original timeline; if the
+    composite FPS is higher, frames are held, not interpolated or altered.
+    """
+    native = {
+        "circle": video_frame_rate(source),
+        "background": None if is_image_background(bg) else video_frame_rate(bg),
+        "banner": (video_frame_rate(banner) if banner and design.banner_enabled else None),
+    }
+    target = performance["fps"]
+    if design.source_max_fps:
+        considered = (native.values() if performance["quality"] == "maximum"
+                      else (native["banner"],))
+        valid = [rate for rate in considered if rate is not None]
+        if valid:
+            target = max(target, math.ceil(max(valid) - 0.01))
+    if target > 120:
+        JOB.setdefault("notes", []).append(
+            "Частота исходника выше 120 FPS: экспорт ограничен 120 FPS "
+            "ради совместимости MP4; оригиналы не изменяются."
+        )
+    return min(120, target), native
 
 
 def current_banner(data=None) -> Path | None:
@@ -1123,17 +1212,28 @@ def render(
     x = max(0, min(design.circle_x, 1080 - size))
     y = max(0, min(design.circle_y, 1920 - size))
     performance = render_performance(design)
-    fps = performance["fps"]
+    if design.banner_enabled and (not banner or not banner.is_file()):
+        raise ValueError("Включён рекламный баннер, но файл не загружен")
+    fps, native = render_frame_rate(design, performance, source, bg, banner)
 
-    # Optional optical-flow interpolation is considerably slower, but creates
-    # genuinely new frames rather than duplicating 30fps source frames.
-    motion = (
-        "minterpolate=fps=60:mi_mode=mci:mc_mode=obmc:me_mode=bidir,"
-        if fps == 60 and performance["motion"] else f"fps={fps},"
+    # Optical flow is applied only when increasing FPS. Do not interpolate
+    # an already high-frame-rate circle, and never interpolate banner frames.
+    def motion_filter(native_fps: float | None) -> str:
+        if performance["motion"] and fps >= 60 and (native_fps is None or native_fps < fps - 0.5):
+            return (f"minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc:"
+                    "me_mode=bidir:scd=fdiff:scd_threshold=10,")
+        return f"fps={fps},"
+
+    motion = motion_filter(native["circle"])
+    background_motion = (f"fps={fps}," if is_image_background(bg)
+                         else motion_filter(native["background"]))
+    source_cleanup = quality_filter_segment(
+        performance["quality"], design.denoise_strength, design.sharpening_strength
     )
     circle_filter = (
         f"[0:v]{motion}scale={size}:{size}:force_original_aspect_ratio=increase:"
-        f"flags=lanczos,crop={inside}:{inside}:{border}:{border},format=rgba,"
+        f"flags=lanczos,crop={inside}:{inside}:{border}:{border},"
+        f"{source_cleanup}format=rgba,"
         "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
         f"a='if(lte((X-{radius})*(X-{radius})+(Y-{radius})*(Y-{radius}),"
         f"{radius*radius}),alpha(X,Y),0)'[inside];"
@@ -1146,8 +1246,9 @@ def render(
         f"[ring][inside]overlay={border}:{border}:shortest=1:format=auto[circle];"
     )
     bg_filter = (
-        "[1:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop=1080:1920,setsar=1,fps={fps}[bg];"
+        f"[1:v]{background_motion}"
+        "scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,"
+        "crop=1080:1920,setsar=1[bg];"
     )
     orbit = design.visual_template != "classic"
     if orbit:
@@ -1255,14 +1356,11 @@ def render(
         cmd += ["-loop", "1", "-framerate", str(fps), "-i", str(orbit_asset)]
 
     if design.banner_enabled:
-        if not banner or not banner.is_file():
-            raise ValueError("Включён рекламный баннер, но файл не загружен")
         cmd += banner_input_args(banner)
-        filter_chain += banner_overlay_filter(design, 3 if orbit else 2)
+        filter_chain += banner_overlay_filter(design, 3 if orbit else 2, fps)
     else:
         filter_chain += (
             f"[composite]fps={fps},"
-            f"{quality_filter_segment(performance['quality'], design.denoise_strength, design.sharpening_strength)}"
             f"{'scale=2160:3840:flags=lanczos,' if design.export_resolution == 2160 else ''}"
             "format=yuv420p[v]"
         )
@@ -1278,7 +1376,7 @@ def render(
         *(["-threads", str(performance["video_threads"])]
           if performance["video_threads"] is not None else []),
         "-profile:v", "high", "-level:v",
-        "5.2" if design.export_resolution == 2160 else ("5.1" if fps == 60 else "4.2"),
+        ("6.0" if fps > 60 else "5.2") if design.export_resolution == 2160 else ("5.2" if fps > 60 else ("5.1" if fps == 60 else "4.2")),
         "-pix_fmt", "yuv420p",
         "-color_primaries", "bt709", "-color_trc", "bt709",
         "-colorspace", "bt709",

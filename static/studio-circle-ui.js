@@ -9,7 +9,7 @@
     progress_enabled:true,progress_style:'classic',progress_x:310,progress_y:1190,
     progress_width:460,progress_height:9,
     timecode_enabled:true,timecode_x:445,timecode_y:1220,
-    timecode_font_size:32,output_fps:60,smooth_motion:false,render_speed:'quiet'
+    timecode_font_size:32,output_fps:60,source_max_fps:true,smooth_motion:false,render_speed:'quiet'
   };
   for(const key in defaults)if(designState[key]===undefined)designState[key]=defaults[key];
   const controls=document.createElement('div');
@@ -139,14 +139,32 @@
   });
   const fpsRow=document.createElement('label'),fps=document.createElement('select');
   fpsRow.textContent='Частота кадров MP4';
-  for(const n of [30,60]){
+  for(const n of [30,60,120]){
     const opt=document.createElement('option');opt.value=String(n);opt.textContent=n+' FPS';fps.append(opt);
   }
   fps.value=String(designState.output_fps);fpsRow.append(fps);controls.append(fpsRow);
   fps.addEventListener('change',()=>{designState.output_fps=Number(fps.value);saveRenderDesign();});
-  checkbox('Интерполяция движения (медленный рендер)','smooth_motion');
+  checkbox('Авто FPS: сохранить все исходные кадры баннера (до 120 FPS)','source_max_fps');
+  checkbox('Оптическая интерполяция кружка и видеофона','smooth_motion');
+  const ultra=document.createElement('button');
+  ultra.type='button';ultra.id='studioUltraQuality';
+  ultra.textContent='🚀 Максимум: улучшить кружок + плавность + исходный FPS баннера';
+  ultra.className='studio-ultra-quality';
+  controls.append(ultra);
+  ultra.addEventListener('click',()=>{
+    Object.assign(designState,{
+      quality_preset:'maximum',render_speed:'original',output_fps:60,
+      source_max_fps:true,smooth_motion:true,chromakey_mode:'advanced',
+      chromakey_enabled:true,
+    });
+    const preset=document.getElementById('tgQualityPreset');
+    if(preset)preset.value='maximum';
+    const chroma=document.getElementById('chromaAdvanced');
+    if(chroma)chroma.checked=true;
+    updateDesignPreview();saveRenderDesign();
+  });
   const tip=document.createElement('span');
-  tip.className='hint';tip.textContent='Выбери «Скрыть полностью» — в готовом MP4 полосы не будет. Перетаскивай видимую полоску в миниатюре; белый квадрат — только маркер редактирования, в видео его нет. 60 FPS — вывод, интерполяция — создание дополнительных кадров.';
+  tip.className='hint';tip.textContent='Кнопка «Максимум» включает CRF 14, оптическое создание промежуточных кадров кружка и видеофона, авто FPS до 120 и усиленный хромакей. Видео-баннер не интерполируется: его исходные кадры сохраняются, дополнительные кадры удерживаются. Это медленный рендер и большой MP4; из плохого источника нельзя восстановить несуществующие детали.';
   controls.append(tip);
   scale.closest('.design-field').insertAdjacentElement('afterend',controls);
 
@@ -225,7 +243,7 @@
     fps.disabled=quiet;
     checks.smooth_motion.disabled=speed.value!=='original'&&state.quality_preset!=='maximum';
     speedHint.textContent=state.quality_preset==='maximum'?
-      'Максимальное качество: 60 FPS, очистка шума и H.264 CRF 16. Рендер медленнее; новые кадры создаются при включённой интерполяции.':
+      'Максимум: H.264 CRF 14 без ограничения битрейта, очистка шума и резкость только на кружке, авто 60–120 FPS. Оптическая интерполяция создаёт промежуточные кадры при включённой галочке. Видео-баннер не размывается фильтрами.':
       quiet?
       'Эффективно 30 FPS, H.264 veryfast, без тяжёлых фильтров и интерполяции. '+
       'Размер 1080×1920, фон, кружок, обводка, прогресс и баннер сохраняются.':

@@ -78,3 +78,13 @@
 @keyframes studioBarPulse{50%{opacity:.5}}
 .studio-progress-edit[hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){.studio-progress-style-pulse .studio-progress-fill{animation:none}}
+
+/* One-click quality preset is intentionally visible in the editor. */
+.studio-effects-panel .studio-ultra-quality{
+  display:block;width:100%;margin:9px 0;padding:11px 12px;
+  border-radius:10px;border:1px solid #6be0ff;
+  background:linear-gradient(110deg,#123044,#24475b);
+  color:#f5fbff;font-weight:700;text-align:center;cursor:pointer;
+  white-space:normal;line-height:1.4;
+}
+.studio-effects-panel .studio-ultra-quality:hover{background:#245672}

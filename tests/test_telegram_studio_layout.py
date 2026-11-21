@@ -39,7 +39,7 @@ class TelegramRingAndQualityTests(unittest.TestCase):
         performance = studio.render_performance(design)
         self.assertEqual(performance["fps"], 60)
         self.assertEqual(performance["quality"], "maximum")
-        self.assertIn("16", performance["encoder"])
+        self.assertIn("14", performance["encoder"])
 
     def test_old_banner_chromakey_migrates_but_manual_off_is_preserved(self):
         old = {"banner_file": "old.png", "render_design": {
@@ -88,6 +88,112 @@ class TelegramRingAndQualityTests(unittest.TestCase):
     def test_chromakey_is_enabled_by_default(self):
         design = studio.RenderDesign()
         self.assertTrue(design.chromakey_enabled)
+
+
+class TelegramUltraRenderSettingsTests(unittest.TestCase):
+    def test_advanced_green_blue_and_neutral_chroma_preserve_banner_fps(self):
+        for color, spill in (("#00ff00", "green"), ("#1474ef", "blue"),
+                             ("#ffffff", None)):
+            with self.subTest(color=color):
+                design = studio.RenderDesign(
+                    banner_enabled=True, chromakey_enabled=True,
+                    chromakey_color=color, chromakey_similarity=.10,
+                    chromakey_mode="advanced", quality_preset="maximum",
+                )
+                graph = studio.banner_overlay_filter(design, 2, 90)
+                self.assertIn(f"colorkey=0x{color[1:]}:0.220", graph)
+                self.assertIn("boxblur=lr=0:lp=0:cr=0:cp=0:ar=1:ap=1", graph)
+                self.assertIn("[2:v]format=rgba,", graph)
+                self.assertNotIn("[2:v]fps=", graph)
+                self.assertNotIn("hqdn3d", graph)
+                self.assertNotIn("unsharp", graph)
+                self.assertIn("fps=90", graph)
+                if spill:
+                    self.assertIn(f"despill=type={spill}", graph)
+                else:
+                    self.assertNotIn("despill=", graph)
+
+    def test_4k_banner_is_overlaid_at_full_export_resolution(self):
+        design = studio.RenderDesign(
+            banner_enabled=True, banner_width=540,
+            banner_x=270, banner_y=1550, export_resolution=2160,
+        )
+        graph = studio.banner_overlay_filter(design, 2, 60)
+        self.assertIn("[composite]scale=2160:3840:flags=lanczos[composite_hi]", graph)
+        self.assertIn("scale=1080:-1:flags=lanczos", graph)
+        self.assertIn("[composite_hi][banner]overlay=540:3100", graph)
+        self.assertNotIn("fps=60,scale=2160", graph)
+
+    def test_standard_key_is_still_available(self):
+        d = studio.RenderDesign(chromakey_mode="standard",
+                                chromakey_similarity=.10)
+        graph = studio.banner_overlay_filter(d, 2)
+        self.assertIn("colorkey=0x00ff00:0.100:0.070", graph)
+        self.assertNotIn("despill=", graph)
+        self.assertNotIn("boxblur=", graph)
+
+    def test_maximum_matches_native_source_fps_without_downsampling(self):
+        design = studio.RenderDesign(quality_preset="maximum",
+                                     output_fps=60, source_max_fps=True)
+        with patch.object(studio, "video_frame_rate",
+                          side_effect=[30.0, 24.0, 90.0]):
+            fps, native = studio.render_frame_rate(
+                design.model_copy(update={"banner_enabled": True}),
+                studio.render_performance(design),
+                Path("circle.mp4"), Path("bg.mp4"), Path("banner.mp4"),
+            )
+        self.assertEqual(fps, 90)
+        self.assertEqual(native["banner"], 90)
+        self.assertEqual(native["circle"], 30)
+
+    def test_high_fps_banner_is_kept_even_in_quiet_mode(self):
+        design = studio.RenderDesign(banner_enabled=True, quality_preset="standard",
+                                     render_speed="quiet", source_max_fps=True)
+        with patch.object(studio, "video_frame_rate",
+                          side_effect=[30.0, 30.0, 120.0]):
+            fps, _ = studio.render_frame_rate(
+                design, studio.render_performance(design),
+                Path("circle.mp4"), Path("bg.mp4"), Path("banner.mp4"),
+            )
+        self.assertEqual(fps, 120)
+
+    def test_120fps_is_capped_and_4k_h264_level_is_sufficient(self):
+        d = studio.RenderDesign(quality_preset="maximum",
+                                export_resolution=2160, output_fps=120,
+                                smooth_motion=False)
+        with (patch.object(studio, "duration", side_effect=[1.0, 2.0]),
+              patch.object(studio, "video_frame_rate", return_value=120.0),
+              patch.object(studio.subprocess, "run") as run):
+            studio.render(Path("circle.mp4"), Path("bg.mp4"),
+                          Path("out.mp4"), d)
+        args = run.call_args.args[0]
+        self.assertEqual(args[args.index("-level:v")+1], "6.0")
+        graph = args[args.index("-filter_complex")+1]
+        self.assertIn("fps=120", graph)
+        self.assertNotIn("minterpolate", graph)
+
+    def test_circle_cleanup_precedes_composite_and_never_blurs_banner(self):
+        with tempfile.TemporaryDirectory() as folder:
+            banner = Path(folder) / "ad.png"
+            banner.write_bytes(b"placeholder")
+            with (patch.object(studio, "duration", side_effect=[1.0, 2.0]),
+                  patch.object(studio.subprocess, "run") as run):
+                studio.render(Path("circle.mp4"), Path("bg.mp4"),
+                              Path("out.mp4"), studio.RenderDesign(
+                                  quality_preset="maximum", smooth_motion=False,
+                                  banner_enabled=True), banner)
+            args = run.call_args.args[0]
+            graph = args[args.index("-filter_complex")+1]
+            self.assertIn("hqdn3d", graph.split("[inside];")[0])
+            self.assertNotIn("hqdn3d", graph.split("[composite];")[1])
+            self.assertNotIn("unsharp", graph.split("[composite];")[1])
+
+    def test_browser_exposes_one_click_maximum_and_auto_fps(self):
+        js = (Path(__file__).resolve().parents[1] /
+              "static/studio-circle-ui.js").read_text(encoding="utf-8")
+        self.assertIn("studioUltraQuality", js)
+        self.assertIn("source_max_fps", js)
+        self.assertIn("[30,60,120]", js)
 
 
 class TelegramProgressStyleTests(unittest.TestCase):
@@ -239,7 +345,7 @@ class TelegramRenderDesignTests(unittest.TestCase):
     def test_default_green_still_applies_for_old_saved_designs(self):
         older = studio.RenderDesign.model_validate({"chromakey_enabled": True})
         self.assertEqual(older.chromakey_color, "#00ff00")
-        self.assertEqual(older.chromakey_similarity, .10)
+        self.assertEqual(older.chromakey_similarity, .22)
         self.assertEqual(older.chromakey_blend, .07)
 
     def test_rejects_invalid_colors_and_ffmpeg_filter_injection(self):
@@ -308,8 +414,8 @@ class TelegramRenderDesignTests(unittest.TestCase):
                 )
             args = run.call_args.args[0]
             graph = args[args.index("-filter_complex") + 1]
-            self.assertIn("[2:v]scale=", graph)
-            self.assertIn("colorkey=0x1a4cdd:0.100:0.070,", graph)
+            self.assertIn("[2:v]format=rgba,", graph)
+            self.assertIn("colorkey=0x1a4cdd:0.220:0.070,", graph)
             self.assertNotIn("colorkey=", graph.split("[circle];")[0])
             self.assertIn("-loop", args)
 
@@ -524,6 +630,40 @@ class TelegramProgressStyleRenderIntegrationTests(unittest.TestCase):
                                       render_speed="quiet", quality_preset="standard"))
                     self.assertTrue(target.is_file())
                     self.assertGreater(target.stat().st_size, 1000)
+
+
+class TelegramNativeBannerFpsRenderIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                         "FFmpeg and FFprobe required")
+    def test_video_banner_90fps_is_preserved_in_90fps_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source, banner = root / "circle.mp4", root / "banner.mp4"
+            bg, output = root / "bg.png", root / "out.mp4"
+            Image.new("RGB", (1080, 1920), (30, 80, 150)).save(bg)
+            for target, rate, color in ((source, 30, "black"),
+                                        (banner, 90, "green")):
+                subprocess.run([
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi", "-i",
+                    f"color=c={color}:s=160x160:r={rate}:d=0.4",
+                    "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    str(target),
+                ], check=True, capture_output=True)
+            design = studio.RenderDesign(
+                banner_enabled=True, banner_width=220,
+                banner_x=30, banner_y=1400,
+                chromakey_enabled=True, chromakey_mode="advanced",
+                quality_preset="standard", render_speed="quiet",
+                smooth_motion=False, source_max_fps=True,
+                timecode_enabled=False,
+            )
+            studio.render(source, bg, output, design, banner)
+            self.assertTrue(output.is_file())
+            self.assertGreater(output.stat().st_size, 1000)
+            rate = studio.video_frame_rate(output)
+            self.assertIsNotNone(rate)
+            self.assertAlmostEqual(rate, 90, delta=.1)
 
 
 class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):

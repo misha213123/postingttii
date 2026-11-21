@@ -66,7 +66,7 @@
 
 .bg-thumbnail{width:120px;height:150px;object-fit:cover;border-radius:10px;flex-shrink:0}
 
-</style><link rel="stylesheet" href="/static/studio-circle-ui.css?v=20261121-progress-v1"></head><body><main>
+</style><link rel="stylesheet" href="/static/studio-circle-ui.css?v=20261121-ultra-v1"></head><body><main>
 <header><div><a href="/">← Вернуться к PostingTTII</a><h1>◉ Telegram Studio</h1><div class="muted">Кружки Telegram → случайный фон → готовые Reels</div><p style="margin:8px 0 0"><a href="/viral-reels-pro" style="color:#9dd3ff;font-weight:750">★ Шаблон №3 · Viral Reels Pro — отдельный монтаж и экспорт A/B/C</a></p></div><span class="pill" id="health">Проверка системы...</span></header>
 <div class="layout">
 <section class="card"><h2>01 / Источники: Telegram + Instagram</h2><p class="muted">Telegram-каналы и Instagram-аккаунты в одном списке. Каждый источник можно включать и отключать.</p>
@@ -135,18 +135,19 @@
     <div class="design-field"><label for="bannerFile">Баннер (PNG, JPG, WEBP, MP4 или WebM)</label><input id="bannerFile" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></div>
     <div class="chroma-panel">
       <label class="design-check"><input type="checkbox" id="chromakeyEnabled">Удалять фон рекламного баннера (хромакей)</label>
+      <label class="design-check"><input type="checkbox" id="chromaAdvanced" checked>Усиленный хромакей — очистка зелёных/синих ореолов и краёв</label>
       <div class="editor-subtitle">Удаление цвета на изображении или видео-баннере</div>
       <div class="chroma-controls">
         <button id="chromaPickButton" type="button" onclick="toggleChromaPicker()" aria-pressed="false">◉ Пипетка — выбрать на баннере</button>
         <input id="chromaColor" type="color" value="#00ff00" aria-label="Выбрать цвет вручную">
         <code id="chromaColorHex">#00FF00</code>
       </div>
-      <div class="design-field"><label for="chromaSimilarity">Чувствительность: <span id="chromaSimilarityValue">20</span>%</label>
-        <input id="chromaSimilarity" type="range" min="1" max="100" step="1" value="20"></div>
+      <div class="design-field"><label for="chromaSimilarity">Чувствительность: <span id="chromaSimilarityValue">22</span>%</label>
+        <input id="chromaSimilarity" type="range" min="1" max="100" step="1" value="22"></div>
       <div class="design-field"><label for="chromaBlend">Мягкость краёв: <span id="chromaBlendValue">7</span>%</label>
         <input id="chromaBlend" type="range" min="0" max="100" step="1" value="7"></div>
       <span class="editor-note" id="chromaPickStatus" aria-live="polite">Загрузи рекламный баннер, нажми «Пипетка», затем кликни по цвету фона на баннере. Telegram-кружок останется без изменений.</span>
-      <span class="editor-note">Удаление выполняется только на рекламном баннере. Предпросмотр приблизительный; точный результат рассчитывает FFmpeg. Высокая чувствительность удаляет также похожие цвета.</span>
+      <span class="editor-note">Усиленный режим удаляет фон на исходном разрешении баннера, очищает цветные ореолы и мягко обрабатывает только прозрачность краёв. Цвета и резкость текста баннера не фильтруются. В усиленном режиме минимальная эффективная чувствительность — 22%. Предпросмотр приблизительный; результат FFmpeg может отличаться. При слишком высокой чувствительности исчезают похожие цвета.</span>
     </div>
     <span class="muted">Видео-баннер зацикливается до конца ролика. Его звук не добавляется.</span>
     <div class="design-field"><label for="bannerScale">Ширина баннера: <span id="bannerScaleValue">540</span> px</label>
@@ -260,8 +261,8 @@ function notify(e){alert(e.message||String(e))}
 const designState={
   circle_size:1040,circle_x:20,circle_y:90,
   background_mode:'shuffle',background_name:'',
-  chromakey_enabled:true,chromakey_color:'#00ff00',
-  chromakey_similarity:.10,chromakey_blend:.07,banner_enabled:false,
+  chromakey_enabled:true,chromakey_mode:'advanced',chromakey_color:'#00ff00',
+  chromakey_similarity:.22,chromakey_blend:.07,banner_enabled:false,
   banner_x:270,banner_y:1550,banner_width:540,quality_preset:'enhanced',export_resolution:1080,denoise_strength:1,sharpening_strength:.5
 };
 let bannerAvailable=false,bannerKind='image',bannerRatio=.25,designSaveQueue=Promise.resolve(),sampleCircleLoaded=false;
@@ -365,7 +366,9 @@ function drawVideoBannerChroma(now){
     const pixels=ctx.getImageData(0,0,width,height);
     const key=designState.chromakey_color;
     const rgb=[1,3,5].map(j=>parseInt(key.slice(j,j+2),16));
-    const sim=designState.chromakey_similarity,blend=Math.max(.001,designState.chromakey_blend);
+    const sim=designState.chromakey_mode==='standard'
+      ?designState.chromakey_similarity:Math.max(.22,designState.chromakey_similarity);
+    const blend=Math.max(.001,designState.chromakey_blend);
     for(let i=0;i<pixels.data.length;i+=4){
       const distance=Math.hypot(pixels.data[i]-rgb[0],pixels.data[i+1]-rgb[1],pixels.data[i+2]-rgb[2])/(255*Math.sqrt(3));
       pixels.data[i+3]=Math.round(pixels.data[i+3]*Math.max(0,Math.min(1,(distance-sim)/blend)));
@@ -459,6 +462,7 @@ function updateDesignPreview(){
   el('bannerScale').value=designState.banner_width;
   el('circleScale').value=size;
   el('chromakeyEnabled').checked=designState.chromakey_enabled;
+  el('chromaAdvanced').checked=(designState.chromakey_mode||'advanced')==='advanced';
   el('chromaColor').value=designState.chromakey_color;
   el('chromaColorHex').textContent=designState.chromakey_color.toUpperCase();
   el('chromaSimilarity').value=Math.round(designState.chromakey_similarity*100);
@@ -574,7 +578,8 @@ function drawChromaPreview(now){
     const pixels=frame.data;
     const color=designState.chromakey_color;
     const rgb=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16));
-    const threshold=designState.chromakey_similarity;
+    const threshold=designState.chromakey_mode==='standard'
+      ?designState.chromakey_similarity:Math.max(.22,designState.chromakey_similarity);
     const blend=Math.max(.001,designState.chromakey_blend);
     for(let i=0;i<pixels.length;i+=4){
       // Browser preview and FFmpeg render use the same RGB color-distance key; encoding may soften edges.
@@ -848,13 +853,18 @@ function initDesignControls(){
     if(e.target.value==='maximum'){
       designState.output_fps=60;
       designState.smooth_motion=true;
-      designState.render_speed='balanced';
+      designState.render_speed='original';
+      designState.source_max_fps=true;
     }
     updateDesignPreview();
     saveRenderDesign();
   });
   el('chromakeyEnabled').addEventListener('change',e=>{
     designState.chromakey_enabled=e.target.checked;updateDesignPreview();saveRenderDesign();
+  });
+  el('chromaAdvanced').addEventListener('change',e=>{
+    designState.chromakey_mode=e.target.checked?'advanced':'standard';
+    updateDesignPreview();saveRenderDesign();
   });
   el('chromaColor').addEventListener('input',e=>{
     designState.chromakey_color=e.target.value;
@@ -1372,4 +1382,4 @@ async function igRun(){try{await instagramLayoutSave;await designSaveQueue;await
 document.addEventListener('click',async e=>{if(e.target.dataset.igRemove){try{await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igRemove),{method:'DELETE'});await igRefresh()}catch(err){notify(err)}}});
 document.addEventListener('change',async e=>{try{if(e.target.dataset.tgToggle){await request('/channels/'+encodeURIComponent(e.target.dataset.tgToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await refresh()}if(e.target.dataset.igToggle){await igRequest('/accounts/'+encodeURIComponent(e.target.dataset.igToggle)+'/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})});await igRefresh()}}catch(err){notify(err);await refresh();await igRefresh()}});
 igRefresh();setInterval(igRefresh,2500);
-</script><script src="/static/studio-circle-ui.js?v=20261121-progress-v1"></script></body></html>
+</script><script src="/static/studio-circle-ui.js?v=20261121-ultra-chroma-v1"></script></body></html>
