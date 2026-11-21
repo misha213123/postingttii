@@ -162,7 +162,7 @@
       <select id="tgQualityPreset">
         <option value="standard">Стандартное — как раньше, быстрее</option>
         <option value="enhanced">Улучшенное — лёгкая очистка, чёткость и цвет</option>
-        <option value="maximum">Максимальное · 60 FPS · шумоподавление · CRF 16 (медленно)</option>
+        <option value="maximum">Максимальное · качественный H.264 · без медленной интерполяции</option>
       </select>
       <label for="tgExportResolution">Разрешение экспорта</label>
       <select id="tgExportResolution"><option value="1080">1080×1920 · Reels (рекомендуется)</option><option value="2160">2160×3840 · 4K UHD (медленно, апскейл)</option></select>
@@ -856,9 +856,9 @@ function initDesignControls(){
     designState.quality_preset=e.target.value;
     if(e.target.value==='maximum'){
       designState.output_fps=60;
-      designState.smooth_motion=true;
-      designState.render_speed='original';
-      designState.source_max_fps=true;
+      designState.smooth_motion=false;
+      designState.render_speed='balanced';
+      designState.source_max_fps=false;
     }
     updateDesignPreview();
     saveRenderDesign();
