@@ -7,6 +7,7 @@ on:
       - "feature/viral-pro-v3-*"
       - "fix/viral-pro-whisper-canvas-*"
       - "fix/telegram-studio-rgb-colorkey-*"
+      - "feature/telegram-studio-ultra-chroma-native-fps-*"
   pull_request:
     paths:
       - "app/viral_reels_pro.py"
