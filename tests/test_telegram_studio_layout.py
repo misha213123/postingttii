@@ -113,6 +113,17 @@ class TelegramUltraRenderSettingsTests(unittest.TestCase):
                 else:
                     self.assertNotIn("despill=", graph)
 
+    def test_4k_banner_is_overlaid_at_full_export_resolution(self):
+        design = studio.RenderDesign(
+            banner_enabled=True, banner_width=540,
+            banner_x=270, banner_y=1550, export_resolution=2160,
+        )
+        graph = studio.banner_overlay_filter(design, 2, 60)
+        self.assertIn("[composite]scale=2160:3840:flags=lanczos[composite_hi]", graph)
+        self.assertIn("scale=1080:-1:flags=lanczos", graph)
+        self.assertIn("[composite_hi][banner]overlay=540:3100", graph)
+        self.assertNotIn("fps=60,scale=2160", graph)
+
     def test_standard_key_is_still_available(self):
         d = studio.RenderDesign(chromakey_mode="standard",
                                 chromakey_similarity=.10)
