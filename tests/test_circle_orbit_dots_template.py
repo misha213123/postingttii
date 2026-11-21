@@ -106,7 +106,8 @@ class CircleFFmpegTests(unittest.TestCase):
             banner_enabled=True,
             timecode_enabled=False
         ), Path("banner.png"))
-        self.assertIn("[3:v]scale=", graph)
+        self.assertIn("[3:v]format=rgba,colorkey=", graph)
+        self.assertIn("scale=540:-1:flags=lanczos", graph)
         self.assertIn("[2:v]format=rgba,rotate=", graph)
         self.assertEqual(argv.count("banner.png"), 1)
         self.assertIn("fade=t=in:st=0.38:d=0.28:alpha=1[banner]", graph)
