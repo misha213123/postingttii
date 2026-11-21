@@ -750,6 +750,21 @@ def status():
             "ffmpeg_ready": bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))}
 
 
+@router.post("/stop")
+def stop_render():
+    """Stop only this studio's active FFmpeg process, not other video jobs."""
+    global STOP_REQUESTED
+    if JOB.get("status") != "running":
+        return {"stopping": False, "status": JOB.get("status")}
+    STOP_REQUESTED = True
+    JOB["stopping"] = True
+    with ACTIVE_RENDER_LOCK:
+        active = ACTIVE_RENDER_PROCESS
+        if active is not None and active.poll() is None:
+            active.terminate()
+    return {"stopping": True, "status": "stopping"}
+
+
 @router.post("/channels")
 def add_channel(body: ChannelInput):
     name = normalize(body.channel)
@@ -1576,7 +1591,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                   video_layout=None, video_banner: Path | None = None,
                   video_banner_design: RenderDesign | None = None,
                   force_rerender: bool = False):
-    JOB.update(status="running", total=0, done=0, errors=[], notes=[], media_mode=media_mode)
+    JOB.update(status="running", total=0, done=0, errors=[], notes=[],
+               stopping=False, current_file=None, current_started_at=None,
+               media_mode=media_mode)
     try:
         d = config()
         d.setdefault("processed", [])
@@ -1721,6 +1738,8 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                         save(d)
                         continue
                     # Render to a temporary file, publish only after ffprobe validates it.
+                    JOB["current_file"] = source.name
+                    JOB["current_started_at"] = time.time()
                     temp_target = target.with_name(target.stem + ".rendering.mp4")
                     try:
                         bg = next_background()
@@ -1759,6 +1778,11 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     }
                     save(d)
                     JOB["done"] += 1
+                except RenderStopped:
+                    JOB.setdefault("notes", []).append(
+                        "Рендер остановлен пользователем. Незавершённый MP4 удалён."
+                    )
+                    break
                 except Exception as exc:
                     # Keep the previous valid MP4 if a forced rebuild fails.
                     if not target_preexisting:
@@ -1766,6 +1790,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
                     # The error is shown in Telegram Studio, not just the
                     # shortened FFmpeg argument list.
                     JOB["errors"].append(f"{key}: {str(exc)[-1750:]}")
+                finally:
+                    JOB["current_file"] = None
+                    JOB["current_started_at"] = None
 
         JOB["status"] = "stopped" if STOP_REQUESTED else "done"
     except asyncio.CancelledError:
@@ -1775,6 +1802,9 @@ async def process(limit, order="oldest", date_from=None, date_to=None, *,
         JOB["status"] = "error"
         JOB["errors"].append(str(exc)[:300])
     finally:
+        JOB["current_file"] = None
+        JOB["current_started_at"] = None
+        JOB["stopping"] = False
         LOCK.release()
 
 
@@ -1842,6 +1872,10 @@ async def run(body: RenderRequest):
 async def shutdown_telegram_studio():
     global STOP_REQUESTED
     STOP_REQUESTED = True
+    with ACTIVE_RENDER_LOCK:
+        active = ACTIVE_RENDER_PROCESS
+        if active is not None and active.poll() is None:
+            active.terminate()
     if JOB_TASK is not None and not JOB_TASK.done():
         await JOB_TASK
     async with QR_LOCK:
