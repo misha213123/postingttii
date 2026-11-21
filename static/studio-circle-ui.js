@@ -121,6 +121,21 @@
   orbitLayer.className='studio-orbit-ring';
   orbitLayer.setAttribute('aria-hidden','true');
   stage.append(orbitLayer);
+  // Live approximation of the exported animated ring. The MP4 is drawn by
+  // FFmpeg; these CSS rings are only an interactive visual guide.
+  const ringStyles=document.createElement('style');
+  ringStyles.textContent=`
+    .studio-orbit-ring.studio-ring-orbit_arc {background:conic-gradient(transparent 0deg 185deg,#fff 195deg 310deg,transparent 325deg 360deg);border-radius:50%;animation:studioSpin 3s linear infinite;mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));}
+    .studio-orbit-ring.studio-ring-pulse_ring {background:none;border:3px solid white;border-radius:50%;animation:studioPulse 1.5s ease-in-out infinite;}
+    .studio-orbit-ring.studio-ring-double_orbit {background:conic-gradient(#fff 0 90deg,transparent 90deg 180deg,#fff 180deg 270deg,transparent 270deg);border-radius:50%;animation:studioSpin 5s linear infinite;mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));}
+    .studio-orbit-ring.studio-ring-dashed_spin {background:repeating-conic-gradient(#fff 0 12deg,transparent 12deg 30deg);border-radius:50%;animation:studioSpin 8s linear infinite;mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));}
+    .studio-orbit-ring.studio-ring-ripple {background:none;border:3px solid white;border-radius:50%;animation:studioRipple 1.7s ease-out infinite;}
+    @keyframes studioSpin {to{transform:rotate(360deg)}}
+    @keyframes studioPulse {50%{transform:scale(1.055);opacity:.45}}
+    @keyframes studioRipple {0%{transform:scale(.98);opacity:1}100%{transform:scale(1.09);opacity:.1}}
+  `;
+  document.head.append(ringStyles);
+
   const timecode=document.createElement('div');timecode.id='studioTimecodeDrag';
   timecode.className='studio-timecode-edit';timecode.title='Перетаскивай таймкод';
   stage.append(progress,timecode);
@@ -163,7 +178,7 @@
     speed.value=state.render_speed||'quiet';
     const quiet=speed.value==='quiet'&&state.quality_preset!=='maximum';
     fps.disabled=quiet;
-    checks.smooth_motion.disabled=speed.value!=='original';
+    checks.smooth_motion.disabled=speed.value!=='original'&&state.quality_preset!=='maximum';
     speedHint.textContent=state.quality_preset==='maximum'?
       'Максимальное качество: 60 FPS, очистка шума и H.264 CRF 16. Рендер медленнее; новые кадры создаются при включённой интерполяции.':
       quiet?
@@ -177,6 +192,7 @@
     checks.timecode_enabled.disabled=orbit;
     progress.classList.toggle('studio-progress-loading',orbit);
     orbitLayer.hidden=!orbit;
+    orbitLayer.className='studio-orbit-ring studio-ring-'+state.visual_template;
     const margin=36;
     orbitLayer.style.left=((state.circle_x-margin)/1080*100)+'%';
     orbitLayer.style.top=((state.circle_y-margin)/1920*100)+'%';
