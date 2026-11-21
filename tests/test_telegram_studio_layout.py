@@ -769,6 +769,10 @@ class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
             source = root / "source.mp4"
             background = root / "background.png"
             Image.new("RGB", (540, 960), (26, 54, 100)).save(background)
+            banner = root / "banner.png"
+            ad = Image.new("RGB", (100, 50), (10, 240, 10))
+            ImageDraw.Draw(ad).rectangle((40, 10, 65, 40), fill=(230, 20, 20))
+            ad.save(banner)
             real_run([
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-f", "lavfi", "-i", "testsrc2=s=160x160:r=30:d=1",
@@ -786,20 +790,26 @@ class TelegramAllTemplatesFFmpegMatrixTests(unittest.TestCase):
                 ]
                 return real_run(check_cmd, **kwargs)
 
-            for style in styles:
+            progress_styles = ("classic", "thin", "capsule", "segmented",
+                               "glow", "dual", "pulse")
+            for index, style in enumerate(styles):
                 with self.subTest(style=style):
+                    use_banner = index % 2 == 0
                     design = studio.RenderDesign(
                         visual_template=style, circle_size=400,
                         circle_x=100, circle_y=300,
                         timecode_enabled=False, progress_enabled=True,
-                        progress_style="classic", quality_preset="standard",
+                        progress_style=progress_styles[index % len(progress_styles)],
+                        banner_enabled=use_banner, banner_width=220,
+                        quality_preset="standard",
                         render_speed="quiet", source_max_fps=False,
                         smooth_motion=False,
                     )
                     with (patch.object(studio, "duration", return_value=1.0),
                           patch.object(studio.subprocess, "run",
                                        side_effect=verify_graph)):
-                        studio.render(source, background, root / "output.mp4", design)
+                        studio.render(source, background, root / "output.mp4",
+                                      design, banner if use_banner else None)
 
 
 class TelegramChromaKeyRenderIntegrationTests(unittest.TestCase):
